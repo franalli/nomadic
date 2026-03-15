@@ -5,14 +5,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 
-import { apiFetch, clearSessionLocalStorage, refreshTiles, resetSession } from '@/lib/api';
+import { clearSessionLocalStorage, refreshTiles, resetSession } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { clearDestinationIntelCache } from '@/lib/destination-intel-cache';
 import { saveTripSummary } from '@/lib/summary';
 import { useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
 import { clearPersistedUIState } from '@/state/uiStore';
-import { useUserStore } from '@/state/userStore';
 import type { DocumentBranch, DocumentTripInputs, GraphPlanResponse, PlanStatus } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { TripSummaryPayload } from '@/types/summary';
@@ -412,37 +411,16 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   const handleStartNewSession = useCallback(async () => {
     debugLog('[branchManager.startNewSession] Starting server reset...');
     branchState.abortTilesFetch();
-    let didResetServerState = false;
 
     // Step 1: Best-effort server-side session deletion
     try {
       const res = await resetSession();
-      didResetServerState = res.ok;
       debugLog('[branchManager.startNewSession] Server DELETE /api/session ->', res.status);
     } catch (error) {
       debugLog('[branchManager.startNewSession] Server reset failed:', error);
     }
 
-    // Step 2: Best-effort CSRF re-establishment.
-    // If this 429s or fails, the CSRF cookie will be set on the next
-    // successful API call naturally (e.g., when the remounted chat hydrates).
-    try {
-      const csrfRes = await apiFetch('/api/document');
-      if (csrfRes.ok || csrfRes.status === 204) {
-        debugLog('[branchManager.startNewSession] Session re-established (fresh CSRF cookie)');
-      } else {
-        debugLog('[branchManager.startNewSession] CSRF re-establishment returned', csrfRes.status);
-      }
-    } catch (csrfError) {
-      debugLog('[branchManager.startNewSession] CSRF re-establishment failed, deferring:', csrfError);
-    }
-
-    // Refresh trip list so deleted trip disappears from Recent Trips
-    if (didResetServerState) {
-      void useUserStore.getState().fetchTrips({ force: true });
-    }
-
-    // Step 3: Always clear local state (never fails)
+    // Step 2: Always clear local state (never fails)
     clearSessionLocalStorage();
     clearDestinationIntelCache();
     clearSessionTimestamp();
@@ -450,7 +428,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     handleClearContext();
     resetChat();
 
-    // Step 4: Scroll to chat panel and focus input
+    // Step 3: Scroll to chat panel and focus input
     if (scrollFocusTimerRef.current) clearTimeout(scrollFocusTimerRef.current);
     scrollFocusTimerRef.current = setTimeout(() => {
       if (chatPanelContainerRef.current) {

@@ -79,12 +79,12 @@ export function CheckoutSidebar({
   return (
     <div className="sticky top-4 space-y-4">
       {/* Main card */}
-      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl p-6 shadow-card">
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-white/10 rounded-xl p-6 shadow-card">
         <h3 className="font-semibold text-lg mb-4 text-zinc-900 dark:text-white">Trip Summary</h3>
 
         {/* Selected items list (if any) */}
         {selectedTiles.length > 0 && (
-          <div className="space-y-2 mb-4 pb-4 border-b border-zinc-200 dark:border-zinc-700">
+          <div className="space-y-2 mb-4 pb-4 border-b border-zinc-200 dark:border-white/10">
             {selectedTiles.slice(0, 4).map((tile) => (
               <div key={tile.id} className="flex items-center justify-between gap-2 text-sm">
                 <span className="truncate text-zinc-500 dark:text-zinc-400">{tile.title}</span>
@@ -94,7 +94,7 @@ export function CheckoutSidebar({
                   aria-label="Remove"
                   className="flex-shrink-0 p-1 hover:bg-zinc-100 dark:hover:bg-white/10 rounded transition-colors"
                 >
-                  <X className="w-3 h-3 text-zinc-400 dark:text-zinc-500" />
+                  <X className="w-3 h-3 text-zinc-500 dark:text-zinc-400" />
                 </button>
               </div>
             ))}
@@ -107,7 +107,7 @@ export function CheckoutSidebar({
         )}
 
         {/* Line items */}
-        <div className="space-y-3 mb-6 border-b border-zinc-200 dark:border-zinc-700 pb-6">
+        <div className="space-y-4 mb-6 border-b border-zinc-200 dark:border-white/10 pb-6">
           {computedLineItems.length > 0 ? (
             computedLineItems.map((item, idx) => (
               <div key={idx} className="flex justify-between text-sm">
@@ -158,7 +158,7 @@ export function CheckoutSidebar({
       </div>
 
       {/* Trust badge */}
-      <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 flex gap-3 items-start">
+      <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 flex gap-4 items-start">
         <div className="p-2 bg-emerald-500/20 rounded-full text-emerald-600">
           <CreditCard className="w-4 h-4" />
         </div>

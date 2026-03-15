@@ -87,7 +87,7 @@ export function StrategyHeroContent({
         </div>
         <h1 className="text-xl md:text-2xl lg:text-3xl font-bold text-white mb-2 leading-tight">{section.title}</h1>
         <p className="text-white/80 text-sm md:text-base line-clamp-2 max-w-xl mb-4">{section.one_liner || section.subtitle}</p>
-        {isInfeasible && section.feasibility_reason && <p className="text-red-300 text-sm mb-3">{section.feasibility_reason}</p>}
+        {isInfeasible && section.feasibility_reason && <p className="text-red-300 text-sm mb-4">{section.feasibility_reason}</p>}
         {isInfeasible && section.alternative_suggestion && <p className="text-white/60 text-xs mb-4">💡 {section.alternative_suggestion}</p>}
         {/* Constraint Pills (Horizontal Scroll) */}
         {constraints.length > 0 && !isInfeasible && (

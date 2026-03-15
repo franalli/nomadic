@@ -4,173 +4,38 @@ Hard spend guardrails for paid external APIs.
 Implements:
 - Per-session daily USD cap
 - Global daily USD cap
+- Provider-specific daily USD cap
 - Request-scoped session context via contextvars
 - Pre-call budget reservation for LLM and Google Places calls
+
+Counters are stored in the shared runtime_state table so they work across workers.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import tempfile
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import UTC, datetime
-from pathlib import Path
-from threading import Lock
+from datetime import UTC, date, datetime, time, timedelta
 
+from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app import db as db_module
 from app.config import MODEL_PRICING_PER_1M, settings
+from app.db_models import RuntimeState
 
 logger = logging.getLogger(__name__)
 
 _session_id_ctx: ContextVar[str | None] = ContextVar("spend_guard_session_id", default=None)
 
-# NOTE: In-memory spend tracking is correct for single-worker deployment.
-# For multi-worker, migrate to Redis or shared state.
-#
-# File-based persistence (via _SPEND_STATE_FILE) is a shutdown-time bridge so
-# daily caps survive graceful restarts within a single-worker deployment.
-# It does NOT solve multi-worker isolation.
-#
-# TODO: Before scaling to multi-instance, replace module-level dicts with
-# Redis counters (INCRBY + daily-key TTL) so budget isolation is shared
-# across workers.
-#
-# Planned Redis key schema:
-#   spend:{session_id}:{YYYY-MM-DD}  — per-session daily spend (float cents)
-#   spend:global:{YYYY-MM-DD}        — global daily spend (float cents)
-#   spend:provider:{provider}:{YYYY-MM-DD} — per-provider daily spend
-#
-# Operations:
-#   INCRBY / INCRBYFLOAT on the relevant key before each paid call.
-#   SET TTL = 86400 (24h) on first write via SET NX + EXPIRE, so keys
-#   auto-expire one day after creation and do not require manual cleanup.
-#   Use a Lua script or MULTI/EXEC to atomically check cap + increment.
-_spend_lock = Lock()
-_spend_day_key = datetime.now(UTC).date().isoformat()
-_session_spend_usd: dict[str, float] = {}
-_global_spend_usd = 0.0
-_provider_spend_usd: dict[str, float] = {"llm": 0.0, "places": 0.0}
-
-_SPEND_STATE_FILE = Path(tempfile.gettempdir()) / "nomadic_spend_guard_state.json"
-
-
-def _snapshot_state_locked() -> dict[str, object]:
-    """Capture the current spend state while holding _spend_lock."""
-    return {
-        "day": _spend_day_key,
-        "global_spend_usd": _global_spend_usd,
-        "provider_spend_usd": dict(_provider_spend_usd),
-        "session_spend_usd": dict(_session_spend_usd),
-    }
-
-
-def _write_state_to_disk(snapshot: dict[str, object]) -> None:
-    """Persist a spend snapshot outside _spend_lock."""
-    try:
-        tmp_path = _SPEND_STATE_FILE.with_suffix(f"{_SPEND_STATE_FILE.suffix}.tmp")
-        tmp_path.write_text(json.dumps(snapshot), encoding="utf-8")
-        tmp_path.replace(_SPEND_STATE_FILE)
-    except Exception:
-        logger.debug("spend_guard: failed to persist state to %s", _SPEND_STATE_FILE, exc_info=True)
-
-
-def flush_spend_state() -> None:
-    """Force-persist current spend state (call during shutdown)."""
-    with _spend_lock:
-        snapshot = _snapshot_state_locked()
-    _write_state_to_disk(snapshot)
-
-
-def _load_state() -> None:
-    """Restore global and provider spend from disk on startup.
-
-    Only restores if the persisted day key matches today. Stale data from a
-    previous day is silently ignored. File I/O errors are swallowed so startup
-    is never blocked.
-    """
-    global _global_spend_usd
-
-    try:
-        if not _SPEND_STATE_FILE.exists():
-            return
-        raw = _SPEND_STATE_FILE.read_text(encoding="utf-8")
-        data = json.loads(raw)
-        if not isinstance(data, dict):
-            return
-        if data.get("day") != _spend_day_key:
-            logger.info(
-                "spend_guard: ignoring stale persisted state (file day=%s, today=%s)",
-                data.get("day"),
-                _spend_day_key,
-            )
-            return
-        restored_global = float(data.get("global_spend_usd", 0.0))
-        restored_providers = data.get("provider_spend_usd", {})
-        if not isinstance(restored_providers, dict):
-            restored_providers = {}
-
-        _global_spend_usd = max(0.0, restored_global)
-        for key in ("llm", "places"):
-            _provider_spend_usd[key] = max(0.0, float(restored_providers.get(key, 0.0)))
-
-        restored_sessions = data.get("session_spend_usd", {})
-        if isinstance(restored_sessions, dict):
-            for sid, amount in restored_sessions.items():
-                if isinstance(sid, str) and isinstance(amount, (int, float)):
-                    _session_spend_usd[sid] = max(0.0, float(amount))
-
-        logger.info(
-            "spend_guard: restored persisted state — global=$%.4f, providers=%s, sessions=%d",
-            _global_spend_usd,
-            _provider_spend_usd,
-            len(_session_spend_usd),
-        )
-    except Exception:
-        logger.debug(
-            "spend_guard: failed to load persisted state from %s",
-            _SPEND_STATE_FILE,
-            exc_info=True,
-        )
-
-
-# Restore persisted spend counters on module load (before any requests).
-_load_state()
-
-if not settings.spend_guard_enabled:
-    _level = logging.CRITICAL if not settings.is_dev else logging.WARNING
-    logger.log(
-        _level,
-        "SPEND GUARD DISABLED — all LLM and Places API calls are uncapped. "
-        "Set SPEND_GUARD_ENABLED=true in production.",
-    )
-
-# Intentional fail-fast: refuse to start with multiple workers since in-memory
-# spend tracking would allow N× the configured cap (one counter per worker).
-# This is a safety net, not a bug — remove only when Redis migration is complete.
-if settings.spend_guard_enabled:
-    _worker_count = settings.web_concurrency
-    if _worker_count > 1:
-        logger.critical(
-            "SPEND GUARD: %d workers detected with in-memory spend tracking. "
-            "Effective cap is %dx nominal. Set SPEND_GUARD_ENABLED=false "
-            "or WEB_CONCURRENCY=1 or migrate to Redis.",
-            _worker_count,
-            _worker_count,
-        )
-        raise RuntimeError(
-            f"Spend guard cannot safely run with {_worker_count} workers. "
-            "Set WEB_CONCURRENCY=1 or disable spend guard."
-        )
-
-# Log startup info about file-backed persistence (only when guard is active)
-if settings.spend_guard_enabled:
-    logger.info(
-        "Spend guard: in-memory with shutdown persistence (%s). "
-        "Daily caps survive graceful single-worker restarts. "
-        "For multi-worker caps, migrate to Redis (see TODO above).",
-        _SPEND_STATE_FILE,
-    )
+_SPEND_COUNTER_STATE_TYPE = "spend_counter"
+_GLOBAL_SCOPE = "global"
+_SESSION_SCOPE = "session"
+_PROVIDER_SCOPE = "provider"
+_MICRO_USD = 1_000_000
+_KNOWN_PROVIDER_KEYS = ("llm", "places")
 
 
 class SpendLimitExceeded(RuntimeError):
@@ -202,23 +67,180 @@ class SpendLimitExceeded(RuntimeError):
         self.source = source
 
 
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
 def _current_day_key() -> str:
     return datetime.now(UTC).date().isoformat()
 
 
-def _rollover_if_needed() -> None:
-    global _spend_day_key
-    global _global_spend_usd
+def _usd_to_micro_usd(amount_usd: float) -> int:
+    return max(0, int(round(float(amount_usd) * _MICRO_USD)))
 
-    day_key = _current_day_key()
-    if day_key == _spend_day_key:
+
+def _micro_usd_to_usd(amount_micro_usd: int) -> float:
+    return max(0, int(amount_micro_usd)) / _MICRO_USD
+
+
+def _counter_state_key(
+    *,
+    scope: str,
+    day_key: str,
+    session_id: str | None = None,
+    provider: str | None = None,
+) -> str:
+    if scope == _GLOBAL_SCOPE:
+        return f"spend:global:{day_key}"
+    if scope == _SESSION_SCOPE:
+        if not session_id:
+            raise ValueError("session_id is required for session spend keys")
+        return f"spend:session:{session_id}:{day_key}"
+    if scope == _PROVIDER_SCOPE:
+        if not provider:
+            raise ValueError("provider is required for provider spend keys")
+        return f"spend:provider:{provider}:{day_key}"
+    raise ValueError(f"Unsupported spend scope: {scope}")
+
+
+def _provider_cap_micro_usd(provider: str) -> int:
+    if provider == "places":
+        return _usd_to_micro_usd(float(settings.spend_guard_places_daily_cap_usd))
+    return 0
+
+
+def _counter_expires_at(day_key: str) -> datetime:
+    day = date.fromisoformat(day_key)
+    return datetime.combine(day + timedelta(days=1), time.min, tzinfo=UTC)
+
+
+def _purge_stale_spend_rows(db: Session, *, day_key: str) -> None:
+    now = _utcnow()
+    db.execute(
+        delete(RuntimeState).where(
+            RuntimeState.state_type == _SPEND_COUNTER_STATE_TYPE,
+            or_(
+                and_(
+                    RuntimeState.expires_at.is_not(None),
+                    RuntimeState.expires_at <= now,
+                ),
+                and_(
+                    RuntimeState.expires_at.is_(None),
+                    RuntimeState.day_key.is_not(None),
+                    RuntimeState.day_key < day_key,
+                ),
+            ),
+        )
+    )
+
+
+def _ensure_counter_row(
+    db: Session,
+    *,
+    state_key: str,
+    scope: str,
+    day_key: str,
+    session_id: str | None = None,
+    provider: str | None = None,
+) -> None:
+    if (
+        db.execute(
+            select(RuntimeState.state_key).where(RuntimeState.state_key == state_key)
+        ).scalar_one_or_none()
+        is not None
+    ):
         return
 
-    _spend_day_key = day_key
-    _session_spend_usd.clear()
-    _provider_spend_usd["llm"] = 0.0
-    _provider_spend_usd["places"] = 0.0
-    _global_spend_usd = 0.0
+    while True:
+        try:
+            with db.begin_nested():
+                db.add(
+                    RuntimeState(
+                        state_key=state_key,
+                        state_type=_SPEND_COUNTER_STATE_TYPE,
+                        scope=scope,
+                        session_id=session_id,
+                        provider=provider,
+                        day_key=day_key,
+                        expires_at=_counter_expires_at(day_key),
+                    )
+                )
+                db.flush()
+            return
+        except IntegrityError:
+            if (
+                db.execute(
+                    select(RuntimeState.state_key).where(RuntimeState.state_key == state_key)
+                ).scalar_one_or_none()
+                is not None
+            ):
+                return
+
+
+def _increment_counter_or_current(
+    db: Session,
+    *,
+    state_key: str,
+    scope: str,
+    day_key: str,
+    amount_micro_usd: int,
+    limit_micro_usd: int = 0,
+    session_id: str | None = None,
+    provider: str | None = None,
+) -> int | None:
+    for _ in range(3):
+        _ensure_counter_row(
+            db,
+            state_key=state_key,
+            scope=scope,
+            day_key=day_key,
+            session_id=session_id,
+            provider=provider,
+        )
+
+        stmt = update(RuntimeState).where(RuntimeState.state_key == state_key)
+        if limit_micro_usd > 0:
+            stmt = stmt.where(RuntimeState.value_micro_usd + amount_micro_usd <= limit_micro_usd)
+
+        result = db.execute(
+            stmt.values(
+                value_micro_usd=RuntimeState.value_micro_usd + amount_micro_usd,
+                updated_at=_utcnow(),
+            )
+        )
+        if result.rowcount == 1:
+            return None
+
+        current_micro_usd = db.execute(
+            select(RuntimeState.value_micro_usd).where(RuntimeState.state_key == state_key)
+        ).scalar_one_or_none()
+        if current_micro_usd is None:
+            continue
+
+        current_micro_usd = int(current_micro_usd or 0)
+        if limit_micro_usd > 0 and current_micro_usd + amount_micro_usd > limit_micro_usd:
+            return current_micro_usd
+
+    raise RuntimeError(f"Unable to update spend counter row {state_key}")
+
+
+def _raise_spend_limit(
+    *,
+    provider: str,
+    scope: str,
+    limit_micro_usd: int,
+    current_micro_usd: int,
+    requested_micro_usd: int,
+    source: str,
+) -> None:
+    raise SpendLimitExceeded(
+        provider=provider,
+        scope=scope,
+        limit_usd=_micro_usd_to_usd(limit_micro_usd),
+        current_usd=_micro_usd_to_usd(current_micro_usd),
+        requested_usd=_micro_usd_to_usd(requested_micro_usd),
+        source=source,
+    )
 
 
 @contextmanager
@@ -231,26 +253,6 @@ def spend_guard_scope(session_id: str | None):
         _session_id_ctx.reset(token)
 
 
-def _check_provider_cap(provider: str, estimated_usd: float, source: str) -> None:
-    """Provider-specific daily cap. Must be called inside _spend_lock."""
-    cap: float = 0.0
-    if provider == "places":
-        cap = max(0.0, float(settings.spend_guard_places_daily_cap_usd))
-    else:
-        return
-
-    current = _provider_spend_usd.get(provider, 0.0)
-    if cap > 0 and (current + estimated_usd) > cap:
-        raise SpendLimitExceeded(
-            provider=provider,
-            scope="provider",
-            limit_usd=cap,
-            current_usd=current,
-            requested_usd=estimated_usd,
-            source=source,
-        )
-
-
 def _reserve_or_raise(
     *,
     provider: str,
@@ -258,71 +260,96 @@ def _reserve_or_raise(
     session_id: str | None = None,
     source: str = "",
 ) -> None:
-    global _global_spend_usd
-
     if not settings.spend_guard_enabled:
         return
-    if estimated_usd <= 0:
+
+    requested_micro_usd = _usd_to_micro_usd(estimated_usd)
+    if requested_micro_usd <= 0:
         return
 
     sid = session_id if session_id is not None else _session_id_ctx.get()
+    day_key = _current_day_key()
+    session_cap_micro_usd = _usd_to_micro_usd(float(settings.spend_guard_session_daily_cap_usd))
+    global_cap_micro_usd = _usd_to_micro_usd(float(settings.spend_guard_global_daily_cap_usd))
+    provider_cap_micro_usd = _provider_cap_micro_usd(provider)
+
     if not sid:
         logger.warning(
             "spend_guard: no session_id (source=%s), enforcing global cap only",
             source,
         )
-        # Skip session cap, still enforce global daily cap
-        global_cap = max(0.0, float(settings.spend_guard_global_daily_cap_usd))
-        with _spend_lock:
-            _rollover_if_needed()
-            if global_cap > 0 and (_global_spend_usd + estimated_usd) > global_cap:
-                raise SpendLimitExceeded(
+
+    with db_module.SessionLocal() as db:
+        with db.begin():
+            _purge_stale_spend_rows(db, day_key=day_key)
+
+            if sid:
+                session_key = _counter_state_key(
+                    scope=_SESSION_SCOPE,
+                    day_key=day_key,
+                    session_id=sid,
+                )
+                session_current = _increment_counter_or_current(
+                    db,
+                    state_key=session_key,
+                    scope=_SESSION_SCOPE,
+                    day_key=day_key,
+                    session_id=sid,
+                    amount_micro_usd=requested_micro_usd,
+                    limit_micro_usd=session_cap_micro_usd,
+                )
+                if session_current is not None:
+                    _raise_spend_limit(
+                        provider=provider,
+                        scope=_SESSION_SCOPE,
+                        limit_micro_usd=session_cap_micro_usd,
+                        current_micro_usd=session_current,
+                        requested_micro_usd=requested_micro_usd,
+                        source=source,
+                    )
+
+            global_key = _counter_state_key(scope=_GLOBAL_SCOPE, day_key=day_key)
+            global_current = _increment_counter_or_current(
+                db,
+                state_key=global_key,
+                scope=_GLOBAL_SCOPE,
+                day_key=day_key,
+                amount_micro_usd=requested_micro_usd,
+                limit_micro_usd=global_cap_micro_usd,
+            )
+            if global_current is not None:
+                _raise_spend_limit(
                     provider=provider,
-                    scope="global",
-                    limit_usd=global_cap,
-                    current_usd=_global_spend_usd,
-                    requested_usd=estimated_usd,
+                    scope=_GLOBAL_SCOPE,
+                    limit_micro_usd=global_cap_micro_usd,
+                    current_micro_usd=global_current,
+                    requested_micro_usd=requested_micro_usd,
                     source=source,
                 )
-            _check_provider_cap(provider, estimated_usd, source)
-            _global_spend_usd += estimated_usd
-            _provider_spend_usd[provider] = _provider_spend_usd.get(provider, 0.0) + estimated_usd
-        return
 
-    session_cap = max(0.0, float(settings.spend_guard_session_daily_cap_usd))
-    global_cap = max(0.0, float(settings.spend_guard_global_daily_cap_usd))
-
-    with _spend_lock:
-        _rollover_if_needed()
-
-        session_current = _session_spend_usd.get(sid, 0.0)
-        global_current = _global_spend_usd
-
-        if session_cap > 0 and (session_current + estimated_usd) > session_cap:
-            raise SpendLimitExceeded(
+            provider_key = _counter_state_key(
+                scope=_PROVIDER_SCOPE,
+                day_key=day_key,
                 provider=provider,
-                scope="session",
-                limit_usd=session_cap,
-                current_usd=session_current,
-                requested_usd=estimated_usd,
-                source=source,
             )
-
-        if global_cap > 0 and (global_current + estimated_usd) > global_cap:
-            raise SpendLimitExceeded(
+            provider_current = _increment_counter_or_current(
+                db,
+                state_key=provider_key,
+                scope=_PROVIDER_SCOPE,
+                day_key=day_key,
                 provider=provider,
-                scope="global",
-                limit_usd=global_cap,
-                current_usd=global_current,
-                requested_usd=estimated_usd,
-                source=source,
+                amount_micro_usd=requested_micro_usd,
+                limit_micro_usd=provider_cap_micro_usd,
             )
-
-        _check_provider_cap(provider, estimated_usd, source)
-
-        _session_spend_usd[sid] = session_current + estimated_usd
-        _global_spend_usd = global_current + estimated_usd
-        _provider_spend_usd[provider] = _provider_spend_usd.get(provider, 0.0) + estimated_usd
+            if provider_current is not None:
+                _raise_spend_limit(
+                    provider=provider,
+                    scope=_PROVIDER_SCOPE,
+                    limit_micro_usd=provider_cap_micro_usd,
+                    current_micro_usd=provider_current,
+                    requested_micro_usd=requested_micro_usd,
+                    source=source,
+                )
 
 
 def _estimate_llm_call_usd(model: str, max_tokens: int | None = None) -> float:
@@ -370,27 +397,66 @@ def reserve_places_spend_or_raise(
 
 
 def clear_spend_guard_counters() -> None:
-    """Reset in-memory spend counters (tests/admin maintenance)."""
-    global _spend_day_key
-    global _global_spend_usd
-
-    with _spend_lock:
-        _spend_day_key = _current_day_key()
-        _session_spend_usd.clear()
-        _provider_spend_usd["llm"] = 0.0
-        _provider_spend_usd["places"] = 0.0
-        _global_spend_usd = 0.0
-        snapshot = _snapshot_state_locked()
-    _write_state_to_disk(snapshot)
+    """Reset shared spend counters (tests/admin maintenance)."""
+    with db_module.SessionLocal() as db, db.begin():
+        db.execute(delete(RuntimeState).where(RuntimeState.state_type == _SPEND_COUNTER_STATE_TYPE))
 
 
 def get_spend_guard_snapshot() -> dict[str, object]:
     """Expose counters for observability/tests."""
-    with _spend_lock:
-        _rollover_if_needed()
-        return {
-            "day": _spend_day_key,
-            "global_spend_usd": _global_spend_usd,
-            "provider_spend_usd": dict(_provider_spend_usd),
-            "session_count": len(_session_spend_usd),
-        }
+    day_key = _current_day_key()
+    provider_spend_usd = {provider: 0.0 for provider in _KNOWN_PROVIDER_KEYS}
+    global_spend_usd = 0.0
+    session_ids: set[str] = set()
+
+    with db_module.SessionLocal() as db, db.begin():
+        _purge_stale_spend_rows(db, day_key=day_key)
+        rows = db.execute(
+            select(
+                RuntimeState.scope,
+                RuntimeState.provider,
+                RuntimeState.session_id,
+                RuntimeState.value_micro_usd,
+            ).where(
+                RuntimeState.state_type == _SPEND_COUNTER_STATE_TYPE,
+                RuntimeState.day_key == day_key,
+            )
+        ).all()
+
+    for scope, provider, session_id, value_micro_usd in rows:
+        amount_usd = _micro_usd_to_usd(int(value_micro_usd or 0))
+        if scope == _GLOBAL_SCOPE:
+            global_spend_usd = amount_usd
+        elif scope == _PROVIDER_SCOPE and provider:
+            provider_spend_usd[provider] = amount_usd
+        elif scope == _SESSION_SCOPE and session_id:
+            session_ids.add(session_id)
+
+    return {
+        "day": day_key,
+        "global_spend_usd": global_spend_usd,
+        "provider_spend_usd": provider_spend_usd,
+        "session_count": len(session_ids),
+    }
+
+
+def flush_spend_state() -> None:
+    """DB-backed counters are already durable; kept for lifespan compatibility."""
+
+
+def _load_state() -> None:
+    """No-op retained for compatibility after migrating to DB-backed counters."""
+
+
+if not settings.spend_guard_enabled:
+    _level = logging.CRITICAL if not settings.is_dev else logging.WARNING
+    logger.log(
+        _level,
+        "SPEND GUARD DISABLED — all LLM and Places API calls are uncapped. "
+        "Set SPEND_GUARD_ENABLED=true in production.",
+    )
+else:
+    logger.info(
+        "Spend guard: using DB-backed runtime_state counters (workers=%d)",
+        settings.web_concurrency,
+    )

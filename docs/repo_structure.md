@@ -78,11 +78,11 @@ backend/
 │   ├── db.py                   # Database connection
 │   ├── db_models.py            # SQLAlchemy models
 │   ├── debug_utils.py          # Debugging utilities
-│   ├── graph_plan_utils.py     # LangGraph plan utilities
+│   ├── graph_plan_utils.py     # Graph plan route utilities
 │   ├── lifespan.py             # Application lifespan hooks (startup + shutdown)
 │   ├── main.py                 # FastAPI application entry
 │   ├── placeholders.py         # Placeholder data
-│   ├── request_dedup.py        # Idempotency key cache for expand-itinerary (TTLCache, extracted from main.py)
+│   ├── request_dedup.py        # DB-backed idempotency + expand-itinerary lease helpers
 │   ├── streaming.py            # SSE + NDJSON streaming generators (extracted from main.py)
 │   ├── validation_cache.py     # Validation cache infrastructure (6 TTL caches, extracted from validation.py)
 │   ├── rate_limit.py           # Rate limiting configuration (extracted from main.py)
@@ -156,6 +156,8 @@ backend/
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── activity_browser.py      # On-demand activity search for Browse Activities sheet (Viator first, GYG supplement, Google Places backfill/fallback)
+│   │   ├── activity_category_conflicts.py  # Shared category conflict rules for partner activity matching
+│   │   ├── aviasales_provider.py           # Aviasales/Travelpayouts real-time flight search provider with affiliate deeplinks
 │   │   ├── cache_core.py            # Shared MemoryCache primitive (TTLCache + RLock + stats) + l2_upsert()
 │   │   ├── circuit_breaker.py       # Shared async circuit breaker used by partner/provider integrations
 │   │   ├── experience_generator.py  # Tier 2 experience tile generation via settings.experience_model (L1+L2 cache)
@@ -187,7 +189,7 @@ backend/
 │   │   ├── service.py                # Tile service orchestrator (3-tier cascade: Curated → Google Places → Mock)
 │   │   └── title_utils.py            # Title normalization helpers for provider matching/deduping
 │   │
-│   └── tools/                  # LangGraph tools
+│   └── tools/                  # Planner tool adapters
 │       ├── __init__.py
 │       ├── constraint_engine.py # Constraint processing
 │       └── tile_service.py     # Tile service tool
@@ -208,11 +210,13 @@ backend/
 │       ├── 5f2c5416d5c3_tile_click_nullable_and_session_token.py
 │       ├── 817b72698e5b_add_unsplash_image_cache_table.py
 │       ├── 8ef3b6a8e5c1_trip_context_parents_and_session_prefs.py
+│       ├── 9f6a2e4b7c1d_drop_suggestion_clicks_table.py
 │       ├── 3c42a4c8a9f1_add_shared_trips.py
 │       ├── 7a1b2c3d4e5f_add_users_and_session_user_fk.py
 │       ├── add_variant_to_unsplash_cache.py
 │       ├── ae0f06f2c384_remove_legacy_tables.py
 │       ├── c1f8e8bf9d21_chat_messages_table.py
+│       ├── c4b7e1a29d3f_add_runtime_state_table.py  # Shared runtime leases + spend counters
 │       ├── 0347ceb87559_add_response_cache_table.py  # Specialist LLM cache
 │       └── add_cache_type_column.py                  # cache_type column for multi-tier caching
 │
@@ -225,7 +229,10 @@ backend/
 │   ├── run_curl_flows.sh                 # End-to-end curl flow tests
 │   ├── analyze_flow_logs.py               # Flow log analysis and regression checks
 │   ├── test_activity_browser.py          # Browse activities backend contract tests
+│   ├── test_activity_category_conflicts.py  # Shared partner-category conflict rule tests
 │   ├── test_activity_image_placeholder_mapping.py  # Activity image placeholder mapping tests
+│   ├── test_analyze_flow_logs.py         # Flow-log analyzer regression tests
+│   ├── test_aviasales_provider.py           # Aviasales provider flight search and tile conversion tests
 │   ├── test_agent_multiturn.py           # Agent multi-turn conversation tests
 │   ├── test_chip_generator.py            # Chip output and deterministic variant generation tests
 │   ├── test_conflict_resolution.py       # Conflict resolution & constraint alias tests
@@ -237,9 +244,11 @@ backend/
 │   ├── test_demo_dataset.py              # Demo data tests
 │   ├── test_endpoint_contract.py         # Endpoint response contract tests
 │   ├── test_experience_generator.py      # Experience generator tests
+│   ├── test_feasibility_inflight.py      # Inflight feasibility service behavior tests
 │   ├── test_fill_day_coordinates.py      # Fill-day coordinate + constraint mapping tests
 │   ├── test_google_places_circuit_breaker.py  # Google Places circuit breaker tests
 │   ├── test_google_places_enrichment.py  # Google Places enrichment/cache tests
+│   ├── test_google_places_hotel_provider.py  # Google Places hotel provider tests
 │   ├── test_google_places_photo_proxy.py # Google Places photo proxy tests
 │   ├── test_gyg_provider.py              # GetYourGuide provider tile conversion, matching, and browse cache tests
 │   ├── test_hash_ban.py                  # Hash ban tests
@@ -255,6 +264,7 @@ backend/
 │   ├── test_plan_schema.py               # Plan schema tests
 │   ├── test_poi_category_canonicalization.py  # POI category canonicalization tests
 │   ├── test_regen_strategy.py            # Selective regen field hash + strategy tests
+│   ├── test_request_dedup.py             # Request deduplication tests
 │   ├── test_rate_limit_keying.py         # Route-aware/IP-vs-session rate-limit keying regression tests
 │   ├── test_router_cache.py              # Router cache tests (context-dependency detection)
 │   ├── test_session_middleware.py        # Session middleware behavior tests
@@ -263,7 +273,7 @@ backend/
 │   ├── test_specialist_enrichment_endpoint.py  # Specialist enrichment endpoint tests
 │   ├── test_specialist_structured.py     # Specialist structured output tests
 │   ├── test_spend_guard.py              # Spend guard tests
-│   ├── test_stage11_day_preferences.py   # Stage 11 day preference tests
+│   ├── test_stage11_day_preferences.py   # Day-preference placement regression tests
 │   ├── test_graph_integration.py         # ItineraryBuilder full-pipeline integration tests
 │   ├── test_tile_cache.py                # Tile cache tests (L1/L2, thread safety)
 │   ├── test_typed_meta.py                # Typed metadata bridge tests
@@ -345,6 +355,9 @@ frontend/
 │   │   ├── ChatMessageRenderer.tsx  # Individual message rendering (extracted from ChatPanel)
 │   │   ├── ChatModuleSheets.tsx      # Module sheets (flights/stays/activities) extracted from ChatPanel
 │   │   ├── ChatPanel.tsx
+│   │   ├── chatMessageMarkdown.tsx        # Markdown renderer extracted from ChatMessageRenderer
+│   │   ├── ChatPanel.types.ts              # ChatPanel shared types
+│   │   ├── ChatPanelContent.tsx            # ChatPanel content rendering (extracted from ChatPanel)
 │   │   ├── ChatStatusHeader.tsx        # Desktop status hero/mini bar above chat
 │   │   ├── ChatSkeleton.tsx
 │   │   ├── ChatSuggestionBar.tsx     # Thin wrapper around ChatSuggestionChips for ChatPanel integration
@@ -352,96 +365,158 @@ frontend/
 │   │   ├── MobileChatInput.tsx
 │   │   ├── SmartLoader.tsx
 │   │   ├── chatMessageProcessing.ts  # Pure chat-message sanitizing/splitting utilities
-│   │   └── suggestion-actions.ts     # Shared trigger_action handler (avoids circular import)
+│   │   ├── suggestion-actions.ts     # Shared trigger_action handler (avoids circular import)
+│   │   └── useChatPanelController.ts       # ChatPanel controller hook (state+effects extracted from ChatPanel)
 │   │
 │   ├── layout/                 # Layout components
 │   │   ├── FloatingBuildButton.tsx
 │   │   ├── LandingHeaderContent.tsx  # Desktop header chrome extracted from NomadicLanding
+│   │   ├── LandingHeaderUserMenu.tsx       # User menu section extracted from LandingHeaderContent
 │   │   ├── LandingHelpers.ts         # Shared types and utilities for NomadicLanding (topic detection, field diffing)
+│   │   ├── LandingPreferenceSheets.tsx     # Preference-sheet group extracted from LandingSheets
+│   │   ├── LandingPrimarySheets.tsx        # Primary trip-input sheet group extracted from LandingSheets
 │   │   ├── LandingSheets.tsx         # Sheet rendering extracted from NomadicLanding
 │   │   ├── MobileHeaderMenu.tsx      # Popover body for MobileModeHeader overflow actions
 │   │   ├── MobileModeHeader.tsx
+│   │   ├── MobileModeHeaderSections.tsx    # Mobile header sections extracted from MobileModeHeader
 │   │   ├── MobileSwipeLayout.tsx
 │   │   ├── NomadicLanding.tsx
+│   │   ├── NomadicLandingContent.tsx       # Landing content extracted from NomadicLanding
+│   │   ├── SplitLayoutSections.tsx         # Split layout sections extracted from SplitLayoutView
 │   │   ├── SplitLayoutView.tsx
+│   │   ├── headerMenuParts.tsx             # Shared header menu parts
 │   │   └── hooks/              # Layout-specific hooks
 │   │       ├── useBranchManager.ts
 │   │       ├── useBranchState.ts
 │   │       ├── useItineraryGeneration.ts  # Itinerary generation orchestration (extracted from NomadicLanding)
+│   │       ├── useItineraryGenerationController.ts  # Itinerary generation controller (extracted from useItineraryGeneration)
+│   │       ├── useLandingControllerStores.ts        # Landing controller store selectors/aggregator
 │   │       ├── useLandingDerived.ts       # Derived state computations for NomadicLanding (extracted)
 │   │       ├── useLandingEffects.ts       # Side effects for NomadicLanding (extracted)
 │   │       ├── useLandingHandlers.ts
+│   │       ├── useLandingPlanState.ts             # Landing plan-state orchestration extracted from controller
+│   │       ├── useLandingRenderSurfaces.tsx       # Planner/header/mobile surface assembly for landing route
+│   │       ├── useLandingStoreSnapshot.ts         # Landing document snapshot helpers
 │   │       ├── useLocalBookingSettings.ts
+│   │       ├── useNomadicLandingController.tsx      # NomadicLanding controller hook (state+effects)
 │   │       ├── useSessionHydration.ts
 │   │       ├── useTileSelection.ts
 │   │       └── useTripInputsEditor.ts
 │   │
 │   ├── map/                    # Map components
 │   │   ├── InteractiveMap.tsx
+│   │   ├── InteractiveMapHelpers.tsx       # Map helper utilities extracted from InteractiveMap
 │   │   ├── MapMarkerItem.tsx
 │   │   ├── MapboxErrorSuppressor.tsx
+│   │   ├── map-marker-config.tsx           # Map marker configuration extracted from MapMarkerItem
 │   │   ├── MapErrorBoundary.tsx
 │   │   └── mapbox-error-handler.ts   # Global Mapbox error suppression (shared patterns)
 │   │
 │   ├── nomadic/                # Marketing/landing components
+│   │   ├── ConsentManagerSections.tsx      # Consent manager sections extracted from consent-manager
+│   │   ├── consent-manager-storage.ts      # Consent manager storage utilities
 │   │   ├── consent-manager.tsx
 │   │   └── legal-page.tsx
 │   │
 │   ├── shared/                 # Public shared-trip surfaces
 │   │   ├── ReadOnlyTimeline.tsx    # Non-editable itinerary renderer for shared trips
+│   │   ├── SharedTripSections.tsx          # Shared trip sections extracted from SharedTripView
 │   │   └── SharedTripView.tsx      # Shared-trip page shell, map, fork CTA, and metadata surface
 │   │
 │   ├── plan/                   # Plan view components
 │   │   ├── BookingPlanningView.tsx           # Booking controls rendered in full-density planning context
-│   │   ├── BookingSummary.tsx                # Quick links summary for bookable stays/activities
-│   │   ├── PdfExportButton.tsx               # Export generated itinerary to PDF
+│   │   ├── BookingSection.helpers.ts         # BookingSection helper utilities
 │   │   ├── BookingSection.tsx
+│   │   ├── BookingSectionBookingView.tsx     # Booking view extracted from BookingSection
+│   │   ├── BookingSummary.tsx                # Quick links summary for bookable stays/activities
 │   │   ├── BrowseActivitiesSheet.tsx  # Bottom sheet for browsing categorized activity tiles (Tier 1 free days)
+│   │   ├── PdfExportButton.tsx               # Export generated itinerary to PDF
+│   │   ├── ChipGroup.helpers.ts            # ChipGroup helper utilities
 │   │   ├── ChipGroup.tsx
 │   │   ├── ChipScrollContainer.tsx        # Shared horizontal chip wrapper (carousel-safe)
 │   │   ├── FullDensityTimeline.tsx       # Activity timeline container used by full-density view
 │   │   ├── ItineraryProgressIndicator.tsx  # Path A: Auto-generation progress display
+│   │   ├── ModuleChip.tsx                  # Individual module chip component
 │   │   ├── NextStepBar.tsx
 │   │   ├── OriginPromptCard.tsx
 │   │   ├── PlanDensityViews.tsx            # Mirror-loader density view (`PlanMirrorLoader`)
+│   │   ├── PlanFullDensityDesktopMap.tsx   # Desktop map section for PlanFullDensityView
+│   │   ├── PlanFullDensityMobileSummary.tsx # Mobile summary for PlanFullDensityView
+│   │   ├── PlanFullDensityTilesSection.tsx # Tiles section for PlanFullDensityView
+│   │   ├── PlanFullDensityTravelAdvice.tsx # Travel advice section for PlanFullDensityView
 │   │   ├── PlanFullDensityView.tsx         # Full-density view (map + specialists + timeline)
+│   │   ├── PlanFullDensityView.types.ts    # PlanFullDensityView shared types
 │   │   ├── PlanHeader.tsx
 │   │   ├── PlanTimelineSection.tsx         # Timeline section with DnD wiring for full-density view
 │   │   ├── pdf/                            # PDF export rendering subtree
-│   │   │   └── TripPdfDocument.tsx          # @react-pdf renderer for itinerary output
+│   │   │   ├── TripPdfDocument.tsx          # @react-pdf renderer for itinerary output
+│   │   │   ├── TripPdfSections.tsx          # PDF sections extracted from TripPdfDocument
+│   │   │   └── TripPdfStyles.ts             # PDF styling constants
+│   │   ├── nextStepBarUtils.ts             # NextStepBar utilities
 │   │   ├── planStateHelpers.ts
+│   │   ├── SetupCoreChip.tsx               # Setup core chip component
 │   │   ├── ShareTripButton.tsx             # Share-link CTA for itinerary surfaces
 │   │   ├── StrategyStageRenderer.tsx  # Main orchestrator: 60/40 map layout when destination set
+│   │   ├── strategyStagePoi.ts             # Stable day-card snapshot + fingerprint helpers for map POI rendering
+│   │   ├── TimelineBlockList.helpers.ts    # TimelineBlockList helper utilities
 │   │   ├── TimelineBlockList.tsx
+│   │   ├── TimelineBlockListAddActivityButton.tsx # Add activity button extracted from TimelineBlockList
+│   │   ├── TimelineBlockListFreeDay.tsx    # Free day block extracted from TimelineBlockList
+│   │   ├── TimelineBlockListLegacyBlock.tsx # Legacy block extracted from TimelineBlockList
 │   │   ├── TimelineDayCard.tsx
 │   │   ├── TimelineThread.tsx
+│   │   ├── TripSummaryPills.helpers.ts     # TripSummaryPills helper utilities
 │   │   ├── TripSummaryPills.tsx
+│   │   ├── TripSummaryPillsSegment.tsx     # Pill segment extracted from TripSummaryPills
 │   │   ├── tripSummaryUtils.ts        # Shared category/day-count inference for pills and activity sheet
 │   │   ├── UnifiedChipRow.tsx
 │   │   ├── useBookingDrawerState.ts        # Booking drawer open/close + fill-day API hook
+│   │   ├── usePlanFullDensityData.tsx      # PlanFullDensityView data hook
+│   │   ├── useStickyHeaderOffset.ts        # Sticky header offset hook
 │   │   ├── useStrategyStageOrchestration.ts # Heavy computation/state/effects for StrategyStageRenderer
 │   │   ├── useTimelineBufferLogic.ts       # Buffer/day-card classification helper for timeline states
+│   │   ├── useTimelineThreadBrowseSheet.ts # TimelineThread browse sheet hook
+│   │   ├── useTimelineThreadMapSync.ts     # TimelineThread map sync hook
+│   │   ├── useTripSummaryFade.ts           # Trip summary fade animation hook
 │   │   │
 │   │   ├── booking/
 │   │   │   ├── BookingDrawer.tsx
 │   │   │   ├── CategorySection.tsx
+│   │   │   ├── CategorySectionTile.tsx         # Individual tile within CategorySection
 │   │   │   └── CheckoutSidebar.tsx
 │   │   │
 │   │   ├── modals/
-│   │   │   └── AlternativesModal.tsx
+│   │   │   ├── AlternativesModal.helpers.ts    # AlternativesModal helper utilities
+│   │   │   ├── AlternativesModal.tsx
+│   │   │   ├── AlternativesModalContent.tsx    # AlternativesModal content (extracted from AlternativesModal)
+│   │   │   ├── AlternativesModalOptionCard.tsx # Option card for AlternativesModal
+│   │   │   └── AlternativesModalThumbnail.tsx  # Thumbnail for AlternativesModal
 │   │   │
 │   │   ├── sheets/             # Bottom sheets
+│   │   │   ├── ActivitiesSheet.helpers.ts      # ActivitiesSheet helper utilities
 │   │   │   ├── ActivitiesSheet.tsx
 │   │   │   ├── ActivitiesSheetContent.tsx      # Activity sheet form/section rendering
+│   │   │   ├── ActivitiesSheetFooter.tsx       # Activities sheet footer
+│   │   │   ├── BaseSheet.shared.tsx            # Shared BaseSheet utilities/types
 │   │   │   ├── BaseSheet.tsx
+│   │   │   ├── BaseSheetDesktopDialog.tsx      # Desktop dialog variant of BaseSheet
+│   │   │   ├── BaseSheetMobileSheet.tsx        # Mobile sheet variant of BaseSheet
 │   │   │   ├── BudgetSheet.tsx
+│   │   │   ├── BudgetSheetControls.tsx         # Budget sheet form controls
 │   │   │   ├── DatesSheet.tsx
+│   │   │   ├── DatesSheet.utils.ts             # DatesSheet utility functions
+│   │   │   ├── DatesSheetDialog.tsx            # Dates sheet dialog content
 │   │   │   ├── DestinationSheet.tsx
 │   │   │   ├── FlightsSheet.tsx
+│   │   │   ├── FlightsSheetControls.tsx        # Flights sheet form controls
 │   │   │   ├── GatingBlocker.tsx     # Shared gate-check blocker (gates array, used by Flights/Stays/Activities sheets)
+│   │   │   ├── LocationSheetParts.tsx          # Location sheet parts (shared by Origin/Destination)
 │   │   │   ├── OriginSheet.tsx
+│   │   │   ├── SheetFooterActions.tsx          # Shared sheet footer action buttons
 │   │   │   ├── StaysSheet.tsx
+│   │   │   ├── StaysSheetFields.tsx            # Stays sheet form fields
 │   │   │   ├── TravelersSheet.tsx
+│   │   │   ├── TravelersSheetControls.tsx      # Travelers sheet form controls
 │   │   │   └── TripSettingsSheet.tsx
 │   │   │
 │   │   ├── stages/             # Stage-specific views
@@ -450,6 +525,7 @@ frontend/
 │   │   │   ├── S2LocalIntelSection.tsx   # Local intel section within expanded agent card
 │   │   │   ├── S2TopicConfig.tsx         # Topic configuration panel for S2 specialists
 │   │   │   ├── StrategyHero.tsx
+│   │   │   ├── StrategyHeroCompact.tsx         # Compact variant of StrategyHero
 │   │   │   ├── StrategyHeroContent.tsx
 │   │   │   ├── StrategyHeroAccordion.tsx        # Accordion expansion for StrategyHero sections
 │   │   │   ├── StrategyHeroCompactSheet.tsx     # Compact sheet variant for StrategyHero
@@ -457,11 +533,13 @@ frontend/
 │   │   │   ├── StrategyHeroTISectionsA.tsx      # Travel intelligence sections (part A)
 │   │   │   ├── StrategyHeroTISectionsB.tsx      # Travel intelligence sections (part B)
 │   │   │   ├── StrategyHeroTravelIntelligence.tsx # Travel intelligence display component
-│   │   │   └── StrategyHeroUtils.tsx            # Shared utilities for StrategyHero components
+│   │   │   ├── StrategyHeroUtils.tsx            # Shared utilities for StrategyHero components
+│   │   │   └── useStrategyHeroEnrichment.ts    # StrategyHero enrichment hook
 │   │   │
 │   │   ├── tiles/
 │   │   │   ├── SuggestionCard.tsx
-│   │   │   └── SuggestionCardContent.tsx
+│   │   │   ├── SuggestionCardContent.tsx
+│   │   │   └── suggestionCardSections.tsx      # SuggestionCard sections (extracted)
 │   │   │
 │   │   └── timeline/
 │   │       ├── DragPreviewCard.tsx     # Ghost card shown in DragOverlay during block drag
@@ -470,20 +548,26 @@ frontend/
 │   │       ├── FreeDayDropSlot.tsx     # Drop zone inside FreeDayCard (via freeDayDropSlot render prop)
 │   │       ├── InlineDatePrompt.tsx
 │   │       ├── ItineraryDndWrapper.tsx # DndContext root; orchestrates validate/apply-arrangement flow
+│   │       ├── RichBlockRenderer.helpers.ts    # RichBlockRenderer helper utilities
 │   │       ├── RichBlockRenderer.tsx   # Smart block router: logistics → safety → ghost → activity (extracted from TimelineThread)
 │   │       ├── TimelineSkeleton.tsx
 │   │       ├── useTimelineFillDay.ts   # Fill-day state + handler hook (extracted from TimelineThread)
 │   │       └── blocks/
-│   │           ├── ActivityMiniCard.tsx
+│   │           ├── ActivityCardActionParts.tsx     # Action parts extracted from ActivityCardActions
 │   │           ├── ActivityCardActions.tsx
+│   │           ├── ActivityCardMeta.helpers.ts     # ActivityCardMeta helper utilities
 │   │           ├── ActivityCardMeta.tsx
 │   │           ├── ActivityCardPhoto.tsx
+│   │           ├── ActivityMiniCard.tsx
 │   │           ├── FreeDayCard.tsx
+│   │           ├── FreeDayCardSections.tsx         # FreeDayCard sections
 │   │           ├── GhostSlot.tsx
 │   │           ├── HoldToDeleteButton.tsx          # Press-and-hold circular progress delete button
 │   │           ├── LogisticsBlock.tsx
+│   │           ├── LogisticsBlockParts.tsx         # LogisticsBlock parts
 │   │           ├── PreferenceAttributionBadge.tsx  # "You preferred this" badge
 │   │           ├── SafetyBlock.tsx
+│   │           ├── activityMiniCardTheme.ts       # Activity mini card theme constants
 │   │           └── types.ts
 │   │
 │   ├── providers/
@@ -492,11 +576,21 @@ frontend/
 │   ├── tiles/                  # Tile display components
 │   │   ├── MiniCard.tsx
 │   │   ├── MiniCardContent.tsx
+│   │   ├── MiniCardQuickFacts.tsx          # Quick facts section extracted from MiniCardContent
+│   │   ├── MiniCardSummary.tsx             # Summary section extracted from MiniCardContent
+│   │   ├── MiniCardSummaryPricing.tsx      # Pricing section of MiniCardSummary
+│   │   ├── MiniCardSummaryThumbnail.tsx    # Thumbnail section of MiniCardSummary
 │   │   ├── TaxesFeesTooltip.tsx
 │   │   ├── TileCard.tsx
+│   │   ├── TileCardActions.tsx             # Tile card actions extracted from TileCard
 │   │   ├── TileCardContent.tsx
+│   │   ├── TileCardMedia.tsx               # Tile card media section extracted from TileCard
+│   │   ├── TileDetailsFooter.tsx           # Tile details footer extracted from TileDetailsModal
 │   │   ├── TileDetailsInfo.tsx
-│   │   └── TileDetailsModal.tsx
+│   │   ├── TileDetailsModal.tsx
+│   │   ├── TileDetailsSupportingSections.tsx # Supporting sections for TileDetailsModal
+│   │   ├── tileHelpers.ts                  # Shared tile helper utilities
+│   │   └── tileSections.tsx                # Tile section barrel/re-exports
 │   │
 │   └── ui/                     # Base UI components
 │       ├── ErrorBoundary.tsx       # Generic error boundary wrapper
@@ -530,7 +624,7 @@ frontend/
 │   ├── useSheetManager.ts
 │   ├── useSpecialistDeepLink.ts
 │   ├── useTripInputsWithFallback.ts
-│   ├── useMapSync.ts             # Zustand store for map↔timeline two-way sync (Stage 19)
+│   ├── useMapSync.ts             # Zustand store for map↔timeline two-way sync
 │   ├── useUndoStack.ts           # Auto-expire side effect hook for undo stack (clears undoEntry after 8s)
 │   └── useViewNavigation.ts
 │
@@ -539,7 +633,6 @@ frontend/
 │   ├── api.ts                  # API client
 │   ├── config.ts               # Shared backend URL constant for RSC + client fetches
 │   ├── contentPolicyGuard.ts   # Content policy validation
-│   ├── country-flags.ts        # Algorithmic ISO country-code -> flag rendering helper
 │   ├── date-utils.ts           # Date formatting/parsing utilities
 │   ├── dayIntensity.ts         # Day intensity scoring (relaxed/balanced/packed) from DayBlock hours
 │   ├── debug.ts                # Debug/logging utilities
@@ -549,8 +642,9 @@ frontend/
 │   ├── specialist-colors.ts    # Specialist-to-color text class mappings (SSoT for specialist badge text colors)
 │   ├── fillDayGuards.ts        # Fill-day client cooldown guard helpers
 │   ├── format-utils.ts         # Formatting utilities
-│   ├── ghost-timeline-adapter.ts  # Ghost timeline + MapPOI extraction (MapPOI.dayNumber added Stage 19)
+│   ├── ghost-timeline-adapter.ts  # Ghost timeline + MapPOI extraction helpers
 │   ├── googlePlacesPhoto.ts    # Google Places photo URL helpers
+│   ├── sharedTripApi.ts        # Shared client/server helpers for `/api/shared/{slug}`
 │   ├── categoryNormalization.ts  # Category canonicalization and chip filtering helpers
 │   ├── showMutationToast.ts    # Toast helper with Undo CTA for drag/remove mutations
 │   ├── loaderConfig.ts         # Loader configuration
@@ -608,15 +702,24 @@ frontend/
 │   ├── chat-suggestion-chips.test.tsx
 │   ├── documentStore.test.ts
 │   ├── fill-day-guards.test.ts
+│   ├── category-normalization.test.ts
 │   ├── ghost-timeline-adapter.test.ts
 │   ├── google-places-photo.test.ts
 │   ├── itinerary-generation-dedupe.test.tsx
+│   ├── LandingHelpers.test.ts          # Landing helper keyword/diff tests
 │   ├── landing-derived.test.tsx
 │   ├── map-error-boundary.test.ts
+│   ├── map-helpers.test.ts             # InteractiveMap helper hook tests
 │   ├── plan-copy.test.tsx
 │   ├── placeholders.test.ts
 │   ├── rich-block-renderer.test.tsx
+│   ├── split-render-surfaces.test.tsx  # Split render surfaces component extraction tests
+│   ├── strategy-stage-orchestration.test.ts  # StrategyStage orchestration helper tests
 │   ├── streaming.test.ts
+│   ├── tileHelpers.test.ts             # Tile helper utility tests
+│   ├── useChatSend.optimistic-extension.test.tsx  # Optimistic extension rollback tests for chat send
+│   ├── useTripInputsWithFallback.test.tsx  # Trip-input fallback subscription behavior tests
+│   ├── userStore.test.ts               # Auth/recent-trips store tests
 │   └── travel-intel.test.ts
 │
 ├── .prettierignore             # Prettier ignore patterns

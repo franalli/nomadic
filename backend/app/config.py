@@ -50,8 +50,7 @@ class Settings(BaseSettings):
     # =============================================================================
     # extract_trip_fields tool, router_extraction, specialist feasibility
     router_model: str = "gemini-2.5-flash"
-    # local_expert LLM — uses prompt-based JSON parsing (not function_calling)
-    # to avoid Gemini $defs limitation
+    # local_expert LLM — uses Gemini-safe function calling with a flattened schema
     local_expert_model: str = "gemini-2.5-flash"
     local_expert_use_llm: bool = True  # Set LOCAL_EXPERT_USE_LLM=false to disable LLM (tests/debug)
     # vertical_specialist domain reasoning — KEEP gpt-4o (quality risk on Gemini Flash)
@@ -120,6 +119,12 @@ class Settings(BaseSettings):
     viator_enabled: bool = False
     viator_cache_ttl_hours: int = 24
     viator_api_url: str = "https://api.viator.com/partner"
+
+    # Aviasales / Travelpayouts Flights API
+    aviasales_api_token: str = ""
+    aviasales_marker: str = ""
+    aviasales_enabled: bool = False
+    aviasales_cache_ttl_hours: int = 1
 
     # =============================================================================
     # Cache Configuration

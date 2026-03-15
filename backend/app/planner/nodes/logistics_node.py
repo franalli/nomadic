@@ -27,7 +27,7 @@ from typing import Any, Dict, List
 from urllib.parse import quote
 
 from app.config import settings
-from app.data.demo_curation import CARRIER_MAP, DEMO_MANIFEST
+from app.data.demo_curation import CARRIER_MAP
 from app.debug_utils import (
     CompactLogger,
     _debug_log,
@@ -39,6 +39,7 @@ from app.planner.hashing import stable_hash
 from app.planner.services.iata_resolver import resolve_iata_codes
 from app.planner.state.graph_state import GraphState
 from app.planner.state.typed_meta import get_trip_settings
+from app.services.aviasales_provider import search_aviasales_flights
 from app.services.task_tracker import track as _track_task
 from app.tile_service.mock_provider import MockActivityProvider, MockHotelProvider
 from app.tile_service.models import SearchContext
@@ -557,11 +558,12 @@ async def logistics_node(state: GraphState) -> GraphState:
     # ==========================================================================
     _logistics_settings = get_trip_settings(state)
     flights_requested = _logistics_settings.booking_types.flights != "off"
+    allow_flight_auto_upgrade = bool(state.metadata.get("allow_flight_auto_upgrade", True))
 
     # Auto-upgrade flights when origin is available but flights still at default 'off'.
     # Mirrors frontend logic in documentStore.ts:52 ("Upgrades to 'suggested' when origin is set")
     # but runs server-side where origin is available in-time (frontend PATCH races the graph).
-    if not flights_requested and plan.origin:
+    if not flights_requested and plan.origin and allow_flight_auto_upgrade:
         _debug_log("[LOGISTICS] ✈️ Auto-upgrading flights: off → suggested (origin present)")
         flights_requested = True
         _logistics_settings.booking_types.flights = "suggested"
@@ -574,6 +576,8 @@ async def logistics_node(state: GraphState) -> GraphState:
         trip_inputs = state.metadata.setdefault("trip_inputs", {})
         trip_inputs_bt = trip_inputs.setdefault("booking_types", {})
         trip_inputs_bt["flights"] = "suggested"
+    elif not flights_requested and plan.origin and not allow_flight_auto_upgrade:
+        _debug_log("[LOGISTICS] ⏭️ Flights explicitly excluded for this refresh; no auto-upgrade")
 
     direct_only_requested = bool(_logistics_settings.flight_settings.direct_only)
     trip_inputs = state.metadata.get("trip_inputs", {})
@@ -581,7 +585,9 @@ async def logistics_node(state: GraphState) -> GraphState:
 
     _debug_log(f"[LOGISTICS] trip_plan.origin={plan.origin!r}")
     _debug_log(
-        f"[LOGISTICS] flights_requested={flights_requested} origin_present={bool(plan.origin)}"
+        f"[LOGISTICS] flights_requested={flights_requested} "
+        f"origin_present={bool(plan.origin)} "
+        f"allow_auto_upgrade={allow_flight_auto_upgrade}"
     )
 
     # Skip flights if disabled in settings (even if origin exists)
@@ -616,10 +622,48 @@ async def logistics_node(state: GraphState) -> GraphState:
 
     state.metadata["flight_search_possible"] = can_search_flights
 
+    aviasales_task: asyncio.Task[list[dict[str, Any]]] | None = None
+    if can_search_flights and settings.aviasales_enabled and origin_code and dest_code:
+        depart_date = plan.start_date or plan.end_date or ""
+        return_date = plan.end_date or ""
+        if not return_date and depart_date:
+            trip_settings = get_trip_settings(state)
+            if trip_settings and trip_settings.trip_duration:
+                try:
+                    dt = datetime.strptime(depart_date[:10], "%Y-%m-%d")
+                    return_offset_days = max(trip_settings.trip_duration - 1, 0)
+                    return_date = (dt + timedelta(days=return_offset_days)).strftime("%Y-%m-%d")
+                except Exception:
+                    pass
+
+        async def _fetch_aviasales_tiles() -> list[dict[str, Any]]:
+            try:
+                return await search_aviasales_flights(
+                    origin=origin_code,
+                    destination=dest_code,
+                    depart_date=depart_date,
+                    return_date=return_date,
+                    currency=(plan.currency or "USD").lower(),
+                )
+            except Exception as e:
+                logger.warning(f"[Logistics] Aviasales search failed: {e}")
+                return []
+
+        aviasales_task = asyncio.create_task(_fetch_aviasales_tiles())
+
     # CRITICAL FIX: Always search for hotels/activities even without origin
     # Hotels and activities only need destination + dates
     # @see docs/ux_unified_architecture.md - Enable tile search without origin
-    await _search_hotels_and_activities(state, plan)
+    try:
+        await _search_hotels_and_activities(state, plan)
+    except asyncio.CancelledError:
+        if aviasales_task is not None and not aviasales_task.done():
+            aviasales_task.cancel()
+        raise
+    except Exception:
+        if aviasales_task is not None and not aviasales_task.done():
+            aviasales_task.cancel()
+        raise
 
     # Skip flight search if disabled or missing origin
     if not can_search_flights:
@@ -686,137 +730,189 @@ async def logistics_node(state: GraphState) -> GraphState:
         f"date={plan.end_date or plan.start_date}"
     )
 
-    # Flight provider routing (consistent with hotels/activities):
-    # 1. Curated destinations → curated flights
-    # 2. Non-curated destinations → mock flights
+    # Flight provider routing:
+    # 1. Aviasales real-time search (if enabled + IATA codes available)
+    # 2. Fallback: mock flights for all destinations
     raw_flights = []
     flight_source = "unknown"
-    dest_key = plan.destination.lower().strip()
-    curated_manifest = DEMO_MANIFEST.get(dest_key, {})
-    curated_flights = curated_manifest.get("curated_flights")
+    aviasales_tiles: list[dict] = []
 
-    if curated_flights:
-        # Use curated flights for hero destinations (Dubai, Rome, Chamonix)
-        log(
-            "LOGISTICS",
-            f"Using curated flights for {plan.destination}",
-            data=f"{len(curated_flights)} options",
-        )
-        raw_flights = _curated_to_flight_tiles(curated_flights, plan.end_date or plan.start_date)
-        flight_source = "curated"
-        _debug_log(f"Curated flights: {[f.get('carrier_name') for f in curated_flights]}")
+    # 1. Try Aviasales real-time search first
+    if aviasales_task is not None:
+        aviasales_tiles = await aviasales_task
+
+    if aviasales_tiles:
+        # Aviasales tiles are already in final tile format — skip raw processing loop.
+        log("LOGISTICS", f"Aviasales returned {len(aviasales_tiles)} flights")
+        flight_source = "aviasales"
+        processed_options = aviasales_tiles
+
+        # Apply direct-only filter if requested
+        if direct_only_requested:
+            before = len(processed_options)
+            processed_options = [
+                t for t in processed_options if t.get("meta", {}).get("is_direct", False)
+            ]
+            dropped = before - len(processed_options)
+            if dropped:
+                log(
+                    "LOGISTICS",
+                    "Direct-flight filter applied",
+                    data=f"removed {dropped} non-direct options",
+                )
+
+        # Apply no-fly safety constraints
+        has_nofly_safety_rule = _has_nofly_constraints(state)
+        if has_nofly_safety_rule:
+            log(
+                "LOGISTICS",
+                "No-fly safety constraints detected",
+                data="applying no-fly buffer rule",
+            )
+            for tile in processed_options:
+                dep_time = tile.get("meta", {}).get("departure_time", "")
+                if dep_time:
+                    logic_hook, is_safe = _calculate_diving_safety(dep_time)
+                    tile["meta"]["logic_hook"] = logic_hook
+                    tile["meta"]["is_safe"] = is_safe
+            unsafe_count = sum(
+                1 for t in processed_options if not t.get("meta", {}).get("is_safe", True)
+            )
+            if unsafe_count:
+                processed_options = [
+                    t for t in processed_options if t.get("meta", {}).get("is_safe", True)
+                ]
+                log(
+                    "LOGISTICS",
+                    f"Removed {unsafe_count} unsafe flight(s) (no-fly buffer < 24h)",
+                )
+        else:
+            unsafe_count = 0
+
+        safe_count = len(processed_options)
     else:
-        # Use mock flights for non-curated destinations
+        # 2. Fallback: mock flights for all destinations
         log("LOGISTICS", f"Using mock flights for {plan.destination}")
         raw_flights = _get_mock_flights(plan.end_date or plan.start_date)
         flight_source = "mock"
         _debug_log(f"Mock provider returned {len(raw_flights)} flights")
 
-    # 2. DETECT CONSTRAINTS
-    # Check if any specialist has a no-fly buffer constraint (e.g., diving 24h rule)
-    has_nofly_safety_rule = _has_nofly_constraints(state)
-    if has_nofly_safety_rule:
-        log("LOGISTICS", "No-fly safety constraints detected", data="applying no-fly buffer rule")
-        _debug_log("Will calculate surface interval for each flight")
-
-    # 3. PROCESS & SANITIZE
-    processed_options = []
-    sanitized_carriers = []
-    dropped_non_direct = 0
-
-    for offer in raw_flights:
-        try:
-            itinerary = offer["itineraries"][0]
-            segments = itinerary.get("segments", [])
-            if not segments:
-                logger.warning("[Logistics] Skipping offer with no segments")
-                continue
-            segment = segments[0]
-            carrier_code = segment["carrierCode"]
-            dep_time_str = segment["departure"]["at"]
-            duration_iso = segment.get("duration", "PT6H")
-            stops = max(0, len(segments) - 1)
-            is_direct = stops == 0
-
-            if direct_only_requested and not is_direct:
-                dropped_non_direct += 1
-                continue
-
-            # A. Sanitize Carrier (The "Pro" Polish)
-            carrier_info = CARRIER_MAP.get(
-                carrier_code, {"name": carrier_code, "logo": carrier_code}
+        # 2. DETECT CONSTRAINTS
+        has_nofly_safety_rule = _has_nofly_constraints(state)
+        if has_nofly_safety_rule:
+            log(
+                "LOGISTICS",
+                "No-fly safety constraints detected",
+                data="applying no-fly buffer rule",
             )
-            if carrier_code in CARRIER_MAP and carrier_code != carrier_info["logo"]:
-                sanitized_carriers.append(f"{carrier_code}->{carrier_info['logo']}")
-            logo_url = f"https://pics.avs.io/200/200/{carrier_info['logo']}.png"
+            _debug_log("Will calculate surface interval for each flight")
 
-            # B. Apply Safety Math (The "Constraint Engine")
-            logic_hook = None
-            is_safe = True  # Default to safe if no no-fly constraints
-            if has_nofly_safety_rule:
-                logic_hook, is_safe = _calculate_diving_safety(dep_time_str)
+        # 3. PROCESS & SANITIZE
+        processed_options = []
+        sanitized_carriers = []
+        dropped_non_direct = 0
 
-            # C. Format Duration
-            duration_clean = duration_iso.replace("PT", "").lower()
-            stops_label = "Direct" if is_direct else f"{stops} stop{'s' if stops > 1 else ''}"
+        for offer in raw_flights:
+            try:
+                itinerary = offer["itineraries"][0]
+                segments = itinerary.get("segments", [])
+                if not segments:
+                    logger.warning("[Logistics] Skipping offer with no segments")
+                    continue
+                segment = segments[0]
+                carrier_code = segment["carrierCode"]
+                dep_time_str = segment["departure"]["at"]
+                duration_iso = segment.get("duration", "PT6H")
+                stops = max(0, len(segments) - 1)
+                is_direct = stops == 0
 
-            # Build Tile-compatible dict for state.tiles["flights"]
-            price_value = float(offer["price"]["total"])
-            option = {
-                "id": offer["id"],
-                "type": "flight",
-                "partner": "curated" if flight_source == "curated" else "mock",
-                "partner_product_id": offer["id"],
-                "title": f"{carrier_info['name']} - {stops_label}",
-                "subtitle": f"Departs {dep_time_str.split('T')[1][:5]} • {duration_clean}",
-                "image_url": logo_url,
-                "price_estimate": price_value,
-                "currency": plan.currency or "USD",
-                "price_basis": "per_person",
-                "is_estimate_only": True,
-                "deeplink": f"https://www.google.com/travel/flights?q=flights+from+{quote(origin_code)}+to+{quote(dest_code)}",
-                "tags": [carrier_info["name"], stops_label.lower()],
-                "availability_status": "available",
-                "meta": {
-                    "logic_hook": logic_hook,
-                    "is_safe": is_safe,  # CRITICAL: Frontend checks this for amber border
-                    "carrier_code": carrier_info["logo"],
-                    "carrier_name": carrier_info["name"],
-                    "departure_time": dep_time_str,
-                    "duration": duration_clean,
-                    "stops": stops,
-                    "is_direct": is_direct,
-                },
-                "source": flight_source,
-                "source_agent": "logistics_node",
-                "category": "flight",
-            }
-            processed_options.append(option)
+                if direct_only_requested and not is_direct:
+                    dropped_non_direct += 1
+                    continue
 
-        except Exception as e:
-            logger.warning(f"[Logistics] Skipping malformed offer: {e}")
-            _debug_log(f"Malformed offer skipped: {e}")
-            continue
+                # A. Sanitize Carrier (The "Pro" Polish)
+                carrier_info = CARRIER_MAP.get(
+                    carrier_code, {"name": carrier_code, "logo": carrier_code}
+                )
+                if carrier_code in CARRIER_MAP and carrier_code != carrier_info["logo"]:
+                    sanitized_carriers.append(f"{carrier_code}->{carrier_info['logo']}")
+                logo_url = f"https://pics.avs.io/200/200/{carrier_info['logo']}.png"
 
-    # Log sanitization summary
-    if sanitized_carriers:
-        _debug_log(f"Sanitized carriers: {', '.join(sanitized_carriers)}")
-    if direct_only_requested and dropped_non_direct > 0:
-        log(
-            "LOGISTICS",
-            "Direct-flight filter applied",
-            data=f"removed {dropped_non_direct} non-direct options",
+                # B. Apply Safety Math (The "Constraint Engine")
+                logic_hook = None
+                is_safe = True  # Default to safe if no no-fly constraints
+                if has_nofly_safety_rule:
+                    logic_hook, is_safe = _calculate_diving_safety(dep_time_str)
+
+                # C. Format Duration
+                duration_clean = duration_iso.replace("PT", "").lower()
+                stops_label = "Direct" if is_direct else f"{stops} stop{'s' if stops > 1 else ''}"
+
+                # Build Tile-compatible dict for state.tiles["flights"]
+                price_value = float(offer["price"]["total"])
+                option = {
+                    "id": offer["id"],
+                    "type": "flight",
+                    "partner": "mock",
+                    "partner_product_id": offer["id"],
+                    "title": f"{carrier_info['name']} - {stops_label}",
+                    "subtitle": f"Departs {dep_time_str.split('T')[1][:5]} • {duration_clean}",
+                    "image_url": logo_url,
+                    "price_estimate": price_value,
+                    "currency": plan.currency or "USD",
+                    "price_basis": "per_person",
+                    "is_estimate_only": True,
+                    "deeplink": f"https://www.google.com/travel/flights?q=flights+from+{quote(origin_code)}+to+{quote(dest_code)}",
+                    "deeplink_url": f"https://www.google.com/travel/flights?q=flights+from+{quote(origin_code)}+to+{quote(dest_code)}",
+                    "tags": [carrier_info["name"], stops_label.lower()],
+                    "availability_status": "available",
+                    "meta": {
+                        "logic_hook": logic_hook,
+                        "is_safe": is_safe,  # CRITICAL: Frontend checks this for amber border
+                        "carrier_code": carrier_info["logo"],
+                        "carrier_name": carrier_info["name"],
+                        "departure_time": dep_time_str,
+                        "duration": duration_clean,
+                        "stops": stops,
+                        "is_direct": is_direct,
+                    },
+                    "source": flight_source,
+                    "source_agent": "logistics_node",
+                    "category": "flight",
+                }
+                processed_options.append(option)
+
+            except Exception as e:
+                logger.warning(f"[Logistics] Skipping malformed offer: {e}")
+                _debug_log(f"Malformed offer skipped: {e}")
+                continue
+
+        # Log sanitization summary
+        if sanitized_carriers:
+            _debug_log(f"Sanitized carriers: {', '.join(sanitized_carriers)}")
+        if direct_only_requested and dropped_non_direct > 0:
+            log(
+                "LOGISTICS",
+                "Direct-flight filter applied",
+                data=f"removed {dropped_non_direct} non-direct options",
+            )
+            _debug_log(
+                f"[VERIFY][FLIGHTS] direct_only=true removed_non_direct={dropped_non_direct}"
+            )
+
+        # Count safe vs unsafe flights and filter out unsafe ones
+        safe_count = sum(
+            1 for opt in processed_options if (opt.get("meta") or {}).get("is_safe", True)
         )
-        _debug_log(f"[VERIFY][FLIGHTS] direct_only=true removed_non_direct={dropped_non_direct}")
-
-    # Count safe vs unsafe flights and filter out unsafe ones
-    safe_count = sum(1 for opt in processed_options if (opt.get("meta") or {}).get("is_safe", True))
-    unsafe_count = len(processed_options) - safe_count
-    if unsafe_count > 0:
-        processed_options = [
-            opt for opt in processed_options if (opt.get("meta") or {}).get("is_safe", True)
-        ]
-        log("LOGISTICS", f"Removed {unsafe_count} unsafe flight(s) (no-fly buffer < 24h)")
+        unsafe_count = len(processed_options) - safe_count
+        if unsafe_count > 0:
+            processed_options = [
+                opt for opt in processed_options if (opt.get("meta") or {}).get("is_safe", True)
+            ]
+            log(
+                "LOGISTICS",
+                f"Removed {unsafe_count} unsafe flight(s) (no-fly buffer < 24h)",
+            )
 
     # 4. STORE IN STATE - Write to state.tiles["flights"] for frontend display
     state.tiles["flights"] = processed_options
@@ -1426,11 +1522,11 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     # - Mixed Tier 1 + Tier 2 → generate experience tiles for Tier 2 categories
     # When no niche specialist:
     # - Pure Tier 2 selections → generate experience tiles (most important case)
-    from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES
+    from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES, TIER2_BROWSE_CATEGORIES
 
     NICHE_SPECIALISTS = TIER1_SPECIALIST_NAMES
     TIER1_CATEGORIES = TIER1_SPECIALIST_NAMES
-    _DEFAULT_BROWSE_CATEGORIES = ["cultural", "food", "nature", "spa", "tours", "shopping"]
+    _DEFAULT_BROWSE_CATEGORIES = TIER2_BROWSE_CATEGORIES
     executed = state.metadata.get("executed_strategy_topics", [])
     used_tier2_categories: set[str] = set()
     tier2_attempted = False

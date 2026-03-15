@@ -58,7 +58,7 @@ export function GatingBlocker({ featureLabel, gates, onClose }: GatingBlockerPro
   return (
     <div className={cn(
       // Clean, cool technical surface
-      'mb-4 p-5 rounded-xl flex gap-4 items-start',
+      'mb-4 p-4 rounded-xl flex gap-4 items-start',
       'bg-zinc-50 dark:bg-white/[0.02]',
       'border border-zinc-100 dark:border-white/5'
     )}>

@@ -1,5 +1,5 @@
 # backend/app/analytics_routes.py
-"""Analytics tracking endpoints (tile clicks, suggestion clicks).
+"""Analytics tracking endpoints.
 
 Extracted from main.py to keep the FastAPI app module focused on core routes.
 """

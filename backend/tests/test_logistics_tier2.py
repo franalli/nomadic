@@ -12,10 +12,22 @@ from app.planner.nodes.logistics_node import (
     _search_hotels_and_activities,
     _tier2_generation_key,
 )
+from app.planner.specialist_registry import TIER2_BROWSE_CATEGORIES
 from app.planner.state import GraphState, TripPlan
 
 logistics_node_module = importlib.import_module("app.planner.nodes.logistics_node")
 unsplash_module = importlib.import_module("app.services.unsplash")
+
+
+def test_shared_tier2_browse_categories_include_spa() -> None:
+    assert TIER2_BROWSE_CATEGORIES == (
+        "cultural",
+        "food",
+        "nature",
+        "spa",
+        "tours",
+        "shopping",
+    )
 
 
 @pytest.mark.asyncio
@@ -261,6 +273,60 @@ async def test_tier2_new_content_flag_true_when_activity_set_changes(
 
 
 @pytest.mark.asyncio
+async def test_logistics_respects_explicit_flight_exclusion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GraphState(
+        trip_plan=TripPlan(
+            destination="Bali",
+            destination_iata="DPS",
+            origin="Rome",
+            origin_iata="FCO",
+            start_date="2026-04-01",
+            end_date="2026-04-07",
+        )
+    )
+    state.metadata.update(
+        {
+            "allow_flight_auto_upgrade": False,
+            "trip_settings": {
+                "booking_types": {
+                    "flights": "off",
+                    "hotels": "suggested",
+                    "activities": "suggested",
+                    "ground_transport": "off",
+                }
+            },
+            "trip_inputs": {
+                "booking_types": {
+                    "flights": "off",
+                    "hotels": "suggested",
+                    "activities": "suggested",
+                    "ground_transport": "off",
+                }
+            },
+        }
+    )
+
+    search_hotels_and_activities = AsyncMock(return_value=None)
+    search_flights = AsyncMock(return_value=[])
+
+    monkeypatch.setattr(
+        logistics_node_module,
+        "_search_hotels_and_activities",
+        search_hotels_and_activities,
+    )
+    monkeypatch.setattr(logistics_node_module, "search_aviasales_flights", search_flights)
+
+    await logistics_node_module.logistics_node(state)
+
+    assert search_hotels_and_activities.await_count == 1
+    assert search_flights.await_count == 0
+    assert state.metadata.get("flight_search_status") == "skipped_disabled"
+    assert state.metadata.get("trip_settings", {}).get("booking_types", {}).get("flights") == "off"
+
+
+@pytest.mark.asyncio
 async def test_pure_tier1_multi_specialist_suppresses_activities(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -353,6 +419,74 @@ async def test_logistics_sets_no_origin_flight_skip_metadata(
     assert state.metadata.get("flight_skip_reason") == "no_origin_for_flights"
     assert state.metadata.get("booking_summary", {}).get("flights_found") == 0
     assert state.tiles.get("flights") == []
+
+
+@pytest.mark.asyncio
+async def test_logistics_derives_inclusive_aviasales_return_date_from_trip_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GraphState(
+        trip_plan=TripPlan(
+            destination="Bali",
+            origin="Amsterdam",
+            start_date="2026-04-01",
+            end_date=None,
+            currency="USD",
+        )
+    )
+    state.tiles = {"hotels": [], "activities": [], "flights": []}
+    state.metadata.update(
+        {
+            "trip_settings": {
+                "booking_types": {
+                    "flights": "suggested",
+                    "hotels": "suggested",
+                    "activities": "off",
+                },
+                "flight_settings": {"direct_only": False, "round_trip": True},
+                "hotel_settings": {"min_stars": 0, "amenities": []},
+                "activity_settings": {"categories": []},
+                "trip_duration": 7,
+            },
+            "allow_flight_auto_upgrade": False,
+        }
+    )
+    captured: dict[str, str] = {}
+
+    async def _fake_search_hotels_and_activities(state_arg, _plan_arg):
+        state_arg.tiles["hotels"] = []
+        state_arg.tiles["activities"] = []
+
+    async def _fake_resolve_iata_codes(origin: str, destination: str, _state: GraphState):
+        assert origin == "Amsterdam"
+        assert destination == "Bali"
+        return "AMS", "DPS"
+
+    async def _fake_search_aviasales_flights(**kwargs):
+        captured["depart_date"] = kwargs["depart_date"]
+        captured["return_date"] = kwargs["return_date"]
+        return []
+
+    monkeypatch.setattr(settings, "aviasales_enabled", True)
+    monkeypatch.setattr(
+        logistics_node_module,
+        "_search_hotels_and_activities",
+        _fake_search_hotels_and_activities,
+    )
+    monkeypatch.setattr(logistics_node_module, "resolve_iata_codes", _fake_resolve_iata_codes)
+    monkeypatch.setattr(
+        logistics_node_module,
+        "search_aviasales_flights",
+        _fake_search_aviasales_flights,
+    )
+    monkeypatch.setattr(logistics_node_module, "_get_mock_flights", lambda *_args, **_kwargs: [])
+
+    await logistics_node_module.logistics_node(state)
+
+    assert captured == {
+        "depart_date": "2026-04-01",
+        "return_date": "2026-04-07",
+    }
 
 
 @pytest.mark.asyncio

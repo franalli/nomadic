@@ -13,14 +13,14 @@ class TestCacheKeyGeneration:
     """Test cache key generation logic."""
 
     def test_basic_key(self):
-        """Test cache key format with ISO-month bucketing.
+        """Test cache key format with ISO-month + duration bucketing.
 
-        Format: specialist::v4::{topic}::{dest}::{iso_month}::m::{skill}::{dpref}::{phash}.
+        Format: specialist::v5::{topic}::{dest}::{iso_month}::{duration}::{skill}::{dpref}::{phash}.
         """
         from app.services.specialist_cache import _specialist_cache_key
 
         key = _specialist_cache_key("diving", "Bali", "2025-03-15", "2025-03-20")
-        assert key.startswith("specialist::v4::diving::bali::2025-03::m::any::dpany::")
+        assert key.startswith("specialist::v5::diving::bali::2025-03::d6::any::dpany::")
         assert len(key.split("::")) == 9  # 9 segments
 
     def test_normalized_destination(self):
@@ -32,22 +32,30 @@ class TestCacheKeyGeneration:
         assert key1 == key2
 
     def test_iso_month_in_key(self):
-        """Test ISO month bucketing in cache key (duration dropped)."""
+        """Test ISO month and duration segments in cache key."""
         from app.services.specialist_cache import _specialist_cache_key
 
         key = _specialist_cache_key("hiking", "Alps", "2025-07-01", "2025-07-10")
-        # Should use ISO month format, duration dropped
+        # Should use ISO month format and exact duration days
         assert "2025-07" in key
-        assert "::m::" in key
+        assert "::d10::" in key
 
-    def test_same_month_share_cache(self):
-        """Trips within the same month share cache (duration-agnostic)."""
+    def test_same_month_same_duration_share_cache(self):
+        """Trips within the same month still share cache when duration matches."""
         from app.services.specialist_cache import _specialist_cache_key
 
-        # Mar 15-20 and Mar 16-28 are both in 2025-03 — same cache key
+        # Mar 15-20 and Mar 16-21 are both 6-day trips in 2025-03.
         key1 = _specialist_cache_key("diving", "Bali", "2025-03-15", "2025-03-20")
-        key2 = _specialist_cache_key("diving", "Bali", "2025-03-16", "2025-03-28")
+        key2 = _specialist_cache_key("diving", "Bali", "2025-03-16", "2025-03-21")
         assert key1 == key2
+
+    def test_same_month_extended_trip_busts_cache(self):
+        """Extending a trip within the same month should force specialist re-dispatch."""
+        from app.services.specialist_cache import _specialist_cache_key
+
+        key1 = _specialist_cache_key("diving", "Bali", "2025-03-15", "2025-03-20")
+        key2 = _specialist_cache_key("diving", "Bali", "2025-03-15", "2025-03-28")
+        assert key1 != key2
 
     def test_different_months_produce_different_keys(self):
         """Different ISO months produce different cache keys."""

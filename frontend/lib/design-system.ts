@@ -416,4 +416,15 @@ export const DS = {
     /** Emerald subdued — SVG background strokes */
     emeraldMuted: 'rgba(16, 185, 129, 0.3)',
   },
+
+  // ---------------------------------------------------------------------------
+  // 10. MAP COLORS (Marker palette)
+  // ---------------------------------------------------------------------------
+  map: {
+    flight: '#60a5fa',
+    family: '#f59e0b',
+    activity: '#a855f7',
+    defaultPin: '#a1a1aa',
+    browsePin: '#f59e0b',
+  },
 } as const;

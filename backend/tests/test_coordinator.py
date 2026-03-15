@@ -11,19 +11,30 @@ deps are mocked. Covers:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.planner.coordinator import (
+    _apply_activity_tile_enrichment_to_day_cards,
+    _build_itinerary,
+    _builder_conflicts_to_constraint_violations,
     _canonicalize_applied_updates,
+    _collect_canonical_builder_constraints,
     _compute_coordinator_s3_state,
     _compute_dispatch_list,
     _compute_preserve_list,
+    _date_change_continuity_details,
     _inject_specialist_tiles_into_state,
+    _merge_activity_tiles,
     _norm_topic,
     _normalize_specialist_plan_keys,
+    _post_build_enrich_placed_activities,
+    _preserved_specialist_tiles_for_turn,
+    _refresh_preserved_specialist_section_metadata,
+    _resolve_activity_category_filters,
     _run_local_intel,
     _short_circuit_message,
     _specialist_content_to_tiles,
@@ -37,8 +48,10 @@ from app.planner.schemas.coordinator_schemas import (
     ChangeType,
     ClassifierOutput,
     ExecutionPlan,
+    ExecutionStep,
     StepType,
 )
+from app.planner.state.graph_state import ConstraintSeverity, GraphState, TripPlan
 
 # =============================================================================
 # Helpers
@@ -282,6 +295,194 @@ class TestComputeDispatchList:
         assert "diving" in result
         assert "hiking" in result
 
+    def test_date_change_same_month_same_duration_skips_specialist_rerun(self) -> None:
+        classifier = _make_classifier(change_type=ChangeType.DATE_CHANGE)
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-03",
+                "end_date": "2026-03-09",
+            },
+            trip_settings={
+                "activity_settings": {"categories": ["diving"], "activities_per_day": 2}
+            },
+            specialist_plans={"diving": {"day_plans": [{"day_number": 2, "location": "Tulamben"}]}},
+            _pre_change_briefs={
+                "trip_plan": {
+                    "destination": "Bali",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-07",
+                },
+                "trip_settings": {
+                    "activity_settings": {"categories": ["diving"], "activities_per_day": 2}
+                },
+            },
+        )
+
+        assert _compute_dispatch_list(classifier, state) == []
+        assert _compute_preserve_list(classifier, state) == ["diving"]
+
+    def test_date_change_tail_extension_same_month_skips_specialist_rerun(self) -> None:
+        classifier = _make_classifier(change_type=ChangeType.DATE_CHANGE)
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-17",
+            },
+            trip_settings={
+                "activity_settings": {"categories": ["diving"], "activities_per_day": 2}
+            },
+            specialist_plans={"diving": {"day_plans": [{"day_number": 2, "location": "Tulamben"}]}},
+            strategy_sections=[
+                {
+                    "specialist_type": "diving",
+                    "content_added": [{"title": "Tulamben wreck dive"}],
+                }
+            ],
+            _pre_change_briefs={
+                "trip_plan": {
+                    "destination": "Bali",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-07",
+                },
+                "trip_settings": {
+                    "activity_settings": {"categories": ["diving"], "activities_per_day": 2}
+                },
+            },
+        )
+
+        assert _compute_dispatch_list(classifier, state) == []
+        assert _compute_preserve_list(classifier, state) == ["diving"]
+
+    def test_date_change_tail_extension_skips_rerun_even_with_classifier_affects(self) -> None:
+        classifier = _make_classifier(change_type=ChangeType.DATE_CHANGE, affects=["diving"])
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-17",
+            },
+            trip_settings={
+                "activity_settings": {"categories": ["diving"], "activities_per_day": 2}
+            },
+            specialist_plans={"diving": {"day_plans": [{"day_number": 2, "location": "Tulamben"}]}},
+            strategy_sections=[
+                {
+                    "specialist_type": "diving",
+                    "content_added": [{"title": "Tulamben wreck dive"}],
+                }
+            ],
+            _pre_change_briefs={
+                "trip_plan": {
+                    "destination": "Bali",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-07",
+                },
+                "trip_settings": {
+                    "activity_settings": {"categories": ["diving"], "activities_per_day": 2}
+                },
+            },
+        )
+
+        assert _compute_dispatch_list(classifier, state) == []
+        assert _compute_preserve_list(classifier, state) == ["diving"]
+
+    def test_date_change_continuity_details_marks_safe_tail_extension(self) -> None:
+        classifier = _make_classifier(change_type=ChangeType.DATE_CHANGE)
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-17",
+            },
+            trip_settings={
+                "activity_settings": {
+                    "categories": ["diving", "hiking"],
+                    "day_preferences": {"diving": 2},
+                    "activities_per_day": 2,
+                    "skill_level": "Advanced",
+                }
+            },
+            specialist_plans={
+                "diving": {"day_plans": [{"day_number": 2, "location": "Tulamben"}]},
+                "hiking": {"day_plans": [{"day_number": 5, "location": "Batur"}]},
+            },
+            strategy_sections=[
+                {
+                    "specialist_type": "diving",
+                    "content_added": [{"title": "Tulamben wreck dive"}],
+                },
+                {
+                    "specialist_type": "hiking",
+                    "content_added": [{"title": "Mount Batur sunrise trek"}],
+                },
+            ],
+            _pre_change_briefs={
+                "trip_plan": {
+                    "destination": "Bali",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-07",
+                },
+                "trip_settings": {
+                    "activity_settings": {
+                        "categories": ["hiking", "diving"],
+                        "day_preferences": {"diving": 2},
+                        "activities_per_day": 2,
+                        "skill_level": "advanced",
+                    }
+                },
+            },
+        )
+        plan = ExecutionPlan(
+            steps=[],
+            reason="PLANNING (date_change): refresh tiles, generate response",
+            estimated_llm_calls=1,
+            estimated_wall_ms=1200,
+        )
+
+        details = _date_change_continuity_details(classifier, state, plan)
+
+        assert details == {
+            "safe_tail_extension": True,
+            "same_month_bucket": True,
+            "same_activity_settings": True,
+            "dispatch": [],
+            "preserve": ["diving", "hiking"],
+        }
+
+    def test_date_change_shifted_window_same_month_still_reruns_specialist(self) -> None:
+        classifier = _make_classifier(change_type=ChangeType.DATE_CHANGE)
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-03",
+                "end_date": "2026-03-19",
+            },
+            trip_settings={
+                "activity_settings": {"categories": ["diving"], "activities_per_day": 2}
+            },
+            specialist_plans={"diving": {"day_plans": [{"day_number": 2, "location": "Tulamben"}]}},
+            strategy_sections=[
+                {
+                    "specialist_type": "diving",
+                    "content_added": [{"title": "Tulamben wreck dive"}],
+                }
+            ],
+            _pre_change_briefs={
+                "trip_plan": {
+                    "destination": "Bali",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-07",
+                },
+                "trip_settings": {
+                    "activity_settings": {"categories": ["diving"], "activities_per_day": 2}
+                },
+            },
+        )
+
+        assert _compute_dispatch_list(classifier, state) == ["diving"]
+
     def test_removal_excludes_removed_topics(self) -> None:
         classifier = _make_classifier(
             change_type=ChangeType.REMOVE_ACTIVITY,
@@ -377,6 +578,94 @@ class TestComputeS3State:
         result = _compute_coordinator_s3_state(turn_meta, [])
         assert result == "S3_BLOCKED"
 
+    def test_infeasible_zero_activity_result_stays_ready_with_warning(self) -> None:
+        turn_meta = {
+            "builder_result": {
+                "success": True,
+                "conflicts": [],
+                "activities_placed": 0,
+                "warnings": [],
+                "infeasible_requested_categories": ["skiing"],
+            }
+        }
+        result = _compute_coordinator_s3_state(turn_meta, [{"day": 1}])
+        assert result == "S3_ITINERARY_READY"
+        assert any(
+            "infeasible" in warning.lower() for warning in turn_meta["builder_result"]["warnings"]
+        )
+
+
+class TestResolveActivityCategoryFilters:
+    def test_filters_infeasible_tier1_categories_from_builder(self) -> None:
+        state = _make_state(
+            trip_settings={
+                "activity_settings": {"categories": ["skiing", "food"]},
+            },
+            turn_meta={
+                "feasibility_prechecks": {
+                    "skiing": ("infeasible", "No snow", "Try hiking"),
+                }
+            },
+        )
+
+        requested, effective, infeasible, activities_off = _resolve_activity_category_filters(state)
+
+        assert requested == ["skiing", "food"]
+        assert effective == ["food"]
+        assert infeasible == ["skiing"]
+        assert activities_off is False
+
+    def test_all_infeasible_tier1_categories_stay_explicitly_empty(self) -> None:
+        state = _make_state(
+            trip_settings={
+                "activity_settings": {"categories": ["skiing"]},
+            },
+            turn_meta={
+                "feasibility_prechecks": {
+                    "skiing": ("infeasible", "No snow", "Try hiking"),
+                }
+            },
+        )
+
+        requested, effective, infeasible, activities_off = _resolve_activity_category_filters(state)
+
+        assert requested == ["skiing"]
+        assert effective == []
+        assert infeasible == ["skiing"]
+        assert activities_off is False
+
+
+class TestBuilderConflictMapping:
+    def test_maps_builder_conflicts_to_constraint_violations(self) -> None:
+        mapped = _builder_conflicts_to_constraint_violations(
+            [{"type": "temporal_capacity", "message": "Too many blocks", "severity": "warning"}],
+            [{"description": "Reduce activities"}],
+        )
+
+        assert mapped == [
+            {
+                "code": "TEMPORAL_CAPACITY",
+                "message": "Too many blocks",
+                "severity": "warning",
+                "category": "itinerary",
+                "rule": "temporal_capacity",
+                "suggested_action": "Reduce activities",
+            }
+        ]
+
+    def test_maps_enum_builder_conflict_severity_to_canonical_string(self) -> None:
+        mapped = _builder_conflicts_to_constraint_violations(
+            [
+                {
+                    "type": "constraint_clash",
+                    "message": "Unsafe overlap",
+                    "severity": ConstraintSeverity.BLOCKING,
+                }
+            ]
+        )
+
+        assert mapped[0]["severity"] == "blocking"
+
 
 # =============================================================================
 # _build_envelope — PlanViewState transitions
@@ -428,6 +717,49 @@ class TestBuildEnvelopeViewState:
         assert result["document"]["plan_view_state"] == "S3_ITINERARY_READY"
 
     @patch("app.planner.services.state_serde.serialize_agent_state", return_value="{}")
+    def test_builder_conflicts_are_exposed_as_constraint_violations(
+        self,
+        _mock_serialize: Any,
+    ) -> None:
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+            day_cards=[{"day": 1, "activities": []}],
+            turn_meta={
+                "builder_result": {
+                    "success": True,
+                    "activities_placed": 2,
+                    "conflicts": [
+                        {
+                            "type": "temporal_capacity",
+                            "message": "Too many activities",
+                            "severity": "warning",
+                        }
+                    ],
+                    "resolutions": [{"description": "Reduce activities"}],
+                },
+            },
+        )
+        from app.planner.coordinator import _build_envelope
+
+        result = _build_envelope(state, "build itinerary", "sess-1", "Done!")
+
+        assert result["document"]["plan_view_state"] == "S3_EDITING"
+        assert result["document"]["constraint_violations"] == [
+            {
+                "code": "TEMPORAL_CAPACITY",
+                "message": "Too many activities",
+                "severity": "warning",
+                "category": "itinerary",
+                "rule": "temporal_capacity",
+                "suggested_action": "Reduce activities",
+            }
+        ]
+
+    @patch("app.planner.services.state_serde.serialize_agent_state", return_value="{}")
     def test_tiles_only_returns_s2(self, _mock_serialize: Any) -> None:
         state = _make_state(
             trip_plan={
@@ -443,6 +775,35 @@ class TestBuildEnvelopeViewState:
 
         result = _build_envelope(state, "find hotels", "sess-1", "Found hotels")
         assert result["document"]["plan_view_state"] == "S2_STRATEGY_READY"
+
+    @patch("app.planner.services.state_serde.serialize_agent_state", return_value="{}")
+    def test_flight_tiles_do_not_reenable_explicitly_disabled_flights(
+        self,
+        _mock_serialize: Any,
+    ) -> None:
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "origin": "Rome",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-17",
+            },
+            trip_settings={
+                "booking_types": {
+                    "flights": "off",
+                    "hotels": "suggested",
+                    "activities": "suggested",
+                }
+            },
+            tiles={"flights": [{"id": "flight_1"}]},
+            persistent_meta={"user_disabled_booking_types": ["flights"]},
+        )
+        from app.planner.coordinator import _build_envelope
+
+        result = _build_envelope(state, "extend trip", "sess-1", "Updated trip")
+
+        assert result["document"]["trip_inputs"]["booking_types"]["flights"] == "off"
+        assert state["trip_settings"]["booking_types"]["flights"] == "off"
 
 
 # =============================================================================
@@ -564,7 +925,884 @@ class TestLocalIntel:
         assert captured["children"] == 0
 
 
+class TestLogisticsFlightRefresh:
+    @pytest.mark.asyncio
+    async def test_logistics_does_not_auto_upgrade_when_flights_not_requested(
+        self, monkeypatch: Any
+    ) -> None:
+        import importlib
+
+        logistics_module = importlib.import_module("app.planner.nodes.logistics_node")
+
+        state = GraphState(
+            trip_plan=TripPlan(
+                destination="Bali",
+                origin="Amsterdam",
+                start_date="2026-04-01",
+                end_date="2026-04-07",
+            )
+        )
+        state.tiles = {"hotels": [], "activities": [], "flights": [{"id": "stale_flight"}]}
+        state.metadata.update(
+            {
+                "trip_settings": {
+                    "booking_types": {"flights": "off", "hotels": "suggested", "activities": "on"},
+                    "flight_settings": {"direct_only": False, "round_trip": True},
+                    "hotel_settings": {"min_stars": 0, "amenities": []},
+                    "activity_settings": {"categories": ["diving"]},
+                },
+                "trip_inputs": {"booking_types": {"flights": "off"}},
+                "allow_flight_auto_upgrade": False,
+                "requested_tile_types": ["activities"],
+            }
+        )
+        resolve_calls: list[tuple[str, str]] = []
+
+        async def _fake_search_hotels_and_activities(
+            state_arg: GraphState, _plan_arg: TripPlan
+        ) -> None:
+            state_arg.tiles["hotels"] = [{"id": "hotel_1"}]
+            state_arg.tiles["activities"] = [{"id": "act_1"}]
+
+        async def _fake_resolve_iata_codes(origin: str, destination: str, _state: GraphState):
+            resolve_calls.append((origin, destination))
+            if origin:
+                raise AssertionError(
+                    "Flight refresh should not resolve origin when flights are excluded"
+                )
+            return "", "DPS"
+
+        monkeypatch.setattr(
+            logistics_module,
+            "_search_hotels_and_activities",
+            _fake_search_hotels_and_activities,
+        )
+        monkeypatch.setattr(logistics_module, "resolve_iata_codes", _fake_resolve_iata_codes)
+
+        result = await logistics_module.logistics_node(state)
+
+        assert result.metadata.get("flight_search_possible") is False
+        assert result.metadata.get("flight_search_status") == "skipped_disabled"
+        assert result.metadata.get("flight_skip_reason") == "flights_disabled_in_settings"
+        assert result.tiles["flights"] == []
+        assert resolve_calls == [("", "Bali")]
+
+    @pytest.mark.asyncio
+    async def test_logistics_starts_aviasales_fetch_before_hotel_activity_search_finishes(
+        self, monkeypatch: Any
+    ) -> None:
+        import importlib
+
+        from app.config import settings as app_settings
+
+        logistics_module = importlib.import_module("app.planner.nodes.logistics_node")
+
+        state = GraphState(
+            trip_plan=TripPlan(
+                destination="Bali",
+                origin="Amsterdam",
+                start_date="2026-04-01",
+                end_date="2026-04-07",
+                currency="USD",
+            )
+        )
+        state.tiles = {"hotels": [], "activities": [], "flights": []}
+        state.metadata.update(
+            {
+                "trip_settings": {
+                    "booking_types": {
+                        "flights": "suggested",
+                        "hotels": "suggested",
+                        "activities": "on",
+                    },
+                    "flight_settings": {"direct_only": False, "round_trip": True},
+                    "hotel_settings": {"min_stars": 0, "amenities": []},
+                    "activity_settings": {"categories": ["diving"]},
+                },
+                "allow_flight_auto_upgrade": False,
+            }
+        )
+
+        order: list[str] = []
+        flight_started = asyncio.Event()
+        release_flights = asyncio.Event()
+
+        async def _fake_search_hotels_and_activities(
+            state_arg: GraphState, _plan_arg: TripPlan
+        ) -> None:
+            order.append("hotels_start")
+            await asyncio.wait_for(flight_started.wait(), timeout=0.1)
+            order.append("flight_started_before_hotels_end")
+            state_arg.tiles["hotels"] = [{"id": "hotel_1"}]
+            state_arg.tiles["activities"] = [{"id": "act_1"}]
+            release_flights.set()
+            order.append("hotels_end")
+
+        async def _fake_resolve_iata_codes(origin: str, destination: str, _state: GraphState):
+            return "AMS", "DPS"
+
+        async def _fake_search_aviasales_flights(**kwargs: Any) -> list[Dict[str, Any]]:
+            order.append("flight_start")
+            flight_started.set()
+            await asyncio.wait_for(release_flights.wait(), timeout=0.1)
+            order.append("flight_end")
+            return []
+
+        monkeypatch.setattr(app_settings, "aviasales_enabled", True)
+        monkeypatch.setattr(
+            logistics_module,
+            "_search_hotels_and_activities",
+            _fake_search_hotels_and_activities,
+        )
+        monkeypatch.setattr(logistics_module, "resolve_iata_codes", _fake_resolve_iata_codes)
+        monkeypatch.setattr(
+            logistics_module,
+            "search_aviasales_flights",
+            _fake_search_aviasales_flights,
+        )
+        monkeypatch.setattr(logistics_module, "_get_mock_flights", lambda *_args, **_kwargs: [])
+
+        await logistics_module.logistics_node(state)
+
+        assert order.index("flight_start") < order.index("hotels_end")
+        assert "flight_started_before_hotels_end" in order
+
+
+class TestBookingTypeOverrides:
+    def test_merge_doc_settings_marks_explicit_flight_disable(self) -> None:
+        from app.planner.coordinator import _merge_doc_settings
+
+        state = _make_state(
+            trip_settings={"booking_types": {"flights": "suggested", "hotels": "suggested"}}
+        )
+
+        _merge_doc_settings(state, {"booking_types": {"flights": "off", "hotels": "suggested"}})
+
+        assert state["persistent_meta"]["user_disabled_booking_types"] == ["flights"]
+
+    def test_merge_doc_settings_marks_explicit_flight_disable_from_unset(self) -> None:
+        from app.planner.coordinator import _merge_doc_settings
+
+        state = _make_state(trip_settings={"booking_types": {"hotels": "suggested"}})
+
+        _merge_doc_settings(state, {"booking_types": {"flights": "off", "hotels": "suggested"}})
+
+        assert state["persistent_meta"]["user_disabled_booking_types"] == ["flights"]
+
+    def test_apply_classifier_keeps_explicitly_disabled_flights_off_when_origin_added(self) -> None:
+        from app.planner.coordinator import _apply_classifier_to_state, _merge_doc_settings
+
+        state = _make_state(
+            trip_plan={"destination": "Bali", "start_date": "2026-04-01", "end_date": "2026-04-07"},
+            trip_settings={"booking_types": {"hotels": "suggested"}},
+        )
+        _merge_doc_settings(state, {"booking_types": {"flights": "off", "hotels": "suggested"}})
+
+        classifier = _make_classifier(
+            change_type=ChangeType.LOGISTICS,
+            origin="Rome",
+            start_date="2026-04-01",
+            end_date="2026-04-07",
+        )
+        _apply_classifier_to_state(state, classifier)
+
+        assert state["trip_settings"]["booking_types"]["flights"] == "off"
+        assert state["persistent_meta"]["user_disabled_booking_types"] == ["flights"]
+
+    def test_merge_doc_settings_clears_explicit_flight_disable_when_reenabled(self) -> None:
+        from app.planner.coordinator import _merge_doc_settings
+
+        state = _make_state(
+            trip_settings={"booking_types": {"flights": "off", "hotels": "suggested"}},
+            persistent_meta={"user_disabled_booking_types": ["flights"]},
+        )
+
+        _merge_doc_settings(
+            state,
+            {"booking_types": {"flights": "suggested", "hotels": "suggested"}},
+        )
+
+        assert "user_disabled_booking_types" not in state["persistent_meta"]
+
+
+class TestSearchTilesFlightAutoUpgrade:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("classifier_overrides", "state_overrides"),
+        [
+            (
+                {"change_type": ChangeType.DAY_COUNT, "affects": ["diving"]},
+                {
+                    "trip_settings": {
+                        "booking_types": {
+                            "flights": "off",
+                            "hotels": "suggested",
+                            "activities": "suggested",
+                        },
+                        "activity_settings": {"categories": ["diving"]},
+                    },
+                    "strategy_sections": [
+                        {
+                            "specialist_type": "diving",
+                            "constraints_applied": [],
+                            "content_added": [],
+                        }
+                    ],
+                },
+            ),
+            (
+                {"change_type": ChangeType.DATE_CHANGE},
+                {
+                    "trip_settings": {
+                        "booking_types": {
+                            "flights": "off",
+                            "hotels": "suggested",
+                            "activities": "suggested",
+                        }
+                    }
+                },
+            ),
+            (
+                {
+                    "change_type": ChangeType.PREFERENCE,
+                    "activity_day_preferences": '{"diving": 3}',
+                },
+                {
+                    "trip_settings": {
+                        "booking_types": {
+                            "flights": "off",
+                            "hotels": "suggested",
+                            "activities": "suggested",
+                        },
+                        "activity_settings": {"categories": ["diving"]},
+                    },
+                    "strategy_sections": [
+                        {
+                            "specialist_type": "diving",
+                            "constraints_applied": [],
+                            "content_added": [],
+                        }
+                    ],
+                },
+            ),
+        ],
+    )
+    async def test_explicitly_disabled_flights_stay_off_during_internal_refreshes(
+        self,
+        monkeypatch: Any,
+        classifier_overrides: Dict[str, Any],
+        state_overrides: Dict[str, Any],
+    ) -> None:
+        import importlib
+
+        from app.planner.coordinator import _search_tiles, _tile_refresh_types
+
+        logistics_module = importlib.import_module("app.planner.nodes.logistics_node")
+        classifier = _make_classifier(**classifier_overrides)
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "origin": "Rome",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-07",
+            },
+            persistent_meta={"user_disabled_booking_types": ["flights"]},
+            **state_overrides,
+        )
+
+        async def _fake_logistics_node(graph_state: GraphState) -> GraphState:
+            assert graph_state.metadata["allow_flight_auto_upgrade"] is False
+            assert graph_state.metadata["trip_settings"]["booking_types"]["flights"] == "suggested"
+            graph_state.tiles["flights"] = [{"id": "fresh_flight"}]
+            trip_settings = graph_state.metadata.setdefault("trip_settings", {})
+            booking_types = trip_settings.setdefault("booking_types", {})
+            booking_types["flights"] = "suggested"
+            return graph_state
+
+        monkeypatch.setattr(logistics_module, "logistics_node", _fake_logistics_node)
+
+        tiles = await _search_tiles(state, classifier, _tile_refresh_types(classifier, state))
+
+        assert tiles.get("flights") in (None, [])
+        assert state["trip_settings"]["booking_types"]["flights"] == "off"
+
+    @patch("app.planner.services.state_serde.serialize_agent_state", return_value="{}")
+    def test_build_envelope_hides_disabled_flight_tiles(self, _mock_serialize: Any) -> None:
+        from app.planner.coordinator import _build_envelope
+
+        state = _make_state(
+            trip_plan={"destination": "Bali", "start_date": "2026-04-01", "end_date": "2026-04-07"},
+            trip_settings={"booking_types": {"flights": "off", "hotels": "suggested"}},
+            tiles={
+                "flights": [{"id": "flight_1", "title": "Hidden Flight"}],
+                "hotels": [{"id": "hotel_1", "title": "Visible Hotel"}],
+            },
+        )
+
+        envelope = _build_envelope(state, "extend 10 days", "sess-1", "Updated trip")
+
+        assert "flight_1" not in envelope["document"]["tiles"]
+        assert "hotel_1" in envelope["document"]["tiles"]
+
+    @pytest.mark.asyncio
+    async def test_initial_plan_can_still_auto_enable_flights(self, monkeypatch: Any) -> None:
+        import importlib
+
+        from app.planner.coordinator import _search_tiles, _tile_refresh_types
+
+        logistics_module = importlib.import_module("app.planner.nodes.logistics_node")
+        classifier = _make_classifier(
+            change_type=ChangeType.INITIAL_PLAN,
+            destination="Bali",
+            start_date="2026-04-01",
+            end_date="2026-04-07",
+        )
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "origin": "Rome",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-07",
+            },
+            trip_settings={"booking_types": {"flights": "off", "hotels": "suggested"}},
+        )
+
+        async def _fake_logistics_node(graph_state: GraphState) -> GraphState:
+            assert graph_state.metadata["allow_flight_auto_upgrade"] is True
+            graph_state.tiles["flights"] = [{"id": "fresh_flight"}]
+            trip_settings = graph_state.metadata.setdefault("trip_settings", {})
+            booking_types = trip_settings.setdefault("booking_types", {})
+            booking_types["flights"] = "suggested"
+            return graph_state
+
+        monkeypatch.setattr(logistics_module, "logistics_node", _fake_logistics_node)
+
+        await _search_tiles(state, classifier, _tile_refresh_types(classifier, state))
+
+        assert state["trip_settings"]["booking_types"]["flights"] == "suggested"
+
+    @pytest.mark.asyncio
+    async def test_initial_plan_without_origin_keeps_internal_flight_refresh_off_in_state(
+        self, monkeypatch: Any
+    ) -> None:
+        import importlib
+
+        from app.planner.coordinator import _search_tiles, _tile_refresh_types
+
+        logistics_module = importlib.import_module("app.planner.nodes.logistics_node")
+        classifier = _make_classifier(
+            change_type=ChangeType.INITIAL_PLAN,
+            destination="Bali",
+            start_date="2026-04-01",
+            end_date="2026-04-07",
+        )
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-07",
+            },
+            trip_settings={"booking_types": {"flights": "off", "hotels": "suggested"}},
+        )
+
+        async def _fake_logistics_node(graph_state: GraphState) -> GraphState:
+            assert graph_state.metadata["allow_flight_auto_upgrade"] is False
+            assert graph_state.metadata["trip_settings"]["booking_types"]["flights"] == "suggested"
+            trip_settings = graph_state.metadata.setdefault("trip_settings", {})
+            booking_types = trip_settings.setdefault("booking_types", {})
+            booking_types["flights"] = "suggested"
+            return graph_state
+
+        monkeypatch.setattr(logistics_module, "logistics_node", _fake_logistics_node)
+
+        await _search_tiles(state, classifier, _tile_refresh_types(classifier, state))
+
+        assert state["trip_settings"]["booking_types"]["flights"] == "off"
+
+    @pytest.mark.asyncio
+    async def test_date_change_carries_forward_preserved_specialist_tiles(
+        self, monkeypatch: Any
+    ) -> None:
+        import importlib
+
+        from app.planner.coordinator import _search_tiles, _tile_refresh_types
+
+        logistics_module = importlib.import_module("app.planner.nodes.logistics_node")
+        classifier = _make_classifier(change_type=ChangeType.DATE_CHANGE)
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "origin": "Rome",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-17",
+            },
+            trip_settings={"activity_settings": {"categories": ["diving", "hiking"]}},
+            specialist_plans={
+                "diving": {"day_plans": [{"day_number": 2, "location": "Tulamben"}]},
+                "hiking": {"day_plans": []},
+            },
+            strategy_sections=[
+                {"specialist_type": "diving", "content_added": [{"title": "Dive"}]},
+                {"specialist_type": "hiking", "content_added": []},
+            ],
+            tiles={
+                "activities": [
+                    {
+                        "id": "spec_bali_diving_keep",
+                        "title": "Dive",
+                        "type": "activity",
+                        "source_agent": "vertical_specialist",
+                        "provider": "viator",
+                        "meta": {"specialist_type": "diving"},
+                    },
+                    {
+                        "id": "spec_bali_hiking_drop",
+                        "title": "Hike",
+                        "type": "activity",
+                        "source_agent": "vertical_specialist",
+                        "provider": "viator",
+                        "meta": {"specialist_type": "hiking"},
+                    },
+                ]
+            },
+            _pre_change_briefs={
+                "trip_plan": {
+                    "destination": "Bali",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-07",
+                },
+                "trip_settings": {"activity_settings": {"categories": ["diving", "hiking"]}},
+            },
+        )
+
+        async def _fake_logistics_node(graph_state: GraphState) -> GraphState:
+            graph_state.tiles["activities"] = [
+                {"id": "browse_1", "title": "Market", "type": "activity"}
+            ]
+            return graph_state
+
+        monkeypatch.setattr(logistics_module, "logistics_node", _fake_logistics_node)
+
+        tiles = await _search_tiles(state, classifier, _tile_refresh_types(classifier, state))
+
+        ids = {tile["id"] for tile in tiles["activities"]}
+        assert ids == {"browse_1", "spec_bali_diving_keep"}
+        preserved_tile = next(
+            tile for tile in tiles["activities"] if tile["id"] == "spec_bali_diving_keep"
+        )
+        assert preserved_tile["provider"] == "viator"
+
+    @pytest.mark.asyncio
+    async def test_search_tiles_rehydrates_partner_fields_for_matching_places(
+        self, monkeypatch: Any
+    ) -> None:
+        import importlib
+
+        from app.planner.coordinator import _search_tiles, _tile_refresh_types
+
+        logistics_module = importlib.import_module("app.planner.nodes.logistics_node")
+        classifier = _make_classifier(change_type=ChangeType.DATE_CHANGE)
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "origin": "Rome",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-07",
+            },
+            tiles={
+                "activities": [
+                    {
+                        "id": "browse_gp_spa",
+                        "title": "Ubud Traditional Spa",
+                        "type": "activity",
+                        "google_place_id": "gp_spa_1",
+                        "place_id": "gp_spa_1",
+                        "provider": "viator",
+                        "partner": "viator",
+                        "partner_product_id": "115849P4",
+                        "price_estimate": 27.35,
+                        "live_price": 27.35,
+                        "currency": "USD",
+                        "price_basis": "per_person",
+                        "is_estimate_only": False,
+                        "rating": 5.0,
+                        "review_count": 18,
+                        "image_url": "https://cdn.example/spa.jpg",
+                        "deeplink": "https://www.viator.com/tours/spa",
+                        "deeplink_url": "https://www.viator.com/tours/spa",
+                        "meta": {
+                            "category": "spa",
+                            "viator_product_code": "115849P4",
+                        },
+                    }
+                ]
+            },
+        )
+
+        async def _fake_logistics_node(graph_state: GraphState) -> GraphState:
+            graph_state.tiles["activities"] = [
+                {
+                    "id": "browse_gp_spa",
+                    "title": "Ubud Traditional Spa",
+                    "type": "activity",
+                    "google_place_id": "gp_spa_1",
+                    "place_id": "gp_spa_1",
+                    "provider": "google_places",
+                    "price_estimate": 35.0,
+                    "meta": {"category": "spa"},
+                }
+            ]
+            graph_state.tiles["flights"] = []
+            graph_state.tiles["hotels"] = []
+            return graph_state
+
+        monkeypatch.setattr(logistics_module, "logistics_node", _fake_logistics_node)
+
+        tiles = await _search_tiles(state, classifier, _tile_refresh_types(classifier, state))
+
+        tile = tiles["activities"][0]
+        assert tile["provider"] == "viator"
+        assert tile["partner"] == "viator"
+        assert tile["partner_product_id"] == "115849P4"
+        assert tile["price_estimate"] == 27.35
+        assert tile["deeplink"] == "https://www.viator.com/tours/spa"
+        assert tile["meta"]["viator_product_code"] == "115849P4"
+
+    @pytest.mark.asyncio
+    async def test_search_tiles_skips_ambiguous_title_only_partner_rehydration(
+        self, monkeypatch: Any
+    ) -> None:
+        import importlib
+
+        from app.planner.coordinator import _search_tiles, _tile_refresh_types
+
+        logistics_module = importlib.import_module("app.planner.nodes.logistics_node")
+        classifier = _make_classifier(change_type=ChangeType.DATE_CHANGE)
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "origin": "Rome",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-07",
+            },
+            tiles={
+                "activities": [
+                    {
+                        "id": "prior_viator",
+                        "title": "Shared Market Tour",
+                        "type": "activity",
+                        "provider": "viator",
+                        "partner": "viator",
+                        "partner_product_id": "V1",
+                        "meta": {"viator_product_code": "V1"},
+                    },
+                    {
+                        "id": "prior_gyg",
+                        "title": "Shared Market Tour",
+                        "type": "activity",
+                        "provider": "gyg",
+                        "partner": "gyg",
+                        "partner_product_id": "G1",
+                        "meta": {"gyg_tour_id": "G1"},
+                    },
+                ]
+            },
+        )
+
+        async def _fake_logistics_node(graph_state: GraphState) -> GraphState:
+            graph_state.tiles["activities"] = [
+                {
+                    "id": "fresh_market_tile",
+                    "title": "Shared Market Tour",
+                    "type": "activity",
+                    "provider": "google_places",
+                    "meta": {},
+                }
+            ]
+            graph_state.tiles["flights"] = []
+            graph_state.tiles["hotels"] = []
+            return graph_state
+
+        monkeypatch.setattr(logistics_module, "logistics_node", _fake_logistics_node)
+
+        tiles = await _search_tiles(state, classifier, _tile_refresh_types(classifier, state))
+
+        tile = tiles["activities"][0]
+        assert tile["provider"] == "google_places"
+        assert tile.get("partner_product_id") is None
+        assert tile.get("partner") is None
+        assert tile.get("meta") == {}
+
+    @pytest.mark.asyncio
+    async def test_search_tiles_skips_same_place_partner_rehydration_on_category_mismatch(
+        self, monkeypatch: Any
+    ) -> None:
+        import importlib
+
+        from app.planner.coordinator import _search_tiles, _tile_refresh_types
+
+        logistics_module = importlib.import_module("app.planner.nodes.logistics_node")
+        classifier = _make_classifier(change_type=ChangeType.DATE_CHANGE)
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "origin": "Rome",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-07",
+            },
+            tiles={
+                "activities": [
+                    {
+                        "id": "browse_gp_place",
+                        "title": "Shared Place",
+                        "type": "activity",
+                        "google_place_id": "gp_shared_1",
+                        "place_id": "gp_shared_1",
+                        "provider": "viator",
+                        "partner": "viator",
+                        "partner_product_id": "SPA1",
+                        "meta": {
+                            "category": "spa",
+                            "viator_product_code": "SPA1",
+                        },
+                        "browse_category": "spa",
+                    }
+                ]
+            },
+        )
+
+        async def _fake_logistics_node(graph_state: GraphState) -> GraphState:
+            graph_state.tiles["activities"] = [
+                {
+                    "id": "browse_gp_place",
+                    "title": "Shared Place",
+                    "type": "activity",
+                    "google_place_id": "gp_shared_1",
+                    "place_id": "gp_shared_1",
+                    "provider": "google_places",
+                    "category": "cultural",
+                    "browse_category": "cultural",
+                    "meta": {"category": "cultural"},
+                }
+            ]
+            graph_state.tiles["flights"] = []
+            graph_state.tiles["hotels"] = []
+            return graph_state
+
+        monkeypatch.setattr(logistics_module, "logistics_node", _fake_logistics_node)
+
+        tiles = await _search_tiles(state, classifier, _tile_refresh_types(classifier, state))
+
+        tile = tiles["activities"][0]
+        assert tile["provider"] == "google_places"
+        assert tile["category"] == "cultural"
+        assert tile["browse_category"] == "cultural"
+        assert tile.get("partner_product_id") is None
+        assert tile.get("partner") is None
+        assert tile["meta"] == {"category": "cultural"}
+
+
 class TestExecuteTurn:
+    @pytest.mark.asyncio
+    async def test_build_itinerary_step_emits_day_cards_partial_before_tile_partial(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.planner.coordinator as coordinator_module
+
+        classifier = _make_classifier()
+        state = _make_state(
+            tiles={"activities": [{"id": "existing_activity", "type": "activity"}]},
+            turn_meta={"tiles_replaced": True},
+        )
+        day_cards = [{"day_number": 1, "label": "Arrival", "blocks": []}]
+
+        async def _fake_build_itinerary(
+            state_arg: Dict[str, Any],
+            session_id: str = "",
+        ) -> list[Dict[str, Any]]:
+            assert session_id == "session-123"
+            state_arg["day_cards"] = list(day_cards)
+            state_arg["tiles"] = {
+                "activities": [
+                    {"id": "existing_activity", "type": "activity"},
+                    {"id": "new_specialist_tile", "type": "activity"},
+                ]
+            }
+            return list(day_cards)
+
+        monkeypatch.setattr(coordinator_module, "_build_itinerary", _fake_build_itinerary)
+
+        events = await coordinator_module._execute_step(
+            ExecutionStep(step_type=StepType.BUILD_ITINERARY, params={}),
+            state,
+            classifier,
+            "build it",
+            session_id="session-123",
+        )
+
+        assert isinstance(events, list)
+        assert events[0]["data"]["kind"] == "day_cards"
+        assert events[0]["data"]["payload"] == day_cards
+        assert events[1]["data"]["kind"] == "tiles"
+        assert events[1]["data"]["tiles_replaced"] is True
+
+    @pytest.mark.asyncio
+    async def test_build_itinerary_step_emits_empty_day_cards_partial_when_builder_clears_them(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.planner.coordinator as coordinator_module
+
+        classifier = _make_classifier()
+        state = _make_state(
+            day_cards=[{"day_number": 1, "label": "Stale itinerary", "blocks": []}],
+            tiles={"activities": [{"id": "existing_activity", "type": "activity"}]},
+        )
+
+        async def _fake_build_itinerary(
+            state_arg: Dict[str, Any],
+            session_id: str = "",
+        ) -> list[Dict[str, Any]]:
+            assert session_id == "session-123"
+            state_arg["day_cards"] = []
+            return []
+
+        monkeypatch.setattr(coordinator_module, "_build_itinerary", _fake_build_itinerary)
+
+        events = await coordinator_module._execute_step(
+            ExecutionStep(step_type=StepType.BUILD_ITINERARY, params={}),
+            state,
+            classifier,
+            "build it",
+            session_id="session-123",
+        )
+
+        assert events == {
+            "type": "partial",
+            "data": {"kind": "day_cards", "payload": []},
+        }
+
+    @pytest.mark.asyncio
+    async def test_execute_turn_finalizes_deferred_itinerary_enrichment_after_response(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.planner.coordinator as coordinator_module
+        import app.planner.nodes.router_extraction as router_module
+        import app.planner.services.feasibility_service as feasibility_module
+        import app.services.unsplash as unsplash_module
+
+        classifier = _make_classifier(
+            intent="PLANNING",
+            change_type=ChangeType.INITIAL_PLAN,
+            destination="Bali",
+            start_date="2026-04-01",
+            end_date="2026-04-07",
+        )
+        plan = ExecutionPlan(
+            reason="test build path",
+            steps=[
+                ExecutionStep(step_type=StepType.BUILD_ITINERARY, params={}),
+                ExecutionStep(step_type=StepType.GENERATE_RESPONSE, params={}),
+            ],
+            estimated_llm_calls=1,
+        )
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-07",
+            },
+            trip_settings={"activity_settings": {"categories": ["diving"]}},
+            messages=[],
+        )
+        order: list[str] = []
+
+        async def _fake_execute_step(
+            step: ExecutionStep,
+            state_arg: Dict[str, Any],
+            _classifier: ClassifierOutput,
+            _user_message: str,
+            session_id: str = "",
+        ) -> Any:
+            if step.step_type != StepType.BUILD_ITINERARY:
+                return None
+
+            state_arg["day_cards"] = [{"day_number": 1, "blocks": [{"summary": "Dive"}]}]
+            state_arg["tiles"] = {"activities": [{"id": "tile_1", "title": "Dive"}]}
+
+            async def _pending() -> Dict[str, Any]:
+                order.append("enrichment_started")
+                await asyncio.sleep(0)
+                order.append("enrichment_finished")
+                return {
+                    "activities": [{"id": "tile_1", "title": "Dive", "provider": "viator"}],
+                    "day_cards": [
+                        {
+                            "day_number": 1,
+                            "blocks": [{"summary": "Dive", "deeplink": "https://viator.test"}],
+                        }
+                    ],
+                }
+
+            state_arg["_pending_itinerary_enrichment_task"] = asyncio.create_task(_pending())
+            return {
+                "type": "partial",
+                "data": {"kind": "day_cards", "payload": state_arg["day_cards"]},
+            }
+
+        async def _fake_generate_response_streaming(*args: Any, **kwargs: Any):
+            order.append("response_started")
+            await asyncio.sleep(0)
+            order.append("response_finished")
+            yield "done"
+
+        def _fake_build_envelope(
+            state_arg: Dict[str, Any],
+            user_message: str,
+            session_id: str,
+            assistant_message: str,
+        ) -> Dict[str, Any]:
+            order.append("envelope")
+            assert state_arg["day_cards"][0]["blocks"][0]["deeplink"] == "https://viator.test"
+            return {
+                "document": {"day_cards": list(state_arg.get("day_cards", []))},
+                "assistant_message": assistant_message,
+                "session_state": {"trip_plan": dict(state_arg.get("trip_plan", {}))},
+            }
+
+        monkeypatch.setattr(router_module, "classify_change", AsyncMock(return_value=classifier))
+        monkeypatch.setattr(coordinator_module, "plan_turn", lambda *_args, **_kwargs: plan)
+        monkeypatch.setattr(coordinator_module, "_execute_step", _fake_execute_step)
+        monkeypatch.setattr(
+            coordinator_module,
+            "_generate_response_streaming",
+            _fake_generate_response_streaming,
+        )
+        monkeypatch.setattr(coordinator_module, "_refresh_enrichment_states", AsyncMock())
+        monkeypatch.setattr(coordinator_module, "_build_envelope", _fake_build_envelope)
+        monkeypatch.setattr(
+            feasibility_module,
+            "batch_feasibility_precheck",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            unsplash_module,
+            "prefetch_destination_images",
+            AsyncMock(return_value=None),
+        )
+
+        events = [
+            event
+            async for event in execute_turn(
+                "build my itinerary",
+                state,
+                session_id="session-123",
+            )
+        ]
+
+        assert order.index("enrichment_started") < order.index("response_finished")
+        assert order.index("enrichment_finished") < order.index("envelope")
+        assert events[-1]["type"] == "complete"
+
     @pytest.mark.asyncio
     async def test_noop_initial_plan_preserves_existing_itinerary(self, monkeypatch: Any) -> None:
         classifier = _make_classifier(
@@ -656,6 +1894,530 @@ class TestExecuteTurn:
         assert events[-1]["data"]["document"]["day_cards"] == day_cards
 
 
+class TestDeferredActivityTileRehydration:
+    def test_matches_enriched_tile_via_booked_tile_title_when_summary_drifts(self) -> None:
+        day_cards = [
+            {
+                "day_number": 1,
+                "blocks": [
+                    {
+                        "summary": "Village walk",
+                        "booked_tile": {"title": "Secret Garden Village"},
+                    }
+                ],
+            }
+        ]
+        activity_tiles = [
+            {
+                "id": "browse_village_walk",
+                "title": "Village walk",
+                "provider": "google_places",
+                "deeplink": "https://maps.test/village-walk",
+                "image_url": "https://images.test/village-walk.jpg",
+            },
+            {
+                "id": "browse_secret_garden",
+                "title": "Secret Garden Village (Session 2)",
+                "provider": "viator",
+                "deeplink": "https://viator.test/secret-garden",
+                "image_url": "https://images.test/secret-garden.jpg",
+            },
+        ]
+
+        _apply_activity_tile_enrichment_to_day_cards(activity_tiles, day_cards)
+
+        block = day_cards[0]["blocks"][0]
+        assert block["id"] == "browse_secret_garden"
+        assert block["deeplink"] == "https://viator.test/secret-garden"
+        assert block["image_url"] == "https://images.test/secret-garden.jpg"
+
+    def test_matches_enriched_tile_via_partner_product_id_when_block_id_is_missing(self) -> None:
+        day_cards = [
+            {
+                "day_number": 1,
+                "blocks": [
+                    {
+                        "summary": "Sunrise trek",
+                        "booked_tile": {
+                            "partner_product_id": "gyg-123",
+                            "title": "Mount Batur Sunrise Trek",
+                        },
+                    }
+                ],
+            }
+        ]
+        activity_tiles = [
+            {
+                "id": "tile_mount_batur",
+                "partner_product_id": "gyg-123",
+                "title": "Mount Batur Sunrise Trek",
+                "provider": "gyg",
+                "deeplink": "https://gyg.test/mount-batur",
+                "image_url": "https://images.test/mount-batur.jpg",
+            }
+        ]
+
+        _apply_activity_tile_enrichment_to_day_cards(activity_tiles, day_cards)
+
+        block = day_cards[0]["blocks"][0]
+        assert block["id"] == "tile_mount_batur"
+        assert block["deeplink"] == "https://gyg.test/mount-batur"
+        assert block["image_url"] == "https://images.test/mount-batur.jpg"
+
+    def test_skips_relaxed_title_fallback_when_multiple_tiles_share_same_base_title(self) -> None:
+        day_cards = [
+            {
+                "day_number": 1,
+                "blocks": [
+                    {
+                        "summary": "Secret Garden Village",
+                    }
+                ],
+            }
+        ]
+        activity_tiles = [
+            {
+                "id": "secret_garden_morning",
+                "title": "Secret Garden Village (Morning)",
+                "provider": "viator",
+                "deeplink": "https://viator.test/secret-garden-morning",
+            },
+            {
+                "id": "secret_garden_evening",
+                "title": "Secret Garden Village (Evening)",
+                "provider": "viator",
+                "deeplink": "https://viator.test/secret-garden-evening",
+            },
+        ]
+
+        _apply_activity_tile_enrichment_to_day_cards(activity_tiles, day_cards)
+
+        block = day_cards[0]["blocks"][0]
+        assert block.get("id") is None
+        assert block.get("deeplink") is None
+
+    @pytest.mark.asyncio
+    async def test_build_itinerary_real_path_starts_deferred_enrichment(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.planner.coordinator as coordinator_module
+
+        class _FakeOverview:
+            def model_dump(self) -> dict[str, Any]:
+                return {"duration_label": "1 day"}
+
+        class _FakeDayCard:
+            def __init__(self, payload: dict[str, Any]) -> None:
+                self._payload = payload
+
+            def model_dump(self) -> dict[str, Any]:
+                return dict(self._payload)
+
+        class _FakeBuilderResult:
+            success = True
+            total_activities_placed = 1
+            total_activities_input = 1
+            conflicts: list[Any] = []
+            resolutions: list[Any] = []
+            warnings: list[str] = []
+            overview = _FakeOverview()
+            assumptions = None
+            day_cards = [_FakeDayCard({"day_number": 1, "label": "Arrival", "blocks": []})]
+
+        class _FakeBuilder:
+            def build(self, _input: Any) -> _FakeBuilderResult:
+                return _FakeBuilderResult()
+
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-01",
+            },
+            trip_settings={"activity_settings": {"categories": ["diving"]}},
+            tiles={
+                "activities": [{"id": "act_1", "title": "Dive", "type": "activity"}],
+                "hotels": [{"id": "hotel_1", "title": "Stay", "type": "hotel"}],
+            },
+        )
+        started: list[tuple[str, list[dict[str, Any]]]] = []
+
+        monkeypatch.setattr(
+            coordinator_module,
+            "_inject_specialist_tiles_into_state",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(coordinator_module, "_prepare_activity_tiles_for_build", AsyncMock())
+        monkeypatch.setattr(
+            "app.services.itinerary_builder.ItineraryBuilder",
+            lambda: _FakeBuilder(),
+        )
+        monkeypatch.setattr(
+            coordinator_module,
+            "_start_pending_itinerary_enrichment",
+            lambda state_arg, session_id="": started.append(
+                (session_id, list(state_arg.get("day_cards", [])))
+            ),
+        )
+
+        day_cards = await _build_itinerary(state, session_id="session-123")
+
+        assert day_cards == [{"day_number": 1, "label": "Arrival", "blocks": []}]
+        assert started == [
+            (
+                "session-123",
+                [{"day_number": 1, "label": "Arrival", "blocks": []}],
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_build_itinerary_real_path_starts_deferred_enrichment_without_day_cards(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.planner.coordinator as coordinator_module
+
+        class _FakeBuilderResult:
+            success = True
+            total_activities_placed = 0
+            total_activities_input = 1
+            conflicts: list[Any] = []
+            resolutions: list[Any] = []
+            warnings: list[str] = []
+            overview = None
+            assumptions = None
+            day_cards: list[Any] = []
+
+        class _FakeBuilder:
+            def build(self, _input: Any) -> _FakeBuilderResult:
+                return _FakeBuilderResult()
+
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-01",
+            },
+            trip_settings={"activity_settings": {"categories": ["diving"]}},
+            tiles={
+                "activities": [{"id": "act_1", "title": "Dive", "type": "activity"}],
+                "hotels": [{"id": "hotel_1", "title": "Stay", "type": "hotel"}],
+            },
+        )
+        started: list[tuple[str, list[dict[str, Any]]]] = []
+
+        monkeypatch.setattr(
+            coordinator_module,
+            "_inject_specialist_tiles_into_state",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(coordinator_module, "_prepare_activity_tiles_for_build", AsyncMock())
+        monkeypatch.setattr(
+            "app.services.itinerary_builder.ItineraryBuilder",
+            lambda: _FakeBuilder(),
+        )
+        monkeypatch.setattr(
+            coordinator_module,
+            "_start_pending_itinerary_enrichment",
+            lambda state_arg, session_id="": started.append(
+                (session_id, list(state_arg.get("day_cards", [])))
+            ),
+        )
+
+        day_cards = await _build_itinerary(state, session_id="session-123")
+
+        assert day_cards == []
+        assert state["day_cards"] == []
+        assert started == [("session-123", [])]
+
+    @pytest.mark.asyncio
+    async def test_execute_turn_cancels_pending_itinerary_enrichment_on_error(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.planner.coordinator as coordinator_module
+        import app.planner.nodes.router_extraction as router_module
+        import app.planner.services.feasibility_service as feasibility_module
+        import app.services.unsplash as unsplash_module
+
+        classifier = _make_classifier(
+            intent="PLANNING",
+            change_type=ChangeType.INITIAL_PLAN,
+            destination="Bali",
+            start_date="2026-04-01",
+            end_date="2026-04-07",
+        )
+        plan = ExecutionPlan(
+            reason="test error cleanup",
+            steps=[ExecutionStep(step_type=StepType.GENERATE_RESPONSE, params={})],
+            estimated_llm_calls=1,
+        )
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-07",
+            },
+            messages=[],
+        )
+        cancel_calls: list[Dict[str, Any]] = []
+
+        async def _broken_generate(*_args: Any, **_kwargs: Any):
+            raise RuntimeError("boom")
+            yield "unreachable"
+
+        monkeypatch.setattr(router_module, "classify_change", AsyncMock(return_value=classifier))
+        monkeypatch.setattr(coordinator_module, "plan_turn", lambda *_args, **_kwargs: plan)
+        monkeypatch.setattr(coordinator_module, "_generate_response_streaming", _broken_generate)
+        monkeypatch.setattr(
+            coordinator_module,
+            "_cancel_pending_itinerary_enrichment",
+            lambda state_arg: cancel_calls.append(dict(state_arg)),
+        )
+        monkeypatch.setattr(
+            feasibility_module,
+            "batch_feasibility_precheck",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            unsplash_module,
+            "prefetch_destination_images",
+            AsyncMock(return_value=None),
+        )
+
+        events = [
+            event
+            async for event in execute_turn(
+                "build my itinerary",
+                state,
+                session_id="session-123",
+            )
+        ]
+
+        assert events[-1]["type"] == "error"
+        assert len(cancel_calls) >= 1
+
+
+class TestPostBuildPlacedActivityEnrichment:
+    @pytest.mark.asyncio
+    async def test_reuses_booked_tile_google_places_fields_without_provider_call(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.tile_service.google_places_provider as gp_module
+        from app.config import settings as app_settings
+
+        state = _make_state(
+            trip_plan={"destination": "Bali"},
+            tiles={"activities": []},
+            session_id="session-123",
+        )
+        day_cards = [
+            {
+                "day_number": 1,
+                "blocks": [
+                    {
+                        "summary": "Village walk",
+                        "booked_tile": {
+                            "title": "Secret Garden Village",
+                            "google_place_id": "gp_secret",
+                            "coordinates": {"lat": -8.5, "lng": 115.2},
+                            "deeplink": "https://maps.test/secret-garden",
+                            "image_url": "https://images.test/secret-garden.jpg",
+                            "price_level": 2,
+                        },
+                    }
+                ],
+            }
+        ]
+
+        monkeypatch.setattr(app_settings, "use_google_places_provider", True)
+        monkeypatch.setattr(app_settings, "google_places_enrichment_enabled", True)
+        enrich_mock = AsyncMock(side_effect=AssertionError("provider should not be called"))
+        monkeypatch.setattr(gp_module, "enrich_activities_with_places", enrich_mock)
+
+        await _post_build_enrich_placed_activities(state, day_cards)
+
+        block = day_cards[0]["blocks"][0]
+        assert block["google_place_id"] == "gp_secret"
+        assert block["coordinates"] == {"lat": -8.5, "lng": 115.2}
+        assert block["deeplink"] == "https://maps.test/secret-garden"
+        assert block["image_url"] == "https://images.test/secret-garden.jpg"
+        assert block["price_level"] == 2
+        enrich_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_prefers_booked_tile_title_for_cached_gp_reuse_when_summary_drifts(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.tile_service.google_places_provider as gp_module
+        from app.config import settings as app_settings
+
+        state = _make_state(
+            trip_plan={"destination": "Bali"},
+            tiles={
+                "activities": [
+                    {
+                        "id": "browse_secret_garden",
+                        "title": "Secret Garden Village",
+                        "google_place_id": "gp_secret",
+                        "coordinates": {"lat": -8.51, "lng": 115.21},
+                        "deeplink": "https://maps.test/secret-garden",
+                        "photo_name": "places/secret-garden/photo-1",
+                        "price_level": 3,
+                    }
+                ]
+            },
+            session_id="session-123",
+        )
+        day_cards = [
+            {
+                "day_number": 1,
+                "blocks": [
+                    {
+                        "summary": "Village walk",
+                        "booked_tile": {"title": "Secret Garden Village"},
+                    }
+                ],
+            }
+        ]
+
+        monkeypatch.setattr(app_settings, "use_google_places_provider", True)
+        monkeypatch.setattr(app_settings, "google_places_enrichment_enabled", True)
+        enrich_mock = AsyncMock(side_effect=AssertionError("provider should not be called"))
+        monkeypatch.setattr(gp_module, "enrich_activities_with_places", enrich_mock)
+        monkeypatch.setattr(
+            gp_module,
+            "build_signed_photo_url",
+            lambda session_id, photo_name: f"signed://{session_id}/{photo_name}",
+        )
+
+        await _post_build_enrich_placed_activities(state, day_cards)
+
+        block = day_cards[0]["blocks"][0]
+        assert block["google_place_id"] == "gp_secret"
+        assert block["coordinates"] == {"lat": -8.51, "lng": 115.21}
+        assert block["deeplink"] == "https://maps.test/secret-garden"
+        assert block["image_url"] == "signed://session-123/places/secret-garden/photo-1"
+        assert block["price_level"] == 3
+        enrich_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_ambiguous_cached_gp_title_reuse_and_queries_places(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.tile_service.google_places_provider as gp_module
+        from app.config import settings as app_settings
+
+        state = _make_state(
+            trip_plan={"destination": "Bali", "adults": 2, "children": 0},
+            tiles={
+                "activities": [
+                    {
+                        "id": "secret_garden_a",
+                        "title": "Secret Garden Village",
+                        "google_place_id": "gp_a",
+                        "coordinates": {"lat": -8.50, "lng": 115.20},
+                    },
+                    {
+                        "id": "secret_garden_b",
+                        "title": "Secret Garden Village",
+                        "google_place_id": "gp_b",
+                        "coordinates": {"lat": -8.60, "lng": 115.30},
+                    },
+                ]
+            },
+            session_id="session-123",
+        )
+        day_cards = [
+            {
+                "day_number": 1,
+                "blocks": [{"summary": "Secret Garden Village"}],
+            }
+        ]
+
+        monkeypatch.setattr(app_settings, "use_google_places_provider", True)
+        monkeypatch.setattr(app_settings, "google_places_enrichment_enabled", True)
+        enrich_mock = AsyncMock(
+            return_value=[
+                {
+                    "id": "post_enrich_0_0",
+                    "google_place_id": "gp_resolved",
+                    "coordinates": {"lat": -8.55, "lng": 115.25},
+                    "deeplink": "https://maps.test/resolved",
+                    "meta": {"photo_name": "places/resolved/photo-1"},
+                    "price_level": 1,
+                }
+            ]
+        )
+        monkeypatch.setattr(gp_module, "enrich_activities_with_places", enrich_mock)
+        monkeypatch.setattr(
+            gp_module,
+            "build_signed_photo_url",
+            lambda session_id, photo_name: f"signed://{session_id}/{photo_name}",
+        )
+
+        await _post_build_enrich_placed_activities(state, day_cards)
+
+        block = day_cards[0]["blocks"][0]
+        assert block["google_place_id"] == "gp_resolved"
+        assert block["coordinates"] == {"lat": -8.55, "lng": 115.25}
+        assert block["deeplink"] == "https://maps.test/resolved"
+        assert block["image_url"] == "signed://session-123/places/resolved/photo-1"
+        assert block["price_level"] == 1
+        enrich_mock.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_preserves_dict_coordinates_on_proxy_when_booked_tile_lacks_place_id(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.tile_service.google_places_provider as gp_module
+        from app.config import settings as app_settings
+
+        state = _make_state(
+            trip_plan={"destination": "Bali", "adults": 1, "children": 0},
+            tiles={"activities": []},
+            session_id="session-123",
+        )
+        day_cards = [
+            {
+                "day_number": 1,
+                "blocks": [
+                    {
+                        "summary": "Cliff walk",
+                        "booked_tile": {
+                            "title": "Uluwatu Cliff Walk",
+                            "coordinates": {"lat": -8.829, "lng": 115.084},
+                        },
+                    }
+                ],
+            }
+        ]
+        captured_proxies: list[dict[str, Any]] = []
+
+        async def _fake_enrich(
+            proxies: list[dict[str, Any]],
+            *_args: Any,
+            **_kwargs: Any,
+        ) -> list[dict[str, Any]]:
+            captured_proxies.extend(proxies)
+            return []
+
+        monkeypatch.setattr(app_settings, "use_google_places_provider", True)
+        monkeypatch.setattr(app_settings, "google_places_enrichment_enabled", True)
+        monkeypatch.setattr(gp_module, "enrich_activities_with_places", _fake_enrich)
+
+        await _post_build_enrich_placed_activities(state, day_cards)
+
+        assert captured_proxies == [
+            {
+                "id": "post_enrich_0_0",
+                "title": "Uluwatu Cliff Walk",
+                "coordinates": [115.084, -8.829],
+                "photo_name": None,
+                "image_url": None,
+                "meta": {},
+            }
+        ]
+
+
 class TestNormalizeSpecialistPlanKeys:
     def test_lowercases_keys(self) -> None:
         state: Dict[str, Any] = {
@@ -722,23 +2484,166 @@ class TestBuildBrief:
 class TestTileRefreshTypes:
     def test_initial_plan_refreshes_all(self) -> None:
         classifier = _make_classifier(change_type=ChangeType.INITIAL_PLAN)
-        result = _tile_refresh_types(classifier)
+        result = _tile_refresh_types(classifier, _make_state())
         assert set(result) == {"flights", "hotels", "activities"}
 
     def test_logistics_refreshes_flights(self) -> None:
         classifier = _make_classifier(change_type=ChangeType.LOGISTICS)
-        result = _tile_refresh_types(classifier)
+        result = _tile_refresh_types(classifier, _make_state())
         assert result == ["flights"]
 
     def test_date_change_refreshes_flights_hotels_activities(self) -> None:
         classifier = _make_classifier(change_type=ChangeType.DATE_CHANGE)
-        result = _tile_refresh_types(classifier)
+        result = _tile_refresh_types(classifier, _make_state())
         assert set(result) == {"flights", "hotels", "activities"}
 
-    def test_add_activity_refreshes_activities(self) -> None:
-        classifier = _make_classifier(change_type=ChangeType.ADD_ACTIVITY)
-        result = _tile_refresh_types(classifier)
-        assert result == ["activities"]
+    def test_add_tier1_activity_refreshes_flights_and_activities(self) -> None:
+        classifier = _make_classifier(
+            change_type=ChangeType.ADD_ACTIVITY,
+            specialist_hints=["diving"],
+            activity_categories=["diving"],
+        )
+        result = _tile_refresh_types(classifier, _make_state())
+        assert result == ["activities", "flights"]
+
+    def test_existing_diving_plan_keeps_refreshing_flights_for_tier2_additions(self) -> None:
+        classifier = _make_classifier(
+            change_type=ChangeType.ADD_ACTIVITY,
+            activity_categories=["spa"],
+        )
+        state = _make_state(
+            trip_settings={"activity_settings": {"categories": ["diving", "spa"]}},
+            strategy_sections=[
+                {"specialist_type": "diving", "constraints_applied": [], "content_added": []}
+            ],
+        )
+        result = _tile_refresh_types(classifier, state)
+        assert result == ["activities", "flights"]
+
+    def test_preference_day_count_refreshes_flights_and_activities(self) -> None:
+        classifier = _make_classifier(
+            change_type=ChangeType.PREFERENCE,
+            activity_day_preferences='{"diving": 3}',
+        )
+        state = _make_state(
+            trip_settings={"activity_settings": {"categories": ["diving"]}},
+            strategy_sections=[
+                {"specialist_type": "diving", "constraints_applied": [], "content_added": []}
+            ],
+        )
+        result = _tile_refresh_types(classifier, state)
+        assert result == ["activities", "flights"]
+
+    def test_day_count_refreshes_flights_hotels_and_activities(self) -> None:
+        classifier = _make_classifier(change_type=ChangeType.DAY_COUNT, affects=["diving"])
+        result = _tile_refresh_types(classifier, _make_state())
+        assert result == ["activities", "flights", "hotels"]
+
+
+class TestDateChangeContinuityReuse:
+    def test_refresh_preserved_specialist_section_metadata_updates_cache_fields(self) -> None:
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-17",
+            },
+            trip_settings={
+                "activity_settings": {
+                    "categories": ["diving"],
+                    "day_preferences": {"diving": 4},
+                    "skill_level": "advanced",
+                }
+            },
+            strategy_sections=[
+                {
+                    "specialist_type": "diving",
+                    "_cache_dates": "2026-03-01:2026-03-07",
+                    "_cache_day_pref": None,
+                    "_cache_skill_level": None,
+                    "content_added": [{"title": "Dive"}],
+                }
+            ],
+        )
+
+        _refresh_preserved_specialist_section_metadata(state, ["diving"])
+
+        section = state["strategy_sections"][0]
+        assert section["subtitle"] == "Bali"
+        assert section["_cache_dates"] == "2026-03-01:2026-03-17"
+        assert section["_cache_day_pref"] == 4
+        assert section["_cache_skill_level"] == "advanced"
+
+    def test_preserved_specialist_tiles_for_turn_filters_to_preserved_topics(self) -> None:
+        classifier = _make_classifier(change_type=ChangeType.DATE_CHANGE)
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-17",
+            },
+            trip_settings={"activity_settings": {"categories": ["diving", "hiking"]}},
+            specialist_plans={
+                "diving": {"day_plans": [{"day_number": 2, "location": "Tulamben"}]},
+                "hiking": {"day_plans": []},
+            },
+            strategy_sections=[
+                {"specialist_type": "diving", "content_added": [{"title": "Dive"}]},
+                {"specialist_type": "hiking", "content_added": []},
+            ],
+            _pre_change_briefs={
+                "trip_plan": {
+                    "destination": "Bali",
+                    "start_date": "2026-03-01",
+                    "end_date": "2026-03-07",
+                },
+                "trip_settings": {"activity_settings": {"categories": ["diving", "hiking"]}},
+            },
+        )
+        existing_tiles = [
+            {
+                "id": "spec_bali_diving_keep",
+                "title": "Dive",
+                "type": "activity",
+                "source_agent": "vertical_specialist",
+                "provider": "viator",
+                "meta": {"specialist_type": "diving"},
+            },
+            {
+                "id": "spec_bali_hiking_drop",
+                "title": "Hike",
+                "type": "activity",
+                "source_agent": "vertical_specialist",
+                "provider": "viator",
+                "meta": {"specialist_type": "hiking"},
+            },
+        ]
+
+        preserved = _preserved_specialist_tiles_for_turn(state, classifier, existing_tiles)
+        merged = _merge_activity_tiles(
+            [{"id": "browse_1", "title": "Market", "type": "activity"}],
+            preserved,
+        )
+
+        ids = {tile["id"] for tile in merged}
+        assert ids == {"browse_1", "spec_bali_diving_keep"}
+        kept_tile = next(tile for tile in merged if tile["id"] == "spec_bali_diving_keep")
+        assert kept_tile["provider"] == "viator"
+
+
+class TestCanonicalBuilderConstraints:
+    def test_collects_cross_domain_constraint_from_active_sections(self) -> None:
+        state = _make_state(
+            strategy_sections=[
+                {"specialist_type": "diving", "constraints_applied": [], "content_added": []},
+                {"specialist_type": "hiking", "constraints_applied": [], "content_added": []},
+            ],
+            trip_settings={"activity_settings": {"categories": ["diving", "hiking"]}},
+        )
+
+        result = _collect_canonical_builder_constraints(state)
+
+        assert any(c.get("rule") == "no_altitude_after_dive" for c in result)
 
 
 # =============================================================================

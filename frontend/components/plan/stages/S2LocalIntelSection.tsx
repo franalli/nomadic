@@ -102,7 +102,7 @@ export function LocalIntelSection({ section }: { section: StrategySection }) {
         <h3 className="text-base font-bold text-zinc-900 dark:text-white">Trip Operations Center</h3>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="space-y-3">
+        <div className="space-y-2">
           <h4 className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-2">Logistics &amp; Survival</h4>
           {logisticsItems.slice(0, 4).map((item, idx) => {
             const { icon, color } = getLogisticsIcon(item);
@@ -117,7 +117,7 @@ export function LocalIntelSection({ section }: { section: StrategySection }) {
               badge={{ type: 'logistics', label: 'LOGISTICS' }} description={note} />
           ))}
         </div>
-        <div className="space-y-3">
+        <div className="space-y-2">
           <h4 className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-2">Booking Radar</h4>
           {attractionItems.slice(0, 4).map((item, idx) => {
             const sellsOut = item.logic_hook?.toLowerCase().includes('sells out') || item.logic_hook?.includes('BOOK');

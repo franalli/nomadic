@@ -280,6 +280,18 @@ class TestNormalizeCurrency:
         """'$100' → 'USD' (extracts leading symbol)."""
         assert normalize_currency("$100") == "USD"
 
+    def test_ambiguous_yen_symbol_returns_none(self) -> None:
+        assert normalize_currency("¥") is None
+
+    def test_ambiguous_kr_symbol_returns_none(self) -> None:
+        assert normalize_currency("kr") is None
+
+    def test_ambiguous_yen_amount_returns_none(self) -> None:
+        assert normalize_currency("¥1000") is None
+
+    def test_ambiguous_kr_amount_returns_none(self) -> None:
+        assert normalize_currency("kr500") is None
+
     def test_none_returns_none(self) -> None:
         assert normalize_currency(None) is None
 

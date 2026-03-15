@@ -119,6 +119,9 @@ export function useTimelineFillDay({
         toast(reason);
         return;
       }
+      const reason = 'Could not generate activities for this day. Please try again.';
+      setFillDayRejection({ dayNumber, reason });
+      toast(reason);
       console.error('[TimelineThread] fill-day failed:', err);
     } finally {
       useDocumentStore.getState().releaseMutation();

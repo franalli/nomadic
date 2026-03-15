@@ -65,19 +65,19 @@ function ChatBootstrapHeroInner({
     <>
       {/* Hero banner — scrolls up as messages arrive */}
       <div className="flex flex-col items-center justify-center text-center px-4 pb-4">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+        <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">
           {status.text}
         </h1>
         <div className="mt-1.5 flex items-center gap-1.5">
           <span className={cn(
-            `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-primary`,
-            DS.glowClass.dropText,
+            `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-emerald-600 dark:text-emerald-500`,
+            `dark:${DS.glowClass.dropText}`,
           )}>
             {status.label}
           </span>
           <div className={cn(
-            'h-1.5 w-1 animate-terminal-blink rounded-sm bg-primary',
-            DS.glowClass.cursor,
+            'h-1.5 w-1 animate-terminal-blink rounded-sm bg-emerald-600 dark:bg-emerald-500',
+            `dark:${DS.glowClass.cursor}`,
           )} />
         </div>
       </div>
@@ -103,7 +103,7 @@ function ChatBootstrapHeroInner({
         destinationLocked={!!destination}
       />
       {/* Divider between setup controls and conversation */}
-      <div className="mx-auto mb-4 mt-6 w-2/3 border-t border-border/50" />
+      <div className="mx-auto mb-4 mt-6 w-2/3 border-t border-zinc-200 dark:border-white/10" />
     </>
   );
 }

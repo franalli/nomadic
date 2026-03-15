@@ -1,24 +1,30 @@
 'use client';
 
-import { useDocumentTripInputs } from '@/state/documentStore';
+import { useSyncExternalStore } from 'react';
+
+import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
+
+const NOOP_UNSUBSCRIBE = () => {};
+const NOOP_SUBSCRIBE = () => NOOP_UNSUBSCRIBE;
 
 /**
  * Hook that returns trip inputs from store with prop fallback.
  *
- * Ensures components always have fresh data even if prop-drilling breaks.
- * Priority: Store (Live) > Props (Parent passed) > undefined
+ * When props are present, avoid subscribing to the store so hot/root
+ * planning surfaces do not rerender on unrelated trip input mutations.
+ * Priority: Props (Parent passed) > Store (Live fallback) > undefined
  *
- * This is a safety net for components that receive tripInputs as props
- * but should always show the latest data from the store.
+ * This stays a safety net for components that do not receive tripInputs
+ * from their parent: those still subscribe to the live store.
  *
  * @param propInputs - Optional trip inputs passed as props from parent
- * @returns Trip inputs from store, or props as fallback, or undefined
+ * @returns Trip inputs from props, or store fallback, or undefined
  *
  * @example
  * ```tsx
  * function MyComponent(props: { tripInputs?: DocumentTripInputs }) {
- *   // Always gets fresh data, even if parent doesn't re-render
+ *   // Prefer prop-backed inputs without subscribing to the store
  *   const tripInputs = useTripInputsWithFallback(props.tripInputs);
  *   // ...
  * }
@@ -27,6 +33,9 @@ import type { DocumentTripInputs } from '@/types/document';
 export function useTripInputsWithFallback(
   propInputs?: DocumentTripInputs | null
 ): DocumentTripInputs | undefined {
-  const storeInputs = useDocumentTripInputs();
-  return storeInputs ?? propInputs ?? undefined;
+  return useSyncExternalStore(
+    propInputs ? NOOP_SUBSCRIBE : useDocumentStore.subscribe,
+    () => propInputs ?? useDocumentStore.getState().document?.trip_inputs ?? undefined,
+    () => propInputs ?? useDocumentStore.getState().document?.trip_inputs ?? undefined
+  );
 }

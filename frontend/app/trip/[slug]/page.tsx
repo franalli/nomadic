@@ -1,31 +1,14 @@
 import type { Metadata } from 'next';
 import { cache } from 'react';
 
-import { type SharedTripData, SharedTripView } from '@/components/shared/SharedTripView';
-import { BACKEND_URL } from '@/lib/config';
+import { SharedTripView } from '@/components/shared/SharedTripView';
+import {
+  fetchSharedTripServer,
+  getSharedTripErrorMessage,
+  type SharedTripFetchResult,
+} from '@/lib/sharedTripApi';
 
-interface SharedTripFetchResult {
-  status: number;
-  data: SharedTripData | null;
-}
-
-const fetchSharedTrip = cache(async (slug: string): Promise<SharedTripFetchResult> => {
-  const res = await fetch(`${BACKEND_URL}/api/shared/${slug}`, {
-    cache: 'no-store',
-  });
-  if (!res.ok) {
-    return { status: res.status, data: null };
-  }
-
-  const data = (await res.json()) as SharedTripData;
-  return { status: 200, data };
-});
-
-function getErrorMessage(status: number): string {
-  if (status === 404) return 'Trip not found';
-  if (status === 410) return 'This shared trip has expired';
-  return 'Failed to load trip';
-}
+const fetchSharedTrip = cache(fetchSharedTripServer);
 
 export async function generateMetadata(
   { params }: { params: Promise<{ slug: string }> }
@@ -79,7 +62,7 @@ export default async function SharedTripPage(
     <SharedTripView
       slug={slug}
       initialData={result.data}
-      initialError={result.data ? null : getErrorMessage(result.status)}
+      initialError={result.data ? null : getSharedTripErrorMessage(result.status)}
     />
   );
 }

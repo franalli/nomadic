@@ -28,7 +28,13 @@ from pydantic import ValidationError
 from app.config import settings
 from app.data.demo_curation import DEMO_MANIFEST
 from app.placeholders import get_destination_gallery
-from app.planner.llm_factory import extract_token_usage, get_llm_by_model
+from app.planner.llm_factory import (
+    extract_token_usage,
+    gemini_safe_schema,
+    get_llm_by_model,
+    resolve_schema_refs,
+    strip_unsupported_schema_keys,
+)
 from app.planner.nodes.expert_constraints import (
     LocalConstraint,
     LocalExpertOutput,
@@ -46,6 +52,12 @@ from app.planner.state import GraphState
 from app.planner.state.typed_meta import get_trip_settings
 
 logger = logging.getLogger(__name__)
+
+# Cache a flattened schema at module load so Gemini function calling avoids
+# nested $defs/$ref payloads that have caused structured-output drift elsewhere.
+_LOCAL_EXPERT_FLAT_SCHEMA: dict = gemini_safe_schema(
+    strip_unsupported_schema_keys(resolve_schema_refs(LocalExpertOutput.model_json_schema()))
+)
 
 
 # Module-level registry for pending Phase B enrichment coroutine-factories.
@@ -760,7 +772,7 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                 max_tokens=5000,
             )
             structured_llm = llm.with_structured_output(
-                LocalExpertOutput, include_raw=True, method="function_calling"
+                dict(_LOCAL_EXPERT_FLAT_SCHEMA), include_raw=True, method="function_calling"
             )
             logger.debug("LOCAL_EXPERT Phase B: calling LLM (%s)...", settings.local_expert_model)
 
@@ -798,7 +810,7 @@ Output as JSON with "constraints" and "recommendations" arrays."""
                 )
                 return
 
-            # Gemini returns dict when using class schema; rehydrate to Pydantic
+            # Structured output may return a raw dict on Gemini-compatible paths.
             if isinstance(parsed, dict):
                 response = LocalExpertOutput.model_validate(parsed)
             else:
@@ -1110,9 +1122,17 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
     if not gallery_images:
         gallery_images = get_destination_gallery(plan.destination)
 
-    # Build Phase A skeleton — enriched from static data (no LLM)
-    # Better one_liner from constraint types
-    warning_constraints = [c for c in constraint_list if c["severity"] == "warning"]
+    # Keep the generic fallback floor internal to constraints_applied. Visible
+    # section copy should only come from destination-specific scaffold data.
+    visible_constraints = [
+        {
+            "type": c["type"],
+            "desc": c["rule"],
+            "severity": c["severity"],
+        }
+        for c in constraint_list
+    ]
+    warning_constraints = [c for c in visible_constraints if c["severity"] == "warning"]
     if warning_constraints:
         warning_types = list({c["type"] for c in warning_constraints})
         joined = " & ".join(warning_types[:2])
@@ -1120,7 +1140,7 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
     else:
         one_liner = f"Your adventure in {plan.destination}"
 
-    # Principles from warning-severity constraints (max 4)
+    # Principles stay intentionally sparse when no destination scaffold exists.
     principles = [c["desc"] for c in warning_constraints[:4]]
 
     # Keep skeleton must_dos empty when LLM enrichment is disabled.
@@ -1129,7 +1149,7 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
     section = build_local_expert_section(
         destination=plan.destination,
         one_liner=one_liner,
-        bullets=[c["desc"] for c in constraint_list[:3]],
+        bullets=[c["desc"] for c in visible_constraints[:3]],
         must_dos=must_dos,
         logistics_notes=[],
         constraints_applied=constraints_applied,

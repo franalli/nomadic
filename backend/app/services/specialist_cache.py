@@ -5,7 +5,7 @@ L1: In-memory TTLCache with RLock (1h TTL, 128 entries) - hot path
 L2: PostgreSQL response_cache (7d TTL) - warm persistence across restarts
 
 Cache key format:
-specialist::v4::{topic}::{dest}::{iso_month}::m::{skill}::{dpref}::{phash}
+specialist::v5::{topic}::{dest}::{iso_month}::{duration}::{skill}::{dpref}::{phash}
 
 Usage:
     from app.services.specialist_cache import (
@@ -69,14 +69,13 @@ def _specialist_cache_key(
     Generate stable cache key with topic-aware date bucketing.
 
     Format:
-    specialist::v4::{topic}::{dest}::{start}::{end}::{skill}::{dpref}::{phash}
+    specialist::v5::{topic}::{dest}::{start}::{duration}::{skill}::{dpref}::{phash}
 
     Date bucketing varies by topic:
     - local_expert: actual start/end dates (date-specific cultural events)
-    - Tier 1 specialists: ISO-month midpoint (season-agnostic, avoids
-      adjacent-week misses). Duration dropped — specialist plans don't
-      vary by trip length. Date-anchored constraints (e.g., diving no-fly
-      buffer) are re-anchored by the itinerary builder at schedule time.
+    - Tier 1 specialists: ISO-month midpoint plus exact trip duration days.
+      This preserves same-month reuse for adjacent starts while forcing
+      re-dispatch when materially longer trips need different specialist output.
     """
     from datetime import date as date_type
 
@@ -85,10 +84,10 @@ def _specialist_cache_key(
     dest_normalized = destination.lower().strip() if destination else "unknown"
     # Topic-aware date bucketing (W2):
     # - local_expert: date-specific (cultural events like Nyepi are date-dependent)
-    # - Tier 1 specialists: month-bucketed (season-agnostic, avoids adjacent-week misses)
+    # - Tier 1 specialists: month-bucketed + duration-sensitive
     if topic == "local_expert":
         start = start_date[:10] if start_date else "unknown"
-        end = end_date[:10] if end_date else start
+        duration = end_date[:10] if end_date else start
     else:
         try:
             s = date_type.fromisoformat(start_date[:10])
@@ -96,21 +95,22 @@ def _specialist_cache_key(
             # Use midpoint date's month for cross-month trips (e.g. Mar 31-Apr 7 → April)
             midpoint = s + (e - s) / 2
             start = f"{midpoint.year}-{midpoint.month:02d}"
-            end = "m"  # Duration dropped — specialist content is duration-agnostic
+            duration_days = max(1, (e - s).days + 1)
+            duration = f"d{duration_days}"
         except (ValueError, TypeError, AttributeError):
             start = start_date[:7] if start_date else "unknown"
-            end = "unknown"
+            duration = "dunknown"
     skill = skill_level or "any"
     dpref = f"dp{day_pref}" if day_pref is not None else "dpany"
     phash = prompt_hash(topic)
 
     key = make_cache_key(
         "specialist",
-        "v4",
+        "v5",
         topic,
         dest_normalized,
         start,
-        end,
+        duration,
         skill,
         dpref,
         phash,
@@ -207,6 +207,10 @@ async def get_cached_specialist_output(
 
     except Exception as e:
         logger.warning(f"[SPECIALIST_CACHE] L2 lookup failed: {e}")
+        try:
+            await db.rollback()
+        except Exception:
+            logger.debug("[SPECIALIST_CACHE] rollback after L2 lookup failure also failed")
         return None
 
 

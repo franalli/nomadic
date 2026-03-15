@@ -191,6 +191,37 @@ class TestSingleCategoryCachePath:
         assert result[1]["title"] == "Seminyak Sunset Yoga"
         clear_experience_cache()
 
+    @pytest.mark.asyncio
+    async def test_fill_day_defaults_rotate_through_shared_browse_categories(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.config import settings
+        from app.planner.specialist_registry import TIER2_BROWSE_CATEGORIES
+        from app.services import experience_generator as module
+
+        captured_categories: list[str] = []
+
+        async def _fake_generate_single_category(**kwargs):
+            captured_categories.append(kwargs["category"])
+            return [{"id": f"exp_{kwargs['category']}_0"}]
+
+        monkeypatch.setattr(settings, "use_google_places_provider", False)
+        monkeypatch.setattr(module, "generate_single_category", _fake_generate_single_category)
+
+        day_number = 3
+        result = await module.generate_experience_tiles_for_day(
+            destination="Bali",
+            categories=None,
+            month="2099-01",
+            day_number=day_number,
+            tiles_per_day=1,
+        )
+
+        assert captured_categories == [
+            TIER2_BROWSE_CATEGORIES[day_number % len(TIER2_BROWSE_CATEGORIES)]
+        ]
+        assert result == [{"id": "exp_spa_0"}]
+
 
 # =============================================================================
 # Pydantic Models

@@ -17,7 +17,7 @@
 #   11  Cache survival — L2 specialist cache persists across session reset
 #   12  Google Places cascade — non-curated destination (conditional)
 #   13  APD tile scaling — activities_per_day=2 generates enough tiles + blocks
-#   14  Full plan golden path — "rome" + "Mar 1-7", 2-turn complete pipeline
+#   14  Full plan golden path — "rome" + "Mar 1-7, 2030", 2-turn complete pipeline
 #   15  Deeplink URL format validation — hotel/activity deeplinks are real URLs
 #   16  Travelers + budget extraction — "2 adults and 1 child, $3000 budget"
 #   17  Suggested response round-trip — chip bar text sent as user message
@@ -234,6 +234,11 @@ _flow_end() {
 # Produces per-flow reports, prints + saves a combined summary, then deletes temp files.
 _generate_final_report() {
   local summary="$RESULTS_DIR/summary_report.txt"
+  local analyzer_python="python3"
+
+  if [ -x "$BACKEND_DIR/.venv/bin/python" ]; then
+    analyzer_python="$BACKEND_DIR/.venv/bin/python"
+  fi
 
   {
     echo "═══════════════════════════════════════════════════════════════════════"
@@ -255,8 +260,45 @@ _generate_final_report() {
       local flow_backend="$RESULTS_DIR/flow_${n}_backend.log"
       local flow_console="$RESULTS_DIR/flow_${n}_console.log"
       local flow_report="$RESULTS_DIR/flow_${n}_report.txt"
+      local analyzer_stderr
+      analyzer_stderr=$(mktemp)
+      local analyzer_status=0
+      local stderr_preview=""
 
-      python3 "$ANALYZER" "$n" "$flow_backend" "$flow_console" "$sse_file" "$flow_report" 2>/dev/null || true
+      "$analyzer_python" \
+        "$ANALYZER" \
+        "$n" \
+        "$flow_backend" \
+        "$flow_console" \
+        "$sse_file" \
+        "$flow_report" \
+        2>"$analyzer_stderr"
+      analyzer_status=$?
+
+      if [ ! -s "$flow_report" ]; then
+        if [ -s "$analyzer_stderr" ]; then
+          stderr_preview=$(tr '\n' ' ' < "$analyzer_stderr" | cut -c1-240)
+        fi
+
+        {
+          echo "========================================================================"
+          echo "  FLOW $n REPORT: ANALYZER CRASH"
+          echo "========================================================================"
+          echo ""
+          echo "  ERRORS (1):"
+          echo "    ✗ Analyzer crashed before producing a report file (exit=$analyzer_status)"
+          if [ -n "$stderr_preview" ]; then
+            echo ""
+            echo "  INFO (1):"
+            echo "    ℹ stderr: $stderr_preview"
+          fi
+          echo ""
+          echo "  RESULT: ANALYZER CRASH"
+          echo "========================================================================"
+        } > "$flow_report"
+      fi
+
+      rm -f "$analyzer_stderr"
 
       if [ -f "$flow_report" ]; then
         cat "$flow_report" >> "$summary"
@@ -1212,7 +1254,7 @@ fi
 
 
 # =============================================================================
-#  FLOW 14: Full Plan Golden Path — Rome Cultural, Mar 1-7
+#  FLOW 14: Full Plan Golden Path — Rome Cultural, Mar 1-7, 2030
 # =============================================================================
 # Golden path integration smoke test: two turns from "rome" to rendered itinerary.
 #   Turn 1: "rome" → extract_trip_fields, local_intel, conversationalist
@@ -1220,9 +1262,9 @@ fi
 #     - strategy_sections populated (local_expert at minimum)
 #     - no day_cards (no dates yet)
 #     - suggested_responses nudge toward dates
-#   Turn 2: "Mar 1-7" → extract_trip_fields, search_tiles, build_itinerary
+#   Turn 2: "Mar 1-7, 2030" → extract_trip_fields, search_tiles, build_itinerary
 #     - plan_view_state = S3
-#     - 7 day_cards (Mar 1 through Mar 7)
+#     - 7 day_cards (Mar 1 through Mar 7, 2030)
 #     - Day 1 = Arrival, Day 7 = Departure
 #     - tiles non-empty (hotels + activities)
 #     - interior days have activity blocks
@@ -1259,8 +1301,8 @@ PVS=$(extract_doc "plan_view_state")
 check_not_contains "Turn 1: plan_view_state not S3 yet" "$PVS" "S3" || F=false
 
 # ── Turn 2: Add dates ────────────────────────────────────────────────
-echo "  → Turn 2: Mar 1-7"
-if send_message "Mar 1-7"; then
+echo "  → Turn 2: Mar 1-7, 2030"
+if send_message "Mar 1-7, 2030"; then
 
 # Dates extracted
 START=$(extract_top "session_state.trip_plan.start_date")
@@ -1279,7 +1321,7 @@ check_contains "Turn 2: plan_view_state=S3" "$PVS" "S3" || F=false
 DAY_CARDS=$(extract_doc "day_cards")
 DC_CT=$(jlen "$DAY_CARDS")
 echo "  ℹ  Day cards: $DC_CT"
-check_gte "Turn 2: day_cards ≥ 6 (Mar 1-7)" "$DC_CT" 6 || F=false
+check_gte "Turn 2: day_cards ≥ 6 (Mar 1-7, 2030)" "$DC_CT" 6 || F=false
 
 # Day 1 = Arrival
 DAY1_LABEL=$(echo "$DAY_CARDS" | python3 -c "
@@ -1713,8 +1755,8 @@ F=true
 
 if fresh_session; then
 
-echo "  → Turn 1: Rome, March 1-5"
-if send_message "I want to visit Rome from March 1 to March 5"; then
+echo "  → Turn 1: Rome, March 1-5, 2030"
+if send_message "I want to visit Rome from March 1 2030 to March 5 2030"; then
 
 DEST=$(extract_top "session_state.trip_plan.destination")
 check_not_empty "Turn 1: destination extracted" "$DEST" || F=false
@@ -1758,9 +1800,9 @@ if send_message "extend the trip by 3 more days"; then
 # Router should update end_date
 END_DATE=$(extract_top "session_state.trip_plan.end_date")
 check_not_empty "Turn 3: end_date updated" "$END_DATE" || F=false
-# End date should now be March 8 (original Mar 5 + 3 days)
+# End date should now be March 8, 2030 (original Mar 5 + 3 days)
 if echo "$END_DATE" | grep -qE "03-0[7-9]|03-1[0-9]"; then
-  echo "  ✓ End date extended past March 5 (=$END_DATE)"; PASS=$((PASS+1))
+  echo "  ✓ End date extended past March 5, 2030 (=$END_DATE)"; PASS=$((PASS+1))
 else
   echo "  ⚠  End date may not be extended (=$END_DATE) — checking day count instead"
 fi
@@ -1856,8 +1898,8 @@ F=true
 
 if fresh_session; then
 
-echo "  → Turn 1: Cultural trip to Rome, March 1-7"
-if send_message "I want a cultural trip to Rome from March 1 to March 7"; then
+echo "  → Turn 1: Cultural trip to Rome, March 1-7, 2030"
+if send_message "I want a cultural trip to Rome from March 1 2030 to March 7 2030"; then
 
 DEST=$(extract_top "session_state.trip_plan.destination")
 check_not_empty "Turn 1: destination" "$DEST" || F=false
@@ -1955,8 +1997,8 @@ F=true
 
 if fresh_session; then
 
-echo "  → Turn 1: Rome, March 1-7"
-if send_message "I want to visit Rome from March 1 to March 7"; then
+echo "  → Turn 1: Rome, March 1-7, 2030"
+if send_message "I want to visit Rome from March 1 2030 to March 7 2030"; then
 
 check_not_empty "Turn 1: destination" "$(extract_top 'session_state.trip_plan.destination')" || F=false
 

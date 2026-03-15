@@ -55,6 +55,10 @@ EXPECTED_ROUTES: set[tuple[str, str]] = {
     ("GET", "/api/specialist/{section_id}/enrichment"),
 }
 
+REMOVED_ROUTES: set[tuple[str, str]] = {
+    ("POST", "/api/suggestions/click"),
+}
+
 
 def _actual_route_set() -> set[tuple[str, str]]:
     actual: set[tuple[str, str]] = set()
@@ -71,3 +75,6 @@ def test_backend_endpoint_contract_locked() -> None:
 
     missing = EXPECTED_ROUTES - actual
     assert not missing, f"Missing or renamed endpoints: {sorted(missing)}"
+
+    resurrected = REMOVED_ROUTES & actual
+    assert not resurrected, f"Removed endpoints reappeared unexpectedly: {sorted(resurrected)}"

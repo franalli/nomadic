@@ -150,9 +150,9 @@ export function PlanTimelineSection({
         >
           {[1, 2].map((i) => (
             <div key={i} className="space-y-2">
-              <div className="h-6 w-24 bg-zinc-200 dark:bg-zinc-800 rounded" />
-              <div className="h-20 bg-zinc-200/40 dark:bg-zinc-800/40 rounded-lg" />
-              <div className="h-20 bg-zinc-200/40 dark:bg-zinc-800/40 rounded-lg" />
+              <div className="h-6 w-24 bg-zinc-200/50 dark:bg-zinc-700/50 rounded" />
+              <div className="h-20 bg-zinc-200/50 dark:bg-zinc-700/50 rounded-lg" />
+              <div className="h-20 bg-zinc-200/50 dark:bg-zinc-700/50 rounded-lg" />
             </div>
           ))}
           <div className="flex items-center justify-center gap-2 pt-4">

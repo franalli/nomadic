@@ -241,6 +241,39 @@ class TestMatchActivityToViator:
             # No new API calls should have been made
             client.post.assert_not_called()
 
+    async def test_cleaned_specialist_title_variants_share_positive_cache_entry(self):
+        """Equivalent cleaned specialist titles should reuse the same cached Viator match."""
+        import app.services.viator_provider as vp
+
+        search_mock = AsyncMock(return_value=([SPECIALIST_MATCH_PRODUCT], True))
+        cache_key = "viator_match:bali:uncategorized:usat liberty shipwreck shore dive"
+
+        with (
+            patch(
+                "app.services.viator_provider.resolve_destination_id",
+                new=AsyncMock(return_value=(99, True)),
+            ),
+            patch(
+                "app.services.viator_provider._search_query_variants",
+                return_value=["USAT Liberty Shipwreck Shore Dive"],
+            ),
+            patch(
+                "app.services.viator_provider._search_freetext_with_status",
+                new=search_mock,
+            ),
+        ):
+            variant_tile = await match_activity_to_viator(
+                "Tulamben: USAT Liberty Shipwreck Shore Dive (Session 2)",
+                "Bali",
+            )
+            base_tile = await match_activity_to_viator("USAT Liberty Shipwreck Shore Dive", "Bali")
+
+        assert variant_tile is not None
+        assert base_tile is not None
+        assert variant_tile["id"] == base_tile["id"] == "viator_98765P2"
+        assert search_mock.await_count == 1
+        assert vp._match_cache.get(cache_key) == variant_tile
+
     async def test_specialist_title_falls_back_to_simplified_query(self):
         """Specialist-generated diving titles should retry with a cleaner site-based query."""
         seen_queries: list[str] = []
@@ -324,7 +357,7 @@ class TestMatchActivityToViator:
         """Transient empty responses should not poison the long-lived no-match cache."""
         import app.services.viator_provider as vp
 
-        cache_key = "viator_match:bali:usat liberty shipwreck shore dive"
+        cache_key = "viator_match:bali:uncategorized:usat liberty shipwreck shore dive"
 
         with (
             patch(
@@ -345,7 +378,7 @@ class TestMatchActivityToViator:
         """Confirmed empty provider responses should still cache the no-match sentinel."""
         import app.services.viator_provider as vp
 
-        cache_key = "viator_match:bali:usat liberty shipwreck shore dive"
+        cache_key = "viator_match:bali:uncategorized:usat liberty shipwreck shore dive"
 
         with (
             patch(
@@ -362,11 +395,161 @@ class TestMatchActivityToViator:
         assert tile is None
         assert vp._match_cache.get(cache_key) is vp._NO_MATCH
 
+    async def test_cleaned_specialist_title_variants_share_negative_cache_entry(self):
+        """Equivalent cleaned titles should reuse the same definitive no-match cache entry."""
+        import app.services.viator_provider as vp
+
+        search_mock = AsyncMock(return_value=([], True))
+        cache_key = "viator_match:bali:uncategorized:usat liberty shipwreck shore dive"
+
+        with (
+            patch(
+                "app.services.viator_provider.resolve_destination_id",
+                new=AsyncMock(return_value=(99, True)),
+            ),
+            patch(
+                "app.services.viator_provider._search_query_variants",
+                return_value=["USAT Liberty Shipwreck Shore Dive"],
+            ),
+            patch(
+                "app.services.viator_provider._search_freetext_with_status",
+                new=search_mock,
+            ),
+        ):
+            variant_tile = await match_activity_to_viator(
+                "Tulamben: USAT Liberty Shipwreck Shore Dive (Session 2)",
+                "Bali",
+            )
+            base_tile = await match_activity_to_viator("USAT Liberty Shipwreck Shore Dive", "Bali")
+
+        assert variant_tile is None
+        assert base_tile is None
+        assert search_mock.await_count == 1
+        assert vp._match_cache.get(cache_key) is vp._NO_MATCH
+
+    async def test_meaningful_parenthetical_variants_keep_distinct_negative_cache_entries(self):
+        """Meaningful parenthetical variants should not reuse a prior no-match cache sentinel."""
+        import app.services.viator_provider as vp
+
+        sunrise_cache_key = "viator_match:santorini:uncategorized:sunset sailing cruise (sunrise)"
+        sunset_cache_key = "viator_match:santorini:uncategorized:sunset sailing cruise (sunset)"
+        search_mock = AsyncMock(side_effect=[([], True), ([SAMPLE_PRODUCT], True)])
+
+        with (
+            patch(
+                "app.services.viator_provider.resolve_destination_id",
+                new=AsyncMock(return_value=(99, True)),
+            ),
+            patch(
+                "app.services.viator_provider._search_query_variants",
+                return_value=["Sunset Sailing Cruise"],
+            ),
+            patch(
+                "app.services.viator_provider._search_freetext_with_status",
+                new=search_mock,
+            ),
+        ):
+            sunrise_tile = await match_activity_to_viator(
+                "Sunset Sailing Cruise (Sunrise)",
+                "Santorini",
+            )
+            sunset_tile = await match_activity_to_viator(
+                "Sunset Sailing Cruise (Sunset)",
+                "Santorini",
+            )
+
+        assert sunrise_tile is None
+        assert sunset_tile is not None
+        assert sunset_tile["id"] == "viator_12345P1"
+        assert search_mock.await_count == 2
+        assert vp._match_cache.get(sunrise_cache_key) is vp._NO_MATCH
+        assert vp._match_cache.get(sunset_cache_key) == sunset_tile
+
+    async def test_cached_positive_match_does_not_bleed_across_categories(self):
+        """Category-scoped cache should not reuse a positive match across conflicting categories."""
+        import app.services.viator_provider as vp
+
+        diving_cache_key = "viator_match:bali:diving:bali scuba diving experience"
+        snorkeling_cache_key = "viator_match:bali:snorkeling:bali scuba diving experience"
+        search_mock = AsyncMock(return_value=([LOW_QUALITY_MATCH_PRODUCT], True))
+
+        with (
+            patch(
+                "app.services.viator_provider.resolve_destination_id",
+                new=AsyncMock(return_value=(99, True)),
+            ),
+            patch(
+                "app.services.viator_provider._search_query_variants",
+                return_value=["Bali Scuba Diving Experience"],
+            ),
+            patch(
+                "app.services.viator_provider._search_freetext_with_status",
+                new=search_mock,
+            ),
+        ):
+            diving_tile = await match_activity_to_viator(
+                "Bali Scuba Diving Experience",
+                "Bali",
+                category="diving",
+            )
+            snorkeling_tile = await match_activity_to_viator(
+                "Bali Scuba Diving Experience",
+                "Bali",
+                category="snorkeling",
+            )
+
+        assert diving_tile is not None
+        assert diving_tile["id"] == "viator_55555P9"
+        assert snorkeling_tile is None
+        assert search_mock.await_count == 2
+        assert vp._match_cache.get(diving_cache_key) == diving_tile
+        assert vp._match_cache.get(snorkeling_cache_key) is vp._NO_MATCH
+
+    async def test_cached_negative_match_does_not_bleed_across_categories(self):
+        """Category-scoped cache should not reuse a no-match sentinel for another category."""
+        import app.services.viator_provider as vp
+
+        snorkeling_cache_key = "viator_match:bali:snorkeling:bali scuba diving experience"
+        diving_cache_key = "viator_match:bali:diving:bali scuba diving experience"
+        search_mock = AsyncMock(return_value=([LOW_QUALITY_MATCH_PRODUCT], True))
+
+        with (
+            patch(
+                "app.services.viator_provider.resolve_destination_id",
+                new=AsyncMock(return_value=(99, True)),
+            ),
+            patch(
+                "app.services.viator_provider._search_query_variants",
+                return_value=["Bali Scuba Diving Experience"],
+            ),
+            patch(
+                "app.services.viator_provider._search_freetext_with_status",
+                new=search_mock,
+            ),
+        ):
+            snorkeling_tile = await match_activity_to_viator(
+                "Bali Scuba Diving Experience",
+                "Bali",
+                category="snorkeling",
+            )
+            diving_tile = await match_activity_to_viator(
+                "Bali Scuba Diving Experience",
+                "Bali",
+                category="diving",
+            )
+
+        assert snorkeling_tile is None
+        assert diving_tile is not None
+        assert diving_tile["id"] == "viator_55555P9"
+        assert search_mock.await_count == 2
+        assert vp._match_cache.get(snorkeling_cache_key) is vp._NO_MATCH
+        assert vp._match_cache.get(diving_cache_key) == diving_tile
+
     async def test_transient_destination_resolution_does_not_negative_cache(self):
         """Transient destination taxonomy failures should not poison the match cache."""
         import app.services.viator_provider as vp
 
-        cache_key = "viator_match:bali:usat liberty shipwreck shore dive"
+        cache_key = "viator_match:bali:uncategorized:usat liberty shipwreck shore dive"
 
         with (
             patch(
@@ -382,6 +565,50 @@ class TestMatchActivityToViator:
 
         assert tile is None
         assert vp._match_cache.get(cache_key) is None
+
+    async def test_conflicting_best_match_falls_back_to_non_conflicting_product(self):
+        """Cross-category matches should be rejected in favor of a clean fallback product."""
+        conflicting = {
+            "productCode": "200",
+            "title": "Blue Lagoon Dive Snorkeling Tour",
+            "duration": {"fixedDurationInMinutes": 180},
+        }
+        non_conflicting = {
+            "productCode": "201",
+            "title": "Blue Lagoon Scuba Diving Experience",
+            "duration": {"fixedDurationInMinutes": 180},
+        }
+
+        with (
+            patch(
+                "app.services.viator_provider.resolve_destination_id",
+                new=AsyncMock(return_value=(99, True)),
+            ),
+            patch(
+                "app.services.viator_provider._search_query_variants",
+                return_value=["Blue Lagoon Dive"],
+            ),
+            patch(
+                "app.services.viator_provider._search_freetext_with_status",
+                new=AsyncMock(return_value=([conflicting, non_conflicting], True)),
+            ),
+            patch(
+                "app.services.viator_provider._best_scored_product",
+                side_effect=[
+                    (conflicting, 95, 2),
+                    (non_conflicting, 82, 1),
+                ],
+            ),
+        ):
+            tile = await match_activity_to_viator(
+                "Blue Lagoon Dive",
+                "Bali",
+                category="diving",
+            )
+
+        assert tile is not None
+        assert tile["id"] == "viator_201"
+        assert tile["meta"]["viator_product_code"] == "201"
 
 
 @pytest.mark.asyncio

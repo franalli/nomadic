@@ -37,7 +37,7 @@ export function ReadOnlyTimeline({ dayCards }: ReadOnlyTimelineProps) {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {dayCards.map((day) => {
         const dateLabel = formatDateLabel(day.date);
         return (
@@ -60,7 +60,7 @@ export function ReadOnlyTimeline({ dayCards }: ReadOnlyTimelineProps) {
               )}
             </header>
 
-            <div className="p-4 space-y-3">
+            <div className="p-4 space-y-4">
               {day.blocks.map((block, idx) => {
                 const meta = renderBlockMeta(block);
                 return (

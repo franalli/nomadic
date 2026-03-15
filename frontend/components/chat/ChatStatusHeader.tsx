@@ -90,7 +90,7 @@ export function ChatStatusHeader({
           'mb-2 overflow-hidden',
           showHero
             ? '-mx-2 -mt-5 h-[120px] w-[calc(100%+1rem)]'
-            : '-mx-4 -mt-4 w-[calc(100%+2rem)] h-14 border-b border-border/80 bg-background/80 backdrop-blur-md',
+            : '-mx-4 -mt-4 w-[calc(100%+2rem)] h-14 border-b border-zinc-200/80 dark:border-white/10 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md',
         )}
       >
         {/* Hero image — only when destination image available */}
@@ -107,19 +107,19 @@ export function ChatStatusHeader({
         {!showHero && (
           <div className="absolute inset-0 z-10 flex items-center gap-2 px-4">
             {status.indicator === 'spin' ? (
-              <Loader2 className="h-3 w-3 animate-spin text-primary" />
+              <Loader2 className="h-3 w-3 animate-spin text-emerald-600 dark:text-emerald-500" />
             ) : status.indicator === 'check' ? null : (
               <div className={cn(
-                'h-2 w-2 rounded-full bg-primary',
+                'h-2 w-2 rounded-full bg-emerald-600 dark:bg-emerald-500',
                 status.indicator === 'pulse' && 'animate-pulse',
               )} />
             )}
-            <span className="text-sm font-semibold text-foreground">
+            <span className="text-sm font-semibold text-zinc-900 dark:text-white">
               {status.text}
             </span>
             <span className={cn(
-              `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-muted-foreground`,
-              DS.glowClass.dropText,
+              `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-zinc-500 dark:text-zinc-400`,
+              `dark:${DS.glowClass.dropText}`,
             )}>
               {status.label}
             </span>

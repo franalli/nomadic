@@ -2,21 +2,16 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/api', () => ({ apiFetch: vi.fn() }));
-vi.mock('@/lib/streamParser', () => ({
-  consumeNdjsonEnvelopeStream: vi.fn(async (_body, callbacks: Record<string, unknown>) => {
-    const onDone = callbacks.onDone as
-      | ((event: { type: 'done'; plan_view_state: 'S3_ITINERARY_READY'; version: number }) => void)
-      | undefined;
-    onDone?.({ type: 'done', plan_view_state: 'S3_ITINERARY_READY', version: 2 });
-  }),
-}));
+vi.mock('@/lib/streamParser', () => ({ consumeNdjsonEnvelopeStream: vi.fn() }));
 
 import { useItineraryGeneration } from '@/components/layout/hooks/useItineraryGeneration';
 import { apiFetch } from '@/lib/api';
+import { consumeNdjsonEnvelopeStream } from '@/lib/streamParser';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { StrategySection } from '@/types/plan-envelope';
 
 const mockApiFetch = vi.mocked(apiFetch);
+const mockConsumeNdjsonEnvelopeStream = vi.mocked(consumeNdjsonEnvelopeStream);
 
 const BASE_SECTION: StrategySection = {
   id: 'hiking',
@@ -27,6 +22,12 @@ const BASE_SECTION: StrategySection = {
   optional_upgrades: [],
   logistics_notes: [],
   bullets: [],
+};
+
+const CONFLICT_DAY_CARD = {
+  day_number: 1,
+  label: 'Arrival + light activity',
+  blocks: [],
 };
 
 describe('useItineraryGeneration dedupe', () => {
@@ -60,6 +61,20 @@ describe('useItineraryGeneration dedupe', () => {
       statusText: 'OK',
       body: new ReadableStream<Uint8Array>(),
     } as Response);
+    mockConsumeNdjsonEnvelopeStream.mockImplementation(
+      async (_body, callbacks: Record<string, unknown>) => {
+        const onDone = callbacks.onDone as
+          | ((
+              event: {
+                type: 'done';
+                plan_view_state: 'S3_ITINERARY_READY';
+                version: number;
+              }
+            ) => void)
+          | undefined;
+        onDone?.({ type: 'done', plan_view_state: 'S3_ITINERARY_READY', version: 2 });
+      }
+    );
   });
 
   afterEach(() => {
@@ -98,5 +113,90 @@ describe('useItineraryGeneration dedupe', () => {
       ([path]) => path === '/api/expand-itinerary'
     );
     expect(expandCalls).toHaveLength(1);
+  });
+
+  it('uses backend conflict plan_view_state from the expand payload', async () => {
+    mockConsumeNdjsonEnvelopeStream.mockImplementationOnce(
+      async (_body, callbacks: Record<string, unknown>) => {
+        const onError = callbacks.onError as
+          | ((event: { type: 'error'; message: string }) => void)
+          | undefined;
+        onError?.({
+          type: 'error',
+          message: JSON.stringify({
+            error: 'CONSTRAINT_CONFLICT',
+            plan_view_state: 'S3_PARTIAL_CONFLICT',
+            day_cards: [CONFLICT_DAY_CARD],
+          }),
+        });
+      }
+    );
+
+    const { result } = renderHook(() =>
+      useItineraryGeneration({
+        uiGeneration: null,
+        setUiGeneration: vi.fn(),
+        addToast: vi.fn(),
+        planViewState: 'S2_STRATEGY_READY',
+        docExecutedTopics: ['hiking'],
+        hasDates: true,
+        docDayCards: [],
+        isRegenerating: false,
+        tripInputsStartDate: '2026-03-01',
+      })
+    );
+
+    await act(async () => {
+      await result.current.proceedWithItineraryGeneration();
+    });
+
+    expect(useDocumentStore.getState().document?.plan_view_state).toBe(
+      'S3_PARTIAL_CONFLICT'
+    );
+    expect(useDocumentStore.getState().document?.day_cards).toEqual([
+      expect.objectContaining(CONFLICT_DAY_CARD),
+    ]);
+  });
+
+  it('does not fabricate a conflict plan_view_state when the payload omits it', async () => {
+    mockConsumeNdjsonEnvelopeStream.mockImplementationOnce(
+      async (_body, callbacks: Record<string, unknown>) => {
+        const onError = callbacks.onError as
+          | ((event: { type: 'error'; message: string }) => void)
+          | undefined;
+        onError?.({
+          type: 'error',
+          message: JSON.stringify({
+            error: 'CONSTRAINT_CONFLICT',
+            day_cards: [CONFLICT_DAY_CARD],
+          }),
+        });
+      }
+    );
+
+    const { result } = renderHook(() =>
+      useItineraryGeneration({
+        uiGeneration: null,
+        setUiGeneration: vi.fn(),
+        addToast: vi.fn(),
+        planViewState: 'S2_STRATEGY_READY',
+        docExecutedTopics: ['hiking'],
+        hasDates: true,
+        docDayCards: [],
+        isRegenerating: false,
+        tripInputsStartDate: '2026-03-01',
+      })
+    );
+
+    await act(async () => {
+      await result.current.proceedWithItineraryGeneration();
+    });
+
+    expect(useDocumentStore.getState().document?.plan_view_state).toBe(
+      'S2_STRATEGY_READY'
+    );
+    expect(useDocumentStore.getState().document?.day_cards).toEqual([
+      expect.objectContaining(CONFLICT_DAY_CARD),
+    ]);
   });
 });

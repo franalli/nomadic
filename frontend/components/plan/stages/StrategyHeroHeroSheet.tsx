@@ -30,7 +30,7 @@ export function HeroSheetContent({ section, constraints, heroImage }: HeroSheetC
     return (
       <>
         {section.trip_summary && (
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 gap-2">
             {[
               { label: 'Destination', value: section.trip_summary.destination },
               { label: 'Dates', value: section.trip_summary.dates },
@@ -44,7 +44,7 @@ export function HeroSheetContent({ section, constraints, heroImage }: HeroSheetC
           </div>
         )}
         {section.destination_gallery && section.destination_gallery.length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-4">
             <h4 className={DS.text.label}>Destination Vibes</h4>
             <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 pb-2">
               {section.destination_gallery.filter(img => img.image_url).map((img, idx) => (
@@ -59,7 +59,7 @@ export function HeroSheetContent({ section, constraints, heroImage }: HeroSheetC
         )}
         {section.one_liner && <p className="text-sm italic text-zinc-500 dark:text-zinc-400">{section.one_liner}</p>}
         {section.principles && section.principles.length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-4">
             <h4 className={DS.text.label}>Key Highlights</h4>
             <div className="space-y-2">
               {section.principles.map((p, i) => (
@@ -72,12 +72,12 @@ export function HeroSheetContent({ section, constraints, heroImage }: HeroSheetC
           </div>
         )}
         {section.content_added && section.content_added.length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-4">
             <h4 className={DS.text.label}>Local Tips</h4>
-            <div className="space-y-3">
+            <div className="space-y-2">
               {section.content_added.map((item, idx) => (
                 <div key={idx} className={DS.infoBox.container}>
-                  <div className="flex gap-3">
+                  <div className="flex gap-2">
                     {item.image_url && (
                       <div className="relative w-16 h-16 rounded-lg overflow-hidden shrink-0">
                         <Image src={item.image_url} alt={item.title} fill className="object-cover" sizes="64px" />
@@ -115,23 +115,23 @@ export function HeroSheetContent({ section, constraints, heroImage }: HeroSheetC
       </div>
       {section.one_liner && <div className="space-y-2"><h4 className={DS.text.label}>Strategy Logic</h4><p className={DS.text.body}>{section.one_liner}</p></div>}
       {constraints.length > 0 && (
-        <div className="space-y-3"><h4 className={DS.text.label}>Applied Constraints</h4>
+        <div className="space-y-4"><h4 className={DS.text.label}>Applied Constraints</h4>
           <div className="space-y-2">{constraints.map((c, i) => (
-            <div key={i} className={DS.infoBox.container}><div className="flex gap-3">{getConstraintIcon(c.type)}<div className="flex-1 min-w-0"><p className="font-medium text-sm text-zinc-900 dark:text-zinc-100">{formatConstraintRule(c.rule)}</p>{c.reason && <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{c.reason}</p>}</div></div></div>
+            <div key={i} className={DS.infoBox.container}><div className="flex gap-2">{getConstraintIcon(c.type)}<div className="flex-1 min-w-0"><p className="font-medium text-sm text-zinc-900 dark:text-zinc-100">{formatConstraintRule(c.rule)}</p>{c.reason && <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{c.reason}</p>}</div></div></div>
           ))}</div>
         </div>
       )}
       {section.principles && section.principles.length > 0 && (
-        <div className="space-y-3"><h4 className={DS.text.label}>Key Principles</h4>
+        <div className="space-y-4"><h4 className={DS.text.label}>Key Principles</h4>
           <div className="space-y-2">{section.principles.map((p, i) => (
             <div key={i} className="flex items-start gap-2"><Sparkles className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" /><span className="text-sm text-zinc-700 dark:text-zinc-300">{p}</span></div>
           ))}</div>
         </div>
       )}
       {section.content_added && section.content_added.length > 0 && (
-        <div className="space-y-3"><h4 className={DS.text.label}>Expert Recommendations</h4>
-          <div className="space-y-3">{section.content_added.map((item, idx) => (
-            <div key={idx} className={DS.infoBox.container}><div className="flex gap-3">
+        <div className="space-y-4"><h4 className={DS.text.label}>Expert Recommendations</h4>
+          <div className="space-y-2">{section.content_added.map((item, idx) => (
+            <div key={idx} className={DS.infoBox.container}><div className="flex gap-2">
               {item.image_url && <div className="relative w-16 h-16 rounded-lg overflow-hidden shrink-0"><Image src={item.image_url} alt={item.title} fill className="object-cover" sizes="64px" /></div>}
               <div className="flex-1 min-w-0"><p className="font-medium text-sm text-zinc-900 dark:text-zinc-100">{item.title}</p><p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 line-clamp-2">{item.description}</p>{item.logic_hook && <p className={`${DS.textSize.micro} text-emerald-600 dark:text-emerald-400 mt-1 font-medium`}>💡 {item.logic_hook}</p>}</div>
             </div></div>

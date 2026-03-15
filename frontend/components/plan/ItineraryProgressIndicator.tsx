@@ -102,7 +102,7 @@ export function ItineraryProgressIndicator({
         className
       )}
     >
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
         {/* Status Icon */}
         {isActive && (
           <Loader2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 animate-spin shrink-0" />
@@ -151,7 +151,7 @@ export function ItineraryProgressIndicator({
 
       {/* Progress bar (only during active states) */}
       {isActive && (
-        <div className="mt-3 h-1 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
+        <div className="mt-2 h-1 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
           <motion.div
             className="h-full bg-emerald-500 rounded-full"
             initial={PROGRESS_INITIAL}

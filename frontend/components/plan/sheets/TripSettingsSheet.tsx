@@ -50,7 +50,7 @@ function FieldRow({ icon: Icon, label, value, onClick }: FieldRowProps) {
       type="button"
       onClick={onClick}
       className={cn(
-        'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl',
+        'w-full flex items-center gap-4 px-4 py-4 rounded-xl',
         'transition-all duration-150',
         // DS pills.inactive pattern adapted for list rows
         'bg-white dark:bg-white/5',

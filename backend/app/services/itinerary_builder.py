@@ -73,6 +73,48 @@ def _find_constraint(
     return None
 
 
+def _constraint_rule_key(value: Any) -> str:
+    """Normalize constraint rule names for alias matching and dedupe."""
+    if not isinstance(value, str):
+        return ""
+    return value.strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _raw_constraint_matches(constraint: Dict[str, Any], canonical_rule: str) -> bool:
+    """Return True when a raw constraint dict matches a canonical rule or alias."""
+    rule_key = _constraint_rule_key(constraint.get("rule") or constraint.get("constraint_id"))
+    if not rule_key:
+        return False
+
+    aliases = [
+        _constraint_rule_key(alias) for alias in ALL_CONSTRAINT_ALIASES.get(canonical_rule, [])
+    ]
+    all_names = [_constraint_rule_key(canonical_rule), *aliases]
+    return any(rule_key == name or name in rule_key for name in all_names if name)
+
+
+def _merge_constraint_inputs(
+    section_constraints: List[Dict[str, Any]],
+    canonical_constraints: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Append canonical trip constraints that are missing from specialist sections."""
+    merged = list(section_constraints)
+
+    for canonical in canonical_constraints:
+        if not isinstance(canonical, dict):
+            continue
+        canonical_rule = _constraint_rule_key(
+            canonical.get("rule") or canonical.get("constraint_id")
+        )
+        if not canonical_rule:
+            continue
+        if any(_raw_constraint_matches(existing, canonical_rule) for existing in merged):
+            continue
+        merged.append(canonical)
+
+    return merged
+
+
 def _normalize_title_key(title: Optional[str]) -> str:
     """Normalize activity titles for duplicate detection across tile IDs."""
     return re.sub(r"\s+", " ", (title or "").strip().lower())
@@ -100,6 +142,43 @@ def _price_estimate_to_level(price_estimate: Any) -> Optional[int]:
     if p < 150:
         return 3
     return 4
+
+
+def normalize_poi_type_key(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower().replace(" ", "_")
+    return normalized or None
+
+
+def canonical_poi_type(raw: Any) -> Optional[str]:
+    key = normalize_poi_type_key(raw)
+    if not key:
+        return None
+    if key in POI_TYPE_ALIASES:
+        return POI_TYPE_ALIASES[key]
+    if key in _CANONICAL_POI_TYPES:
+        return key
+    if any(token in key for token in ("culture", "cultural", "heritage")):
+        return "cultural"
+    if any(token in key for token in ("temple", "church", "worship", "mosque", "synagogue")):
+        return "temples"
+    if any(
+        token in key
+        for token in ("museum", "landmark", "historic", "monument", "plaza", "fountain")
+    ):
+        return "cultural"
+    if any(token in key for token in ("restaurant", "cafe", "bar", "bakery", "food", "meal")):
+        return "food"
+    if any(token in key for token in ("park", "garden", "nature", "zoo", "camp")):
+        return "nature"
+    if any(token in key for token in ("shop", "store", "market", "mall")):
+        return "shopping"
+    if any(token in key for token in ("spa", "wellness", "gym", "beauty")):
+        return "spa"
+    if any(token in key for token in ("tour", "point_of_interest", "visitor", "travel_agency")):
+        return "tours"
+    return None
 
 
 # =============================================================================
@@ -359,6 +438,7 @@ class ItineraryBuilderInput:
     children: int = 0
     # Browse tiles explicitly added by user (source="browse_add") — survive graph re-runs
     user_pinned_tiles: Optional[Dict[str, Any]] = None  # tile_id → {tile, preferred_day, source}
+    canonical_constraints: List[Dict[str, Any]] = field(default_factory=list)
     budget: Optional[float] = None
     currency: str = "USD"
 
@@ -464,10 +544,10 @@ POI_TYPE_ALIASES: dict[str, str] = {
     "fountain": "cultural",
     "hindu_temple": "temples",
     "temple": "temples",
-    "church": "cultural",
-    "place_of_worship": "cultural",
-    "synagogue": "cultural",
-    "mosque": "cultural",
+    "church": "temples",
+    "place_of_worship": "temples",
+    "synagogue": "temples",
+    "mosque": "temples",
     "restaurant": "food",
     "cafe": "food",
     "bar": "food",
@@ -622,7 +702,13 @@ class ItineraryBuilder:
             days = self._create_day_skeleton(start, end)
 
             # Phase 2: Extract activities and constraints from all specialists
-            activities, constraints = self._extract_specialist_content(input_data.strategy_sections)
+            activities, section_constraints = self._extract_specialist_content(
+                input_data.strategy_sections
+            )
+            constraints = _merge_constraint_inputs(
+                section_constraints,
+                input_data.canonical_constraints,
+            )
 
             # Phase 2.5: Enrich specialist activities with Google Places tile data
             activities = self._enrich_activities_from_tiles(activities, input_data.tiles)
@@ -1152,7 +1238,16 @@ class ItineraryBuilder:
 
         for c in constraints:
             rule = c.get("rule", "")
-            severity = CONSTRAINT_SEVERITY_MAP.get(rule, ConstraintSeverity.STRONG)
+            raw_severity = c.get("severity")
+            if isinstance(raw_severity, ConstraintSeverity):
+                severity = raw_severity
+            elif isinstance(raw_severity, str):
+                try:
+                    severity = ConstraintSeverity(raw_severity.lower())
+                except ValueError:
+                    severity = CONSTRAINT_SEVERITY_MAP.get(rule, ConstraintSeverity.STRONG)
+            else:
+                severity = CONSTRAINT_SEVERITY_MAP.get(rule, ConstraintSeverity.STRONG)
 
             merged.append(
                 MergedConstraint(
@@ -2711,6 +2806,7 @@ class ItineraryBuilder:
             pre_count = len(experience_tiles)
             filtered: list[dict] = []
             for t in experience_tiles:
+                is_backfill_tile = bool((t.get("meta") or {}).get("is_backfill"))
                 tile_cat = (
                     (t.get("meta") or {}).get("specialist_type")
                     or (t.get("meta") or {}).get("category")
@@ -2728,8 +2824,13 @@ class ItineraryBuilder:
                     or bool(tile_tags & self._active_categories)
                     or bool(tile_source_cats & self._active_categories)
                 )
-                if category_match:
+                if category_match or is_backfill_tile:
                     filtered.append(t)
+                    if is_backfill_tile and not category_match:
+                        _debug_itinerary(
+                            f"📅 Phase 5.6: Preserving backfill '{t.get('title')}' "
+                            "despite active category filter"
+                        )
                 else:
                     _debug_itinerary(
                         f"📅 Phase 5.6: Skipping '{t.get('title')}' "
@@ -3829,41 +3930,11 @@ class ItineraryBuilder:
 
     @staticmethod
     def _normalize_map_type_key(value: Any) -> Optional[str]:
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip().lower().replace(" ", "_")
-        return normalized or None
+        return normalize_poi_type_key(value)
 
     @classmethod
     def _canonical_map_type(cls, raw: Any) -> Optional[str]:
-        key = cls._normalize_map_type_key(raw)
-        if not key:
-            return None
-        if key in POI_TYPE_ALIASES:
-            return POI_TYPE_ALIASES[key]
-        if key in _CANONICAL_POI_TYPES:
-            return key
-        # Pattern fallback for uncatalogued Google Places primaryType values.
-        if any(token in key for token in ("culture", "cultural", "heritage")):
-            return "cultural"
-        if any(
-            token in key
-            for token in ("museum", "landmark", "historic", "monument", "plaza", "fountain")
-        ):
-            return "cultural"
-        if any(token in key for token in ("temple", "church", "worship", "mosque", "synagogue")):
-            return "temples"
-        if any(token in key for token in ("restaurant", "cafe", "bar", "bakery", "food", "meal")):
-            return "food"
-        if any(token in key for token in ("park", "garden", "nature", "zoo", "camp")):
-            return "nature"
-        if any(token in key for token in ("shop", "store", "market", "mall")):
-            return "shopping"
-        if any(token in key for token in ("spa", "wellness", "gym", "beauty")):
-            return "spa"
-        if any(token in key for token in ("tour", "point_of_interest", "visitor", "travel_agency")):
-            return "tours"
-        return None
+        return canonical_poi_type(raw)
 
     @classmethod
     def _map_type_from_booked_tile(cls, tile: dict[str, Any]) -> Optional[str]:

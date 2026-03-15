@@ -89,23 +89,19 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
 
     # Post-itinerary: refinement chips (covers both build turn AND subsequent S3 turns)
     if day_cards and dest and start_date:
-        trip_settings: dict[str, Any] = state.get("trip_settings", {})
-        activity_settings = trip_settings.get("activity_settings", {})
-        active_categories = activity_settings.get("categories", [])
         origin = trip_plan.get("origin", "")
 
         chips = []
-        if active_categories:
-            chips.append(
-                _chip(
-                    "Browse activities",
-                    "follow_up",
-                    "browse",
-                    "search",
-                    action_type="open_pill",
-                    action_target="activities",
-                )
+        chips.append(
+            _chip(
+                "Browse activities",
+                "follow_up",
+                "browse",
+                "search",
+                action_type="open_pill",
+                action_target="activities",
             )
+        )
         if not origin:
             chips.append(
                 _chip(

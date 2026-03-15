@@ -32,8 +32,11 @@ interface UserState {
 }
 
 const TRIPS_STALE_MS = 30_000;
+const USER_STALE_MS = 5_000;
 let tripsInFlight: Promise<void> | null = null;
 let tripsLastFetchedAt = 0;
+let userInFlight: Promise<void> | null = null;
+let userLastFetchedAt = 0;
 
 export const useUserStore = create<UserState>((set, get) => ({
   user: null,
@@ -42,14 +45,29 @@ export const useUserStore = create<UserState>((set, get) => ({
   resumingTripId: null,
 
   fetchUser: async () => {
-    try {
-      const res = await apiFetch('/api/auth/me');
-      if (!res.ok) throw new Error('Failed to fetch user');
-      const data = await res.json();
-      set({ user: data?.user ?? null, loading: false });
-    } catch {
-      set({ user: null, loading: false });
+    if (!get().loading && Date.now() - userLastFetchedAt < USER_STALE_MS) {
+      return;
     }
+    if (userInFlight) {
+      await userInFlight;
+      return;
+    }
+
+    userInFlight = (async () => {
+      try {
+        const res = await apiFetch('/api/auth/me');
+        if (!res.ok) throw new Error('Failed to fetch user');
+        const data = await res.json();
+        set({ user: data?.user ?? null, loading: false });
+        userLastFetchedAt = Date.now();
+      } catch {
+        set({ user: null, loading: false });
+      } finally {
+        userInFlight = null;
+      }
+    })();
+
+    await userInFlight;
   },
 
   fetchTrips: async ({ force = false } = {}) => {
@@ -114,6 +132,7 @@ export const useUserStore = create<UserState>((set, get) => ({
     } finally {
       set({ user: null, trips: [] });
       tripsLastFetchedAt = 0;
+      userLastFetchedAt = 0;
     }
   },
 }));

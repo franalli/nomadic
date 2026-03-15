@@ -23,6 +23,17 @@ from app.utils.tile_utils import flatten_tiles_to_id_map
 logger = logging.getLogger(__name__)
 
 
+def _serialize_canonical_constraints(state: GraphState) -> list[dict]:
+    """Serialize canonical TripPlan constraints into builder-ready dicts."""
+    serialized: list[dict] = []
+    for constraint in state.trip_plan.constraints:
+        if hasattr(constraint, "model_dump"):
+            serialized.append(constraint.model_dump())
+        elif isinstance(constraint, dict):
+            serialized.append(dict(constraint))
+    return serialized
+
+
 def build_itinerary_from_state(state: GraphState) -> Optional[ItineraryResult]:
     """Build itinerary from graph state. Returns None if preconditions not met."""
     plan = state.trip_plan
@@ -95,6 +106,7 @@ def build_itinerary_from_state(state: GraphState) -> Optional[ItineraryResult]:
         adults=plan.adults or 1,
         children=plan.children or 0,
         user_pinned_tiles=pinned_tiles or None,
+        canonical_constraints=_serialize_canonical_constraints(state),
     )
     builder = ItineraryBuilder()
     return builder.build(builder_input)

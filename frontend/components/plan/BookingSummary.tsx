@@ -155,7 +155,7 @@ export function BookingSummary({
       {hotelRows.length > 0 && (
         <div>
           <div className="px-4 pt-3 pb-1">
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
               Stays
             </span>
           </div>
@@ -175,7 +175,7 @@ export function BookingSummary({
       {activityRows.length > 0 && (
         <div className={cn(hotelRows.length > 0 && 'border-t border-zinc-200/70 dark:border-white/5')}>
           <div className="px-4 pt-3 pb-1">
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
               Activities
             </span>
           </div>
@@ -195,7 +195,7 @@ export function BookingSummary({
       <p
         className={cn(
           DS.textSize.micro,
-          'border-t border-zinc-200/70 px-4 py-3 text-zinc-500 dark:border-white/5 dark:text-zinc-500'
+          'border-t border-zinc-200/70 px-4 py-3 text-zinc-500 dark:border-white/5 dark:text-zinc-400'
         )}
       >
         Links open Google Travel Hotels and Google Maps

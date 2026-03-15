@@ -241,4 +241,54 @@ describe('extractPOIsFromDayCards memo behavior', () => {
     });
     expect(pois[1]).toMatchObject({ type: 'food', source: 'browse' });
   });
+
+  it('normalizes religious-site booked-tile categories to temples', () => {
+    const dayCards: DayCard[] = [
+      {
+        day_number: 4,
+        label: 'Day 4',
+        blocks: [
+          {
+            id: 'temple-1',
+            period: 'morning',
+            activity_type: '',
+            summary: 'Old Cathedral Visit',
+            coordinates: { lat: 41.0082, lng: 28.9784 },
+            booked_tile: {
+              id: 'tile-church-1',
+              type: 'activity',
+              title: 'Old Cathedral Visit',
+              currency: 'USD',
+              deeplink_url: 'https://example.com/church',
+              category: 'church',
+              meta: {},
+            },
+          },
+          {
+            id: 'temple-2',
+            period: 'afternoon',
+            activity_type: '',
+            summary: 'Grand Mosque Walk',
+            coordinates: { lat: 41.0055, lng: 28.9769 },
+            booked_tile: {
+              id: 'tile-mosque-1',
+              type: 'activity',
+              title: 'Grand Mosque Walk',
+              currency: 'USD',
+              deeplink_url: 'https://example.com/mosque',
+              meta: {
+                category: 'grand_mosque',
+              },
+            },
+          },
+        ],
+      },
+    ];
+
+    const pois = extractPOIsFromDayCards(dayCards, undefined, 'Istanbul', 'memo-religious-sites');
+
+    expect(pois).toHaveLength(2);
+    expect(pois[0]).toMatchObject({ type: 'temples' });
+    expect(pois[1]).toMatchObject({ type: 'temples' });
+  });
 });

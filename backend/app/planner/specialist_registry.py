@@ -656,6 +656,16 @@ TIER2_COMMON_HINTS: frozenset[str] = frozenset(
 # Backward-compat alias — consumers being migrated
 TIER2_ACTIVITY_KEYWORDS = TIER2_COMMON_HINTS
 
+# Canonical generic browse/fill-day rotation for Tier 2 activity discovery.
+TIER2_BROWSE_CATEGORIES: tuple[str, ...] = (
+    "cultural",
+    "food",
+    "nature",
+    "spa",
+    "tours",
+    "shopping",
+)
+
 ALL_SPECIALIST_KEYWORDS: dict[str, list[str]] = {
     cfg.topic: cfg.keywords for cfg in SPECIALIST_REGISTRY.values() if cfg.keywords
 }

@@ -28,6 +28,15 @@ import type { Tile } from '@/types/tile';
 
 type EnvelopeUpdate = Partial<PlanDocumentData> & { generation?: GenerationState };
 
+function diagnosticTileFingerprint(id: string, tile: Tile): string {
+  const title = (tile.title ?? '').slice(0, 20);
+  const priceValue = tile.total_inclusive ?? tile.live_price ?? tile.price_estimate;
+  const priceTag =
+    typeof priceValue === 'number' ? priceValue.toFixed(2) : String(priceValue ?? 'na');
+
+  return `${tile.type?.[0] ?? '?'}:${id.slice(0, 20)}:${title}:$${priceTag}`;
+}
+
 // =============================================================================
 // Undo Stack (Stage 18A)
 // =============================================================================
@@ -602,6 +611,11 @@ const MAX_TRACKED_SEND_CYCLES = 32;
 function _flushPayloadHash(payload: Partial<DocumentTripInputsPatch>): string {
   // Payload keys are inserted deterministically in ensureSettingsFlushed.
   return JSON.stringify(payload);
+}
+
+function _jsonStableEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function _rememberFlushHash(sendCycleId: string, hash: string): boolean {
@@ -1907,6 +1921,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       },
     };
     mergedTripInputs = applyActivityCategoryDefaults(mergedTripInputs);
+    if (currentDoc?.trip_inputs && _jsonStableEqual(currentDoc.trip_inputs, mergedTripInputs)) {
+      mergedTripInputs = currentDoc.trip_inputs;
+    }
 
     // If update is from planner, detect which fields changed
     let newLLMUpdatedFields = llmUpdatedFields;
@@ -2001,15 +2018,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     // === FULL DIAGNOSTIC — LAYER 12: TILE DELTA ===
     const _prevTiles = Object.entries(currentDoc?.tiles ?? {})
-      .map(([id, t]) => {
-        const tile = t as Record<string, unknown>;
-        return `${(tile?.type as string)?.[0] ?? '?'}:${id.slice(0, 20)}:${((tile?.title as string) ?? (tile?.name as string) ?? '').slice(0, 20)}`;
-      });
+      .map(([id, tile]) => diagnosticTileFingerprint(id, tile));
     const _newTiles = Object.entries(mergedTiles ?? {})
-      .map(([id, t]) => {
-        const tile = t as Record<string, unknown>;
-        return `${(tile?.type as string)?.[0] ?? '?'}:${id.slice(0, 20)}:${((tile?.title as string) ?? (tile?.name as string) ?? '').slice(0, 20)}`;
-      });
+      .map(([id, tile]) => diagnosticTileFingerprint(id, tile));
     debugLog('[DIAG:TILE_DELTA]',
       `before(${_prevTiles.length}): ${JSON.stringify(_prevTiles)}`,
       `after(${_newTiles.length}): ${JSON.stringify(_newTiles)}`,
@@ -2018,7 +2029,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // Skip tile state write when tiles_replaced flag is set but content is identical.
     // Use full key set + JSON value comparison (not the truncated diagnostic strings).
     const _tileKeysChanged = (() => {
-      if (!currentDoc?.tiles || !tilesReplaced) return true;
+      if (!currentDoc?.tiles) return true;
       const prevKeys = Object.keys(currentDoc.tiles).sort();
       const newKeys = Object.keys(mergedTiles).sort();
       if (prevKeys.length !== newKeys.length) return true;
@@ -2026,8 +2037,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // Keys match — compare values by serializing each tile
       return prevKeys.some(k => JSON.stringify(currentDoc.tiles[k]) !== JSON.stringify(mergedTiles[k]));
     })();
-    if (tilesReplaced && !_tileKeysChanged && currentDoc?.tiles) {
-      debugLog('[DIAG:TILE_DELTA] No-op tile replace detected — preserving referential identity');
+    if (!_tileKeysChanged && currentDoc?.tiles) {
+      debugLog(
+        tilesReplaced
+          ? '[DIAG:TILE_DELTA] No-op tile replace detected — preserving referential identity'
+          : '[DIAG:TILE_DELTA] No-op tile merge detected — preserving referential identity'
+      );
       mergedTiles = currentDoc.tiles;
     }
     // === END DIAGNOSTIC ===
@@ -2044,11 +2059,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ? graphSentCards
       : backendClearedCards
         ? []  // Backend explicitly cleared — force empty to trigger expand-itinerary
-        : (currentDayCards ?? []);
+        : datesChanged
+          ? []
+          : (currentDayCards ?? []);
     const suppressActivities = shouldSuppressActivitiesFromTripInputs(mergedTripInputs);
-    const finalDayCards = suppressActivities
+    let finalDayCards = suppressActivities
       ? (stripActivitiesFromDayCards(finalDayCardsRaw) ?? finalDayCardsRaw)
       : finalDayCardsRaw;
+    if (_jsonStableEqual(currentDayCards, finalDayCards)) {
+      finalDayCards = currentDayCards;
+    }
 
     if (hasGraphSentCards) {
       debugLog(`[documentStore.setFromPlanResponse] 📅 Day cards: FROM GRAPH (${graphSentCards.length} cards)`);
@@ -2060,6 +2080,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (get().isRegenerating) {
         set({ isRegenerating: false });
       }
+    } else if (datesChanged) {
+      debugLog('[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (dates changed, no graph cards)');
     } else if (hasDayCards) {
       debugLog(`[documentStore.setFromPlanResponse] 📅 Day cards: PRESERVED (no graph cards, keeping ${currentDayCards.length} existing)`);
     }
@@ -2127,6 +2149,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
       return merged;
     })();
+    const finalStrategySections = _jsonStableEqual(currentSections, mergedSections)
+      ? currentSections
+      : mergedSections;
 
     if (datesChanged) {
       debugLog(`[documentStore.setFromPlanResponse] 📝 Strategy sections: REPLACED (dates changed, ${responseSections.length} sections)`);
@@ -2146,7 +2171,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         tiles: mergedTiles,
         trip_inputs: mergedTripInputs,
         day_cards: finalDayCards,
-        strategy_sections: mergedSections,
+        strategy_sections: finalStrategySections,
       }),
       selectedBranchId:
         get().selectedBranchId ||
@@ -2407,10 +2432,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       dayCardsToMerge = [];
       explicitDebugLog('[documentStore.mergeEnvelope] Day Cards: CLEARED (destination changed)');
     } else if (datesChanged) {
-      // Date changed: PRESERVE stale cards to avoid flash, overlay handles UX
-      dayCardsToMerge = currentDayCards;
+      // Date changed: CLEAR stale cards so the rebuilt itinerary fully owns the timeline
+      dayCardsToMerge = [];
       nextIsRegenerating = true;
-      explicitDebugLog('[documentStore.mergeEnvelope] Day Cards: PRESERVED (dates changed, awaiting rebuild)');
+      explicitDebugLog('[documentStore.mergeEnvelope] Day Cards: CLEARED (dates changed)');
     } else if (hasDayCards) {
       // Preserve existing day_cards when itinerary exists
       dayCardsToMerge = currentDayCards;

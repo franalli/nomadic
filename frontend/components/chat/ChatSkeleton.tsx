@@ -66,7 +66,7 @@ export const ChatSkeleton = memo(function ChatSkeleton({
 }: ChatSkeletonProps) {
   return (
     <div
-      className={cn('flex flex-col gap-1 p-4', className)}
+      className={cn('flex flex-col gap-2 p-4', className)}
       role="status"
       aria-label="Loading chat history"
     >

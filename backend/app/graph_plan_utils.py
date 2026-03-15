@@ -71,13 +71,11 @@ CURRENCY_SYMBOL_MAP: Dict[str, str] = {
     "$": "USD",
     "€": "EUR",
     "£": "GBP",
-    "¥": "JPY",
     "₹": "INR",
     "₩": "KRW",
     "₽": "RUB",
     "₺": "TRY",
     "R$": "BRL",
-    "kr": "SEK",  # Also used for NOK, DKK
     "CHF": "CHF",
     "A$": "AUD",
     "C$": "CAD",
@@ -232,7 +230,8 @@ def normalize_currency(value: Any) -> Optional[str]:
     """
     Normalize currency to ISO-4217 code.
 
-    Maps symbols ($, €, £) to codes and validates against ISO-4217 set.
+    Maps unambiguous symbols ($, €, £) to codes and validates against ISO-4217 set.
+    Ambiguous symbols such as "¥" and "kr" are intentionally not coerced.
 
     Args:
         value: Currency string (symbol or code).

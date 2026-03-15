@@ -67,7 +67,7 @@ export function FreeDayCard({
   if (isConstraintBuffer) {
     return (
       <div className="p-5 bg-zinc-50 dark:bg-zinc-800/20 rounded-xl border border-zinc-200 dark:border-white/10">
-        <div className="flex items-center gap-3 mb-3">
+        <div className="flex items-center gap-2 mb-4">
           <div className="w-9 h-9 rounded-full bg-zinc-100 dark:bg-zinc-700/40 flex items-center justify-center shrink-0">
             <PauseCircle className="w-5 h-5 text-zinc-500 dark:text-zinc-400" />
           </div>
@@ -201,7 +201,7 @@ export function FreeDayCard({
       )}
 
       {rejectionMessage && (
-        <div className="mt-3 flex items-start gap-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/30 p-3">
+        <div className="mt-4 flex items-start gap-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/30 p-4">
           <ShieldAlert className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
           <p className="text-xs text-amber-700 dark:text-amber-300">
             {rejectionMessage}

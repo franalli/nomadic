@@ -1,6 +1,10 @@
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
+import { API_BASE } from '@/lib/config';
 import { debugLog } from '@/lib/debug';
+import { fetchSharedTripClient } from '@/lib/sharedTripApi';
 import { useDocumentStore } from '@/state/documentStore';
+
+export { API_BASE } from '@/lib/config';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -41,7 +45,6 @@ interface BrowseActivitiesResponse {
   total: number;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const BROWSE_DEFAULT_CATEGORIES = ['cultural'];
 const BROWSE_CACHE_TTL_MS = 5 * 60 * 1000;
 const BROWSE_CACHE_MAX_ENTRIES = 64;
@@ -104,6 +107,37 @@ function createClientRequestId(): string {
     return crypto.randomUUID();
   }
   return `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function extractApiErrorDetail(payload: unknown): string | null {
+  if (typeof payload === 'string') {
+    const trimmed = payload.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const detail = (payload as { detail?: unknown }).detail;
+  if (typeof detail === 'string') {
+    return detail.trim() || null;
+  }
+
+  if (!Array.isArray(detail)) {
+    return null;
+  }
+
+  const messages = detail
+    .map((item) => {
+      if (typeof item === 'string') return item.trim();
+      if (!item || typeof item !== 'object') return null;
+      const msg = 'msg' in item ? item.msg : null;
+      return typeof msg === 'string' ? msg.trim() : null;
+    })
+    .filter((msg): msg is string => Boolean(msg));
+
+  return messages.length > 0 ? messages.join('; ') : null;
 }
 
 /**
@@ -725,7 +759,7 @@ export interface SSENodeStatusEvent {
 export interface SSEPartialEvent {
   type: 'partial';
   data: {
-    kind: 'strategy_sections' | 'tiles' | 'trip_inputs';
+    kind: 'strategy_sections' | 'tiles' | 'trip_inputs' | 'day_cards';
     payload: unknown;
     tiles_replaced?: boolean;
   };
@@ -805,7 +839,20 @@ export function streamGraphPlan(
   })
     .then(async (response) => {
       if (!response.ok) {
-        throw new Error(`Stream request failed: ${response.status}`);
+        let detail: string | null = null;
+        const raw = await response.text();
+        if (raw) {
+          try {
+            detail = extractApiErrorDetail(JSON.parse(raw));
+          } catch {
+            detail = raw.trim() || null;
+          }
+        }
+        throw new Error(
+          detail
+            ? `Stream request failed: ${response.status}: ${detail}`
+            : `Stream request failed: ${response.status}`
+        );
       }
 
       if (!response.body) {
@@ -989,14 +1036,7 @@ export async function fetchSharedTrip(
   slug: string,
   signal?: AbortSignal,
 ): Promise<import('@/components/shared/SharedTripView').SharedTripData> {
-  const res = await fetch(`${API_BASE}/api/shared/${slug}`, {
-    credentials: 'omit',
-    signal,
-  });
-  if (res.status === 404) throw new Error('Trip not found');
-  if (res.status === 410) throw new Error('This shared trip has expired');
-  if (!res.ok) throw new Error('Failed to load trip');
-  return (await res.json()) as import('@/components/shared/SharedTripView').SharedTripData;
+  return fetchSharedTripClient(slug, signal);
 }
 
 /**

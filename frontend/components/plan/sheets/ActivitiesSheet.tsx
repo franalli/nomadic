@@ -261,7 +261,7 @@ function ActivitiesSheetInner({
       title="Activities"
       hint="Configure activity preferences"
       footer={
-        <div className="flex gap-3">
+        <div className="flex gap-2">
           <button
             type="button"
             onClick={() => onOpenChange(false)}

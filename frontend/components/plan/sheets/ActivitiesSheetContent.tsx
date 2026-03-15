@@ -94,12 +94,12 @@ export function ActivitiesSheetContent({
       <div
         className={cn(
           'space-y-6 transition-opacity',
-          !localEnabled && 'opacity-50 pointer-events-none'
+          !localEnabled && 'opacity-50 cursor-not-allowed pointer-events-none'
         )}
       >
         {/* Pace -- activities per day (generation target) */}
         <div>
-          <h3 className={cn(DS.text.label, 'mb-3')}>Pace</h3>
+          <h3 className={cn(DS.text.label, 'mb-2')}>Pace</h3>
           <div className="grid grid-cols-3 rounded-xl border-2 border-zinc-200 dark:border-white/15 overflow-hidden">
             {PACE_OPTIONS.map((option) => {
               const isSelected = localPace === option.value;
@@ -173,7 +173,7 @@ export function ActivitiesSheetContent({
         {/* Day preferences -- only when categories selected */}
         {localCategories.length > 0 && (
           <div>
-            <h3 className={cn(DS.text.label, 'mb-3')}>
+            <h3 className={cn(DS.text.label, 'mb-2')}>
               Days per activity
             </h3>
             <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-2">

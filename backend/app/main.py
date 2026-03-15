@@ -41,7 +41,7 @@ logging.getLogger("uvicorn.access").addFilter(_PhotoProxyLogFilter())
 from fastapi import Depends, FastAPI, HTTPException, Request, Response  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
-from pydantic import BaseModel  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
 from slowapi.errors import RateLimitExceeded  # noqa: E402
 from sqlalchemy.exc import IntegrityError  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
@@ -53,6 +53,7 @@ from app.crud_document import (  # noqa: E402
     add_tiles_to_branch,
     apply_user_patch,
     get_document,
+    get_document_by_session_id,
     get_document_data,
     get_or_create_document,
 )
@@ -147,9 +148,11 @@ from app.schemas import (  # noqa: E402
     UserTripSummary,
 )
 from app.services.cache_core import MemoryCache  # noqa: E402
-from app.services.itinerary_builder import POI_TYPE_ALIASES as _POI_TYPE_ALIASES  # noqa: E402
 from app.services.itinerary_builder import (  # noqa: E402
     _price_estimate_to_level,
+)
+from app.services.itinerary_builder import (  # noqa: E402
+    canonical_poi_type as _canonical_poi_type,
 )
 from app.services.spend_guard import (  # noqa: E402
     SpendLimitExceeded,
@@ -1472,9 +1475,9 @@ async def admin_clear_all_caches(  # noqa: ARG001
     results["caches_cleared"]["router_memory"] = router_count
 
     # 9. Clear Google Places geocode/country_code caches + enrichment inflight
-    from app.tile_service.google_places_provider import clear_geocode_caches
+    from app.tile_service.google_places_provider import clear_google_places_runtime_caches
 
-    geocode_cleared = clear_geocode_caches()
+    geocode_cleared = await clear_google_places_runtime_caches()
     results["caches_cleared"]["geocode_cache"] = geocode_cleared["geocode_cache"]
     results["caches_cleared"]["country_code_cache"] = geocode_cleared["country_code_cache"]
 
@@ -1563,9 +1566,9 @@ async def admin_clear_l1_l2_caches(  # noqa: ARG001
 
     unsplash_memory_before = int(get_unsplash_memory_stats().get("entries", 0))
 
-    from app.tile_service.google_places_provider import clear_geocode_caches
+    from app.tile_service.google_places_provider import clear_google_places_runtime_caches
 
-    geocode_cleared = clear_geocode_caches()
+    geocode_cleared = await clear_google_places_runtime_caches()
     l1_cleared = {
         "specialist_memory": clear_specialist_memory(),
         "tile_memory": clear_tile_memory(),
@@ -2818,6 +2821,35 @@ async def get_plan_document(
     )
 
 
+SPECIALIST_ENRICHMENT_LONG_POLL_TIMEOUT_SECONDS = 6.0
+SPECIALIST_ENRICHMENT_LONG_POLL_INTERVAL_SECONDS = 0.5
+
+
+async def _load_specialist_section(
+    *,
+    db: AsyncSession,
+    session_db_id: int,
+    section_id: str,
+) -> StrategySection:
+    # Phase B enrichment writes in a separate DB session. Expire the current
+    # identity map before each poll so repeated reads observe committed updates.
+    expire_all = getattr(db, "expire_all", None)
+    if callable(expire_all):
+        expire_all()
+    doc = await get_document_by_session_id(db, session_id=session_db_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="No plan document")
+
+    doc_data = get_document_data(doc)
+    section = next(
+        (s for s in (doc_data.strategy_sections or []) if s.id == section_id),
+        None,
+    )
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+    return section
+
+
 @app.get("/api/specialist/{section_id}/enrichment")
 @limiter.limit("30/minute")
 async def get_specialist_enrichment(
@@ -2837,61 +2869,56 @@ async def get_specialist_enrichment(
     session = await get_session_by_token(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+    session_db_id = session.id
 
-    doc = await get_document(db, session=session)
-    if not doc:
-        raise HTTPException(status_code=404, detail="No plan document")
-
-    doc_data = get_document_data(doc)
-    section = next(
-        (s for s in (doc_data.strategy_sections or []) if s.id == section_id),
-        None,
+    section = await _load_specialist_section(
+        db=db,
+        session_db_id=session_db_id,
+        section_id=section_id,
     )
-    if not section:
-        raise HTTPException(status_code=404, detail="Section not found")
 
     # For local_expert: check if travel_intelligence has been populated by Phase B
     if section.specialist_type == "local_expert":
-        status_blob = section.local_expert_enrichment or {}
-        enrichment_state = ""
-        error_code = None
-        travel_intelligence = section.travel_intelligence or {}
-        has_travel_intelligence = bool(travel_intelligence)
-        if isinstance(status_blob, dict):
-            enrichment_state = str(status_blob.get("state") or "").lower().strip()
-            error_code = status_blob.get("error_code")
+        deadline = time.monotonic() + SPECIALIST_ENRICHMENT_LONG_POLL_TIMEOUT_SECONDS
+        while True:
+            status_blob = section.local_expert_enrichment or {}
+            enrichment_state = ""
+            error_code = None
+            travel_intelligence = section.travel_intelligence or {}
+            has_travel_intelligence = bool(travel_intelligence)
+            if isinstance(status_blob, dict):
+                enrichment_state = str(status_blob.get("state") or "").lower().strip()
+                error_code = status_blob.get("error_code")
 
-        if enrichment_state == "ready" or (not enrichment_state and has_travel_intelligence):
-            return SpecialistEnrichmentResponse(
+            if enrichment_state == "ready" or (not enrichment_state and has_travel_intelligence):
+                return SpecialistEnrichmentResponse(
+                    section_id=section_id,
+                    status="ready",
+                    data=section.model_dump(),
+                )
+
+            if enrichment_state == "failed":
+                return SpecialistEnrichmentResponse(
+                    section_id=section_id,
+                    status="failed",
+                    error_code=error_code,
+                )
+
+            if time.monotonic() >= deadline:
+                return JSONResponse(
+                    status_code=202,
+                    content={"status": "pending", "section_id": section_id, "retry_after_ms": 1500},
+                )
+
+            rollback = getattr(db, "rollback", None)
+            if callable(rollback):
+                await rollback()
+            await asyncio.sleep(SPECIALIST_ENRICHMENT_LONG_POLL_INTERVAL_SECONDS)
+            section = await _load_specialist_section(
+                db=db,
+                session_db_id=session_db_id,
                 section_id=section_id,
-                status="ready",
-                data=section.model_dump(),
             )
-
-        if enrichment_state == "failed":
-            return SpecialistEnrichmentResponse(
-                section_id=section_id,
-                status="failed",
-                error_code=error_code,
-            )
-
-        if enrichment_state == "pending":
-            return JSONResponse(
-                status_code=202,
-                content={"status": "pending", "section_id": section_id, "retry_after_ms": 1500},
-            )
-
-        # Backward compatibility for documents that predate local_expert_enrichment.
-        if not has_travel_intelligence:
-            return JSONResponse(
-                status_code=202,
-                content={"status": "pending", "section_id": section_id, "retry_after_ms": 1500},
-            )
-        return SpecialistEnrichmentResponse(
-            section_id=section_id,
-            status="ready",
-            data=section.model_dump(),
-        )
 
     # For niche specialists: data is from the main LLM call (not Phase B)
     # Return section as-is — it's either fully populated or not
@@ -3290,7 +3317,7 @@ class FillDayRequest(BaseModel):
     """Request to fill a free day with activity tiles."""
 
     day_number: int
-    categories: List[str] | None = None
+    categories: List[str] | None = Field(default=None, max_length=16)
     pinned_tile_ids: List[str] | None = None  # Place existing tiles instead of generating
 
 
@@ -4095,43 +4122,7 @@ async def remove_block(
 
 
 def _canonical_poi_type_for_block(raw: Any) -> str | None:
-    if not isinstance(raw, str):
-        return None
-    key = raw.strip().lower().replace(" ", "_")
-    if not key:
-        return None
-    mapped = _POI_TYPE_ALIASES.get(key)
-    if mapped:
-        return mapped
-    if any(token in key for token in ("culture", "cultural", "heritage")):
-        return "cultural"
-    if any(
-        token in key
-        for token in (
-            "museum",
-            "landmark",
-            "historic",
-            "monument",
-            "plaza",
-            "fountain",
-            "mosque",
-            "synagogue",
-        )
-    ):
-        return "cultural"
-    if any(token in key for token in ("temple", "church", "worship")):
-        return "temples"
-    if any(token in key for token in ("restaurant", "cafe", "bar", "bakery", "food", "meal")):
-        return "food"
-    if any(token in key for token in ("park", "garden", "nature", "zoo", "camp")):
-        return "nature"
-    if any(token in key for token in ("shop", "store", "market", "mall")):
-        return "shopping"
-    if any(token in key for token in ("spa", "wellness", "gym", "beauty")):
-        return "spa"
-    if any(token in key for token in ("tour", "point_of_interest", "visitor", "travel_agency")):
-        return "tours"
-    return None
+    return _canonical_poi_type(raw)
 
 
 @app.post("/api/document/insert-activity-block")
@@ -4448,8 +4439,11 @@ async def expand_itinerary_endpoint(
     received_dest = req.trip_inputs.get("destination") if req.trip_inputs else "NO_TRIP_INPUTS"
     logger.info(f"[API expand-itinerary] Received destination: {received_dest}")
 
+    # Get session from request before idempotency so dedupe is session-scoped.
+    session_id = get_session_from_request(request)
+
     # Check idempotency - return early if duplicate request
-    if await _check_idempotency(req.idempotency_key):
+    if await _check_idempotency(req.idempotency_key, session_id=session_id):
 
         async def duplicate_response():
             event = ExpandItineraryStreamEvent(
@@ -4464,11 +4458,9 @@ async def expand_itinerary_endpoint(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    # Get session from request (must be before the mutex check)
-    session_id = get_session_from_request(request)
-
     # Per-session expand mutex: reject if another expand is in-flight for this session
     if not await _acquire_expand_slot(session_id):
+        await _release_idempotency(req.idempotency_key, session_id=session_id)
         return JSONResponse(
             status_code=429,
             content={"detail": "Itinerary expansion already in progress for this session"},
@@ -4490,7 +4482,7 @@ async def expand_itinerary_endpoint(
         finally:
             await _release_expand_slot(session_id)
             if not succeeded:
-                await _release_idempotency(req.idempotency_key)
+                await _release_idempotency(req.idempotency_key, session_id=session_id)
 
     return StreamingResponse(
         _ndjson_with_release(),

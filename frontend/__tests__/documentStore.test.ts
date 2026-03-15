@@ -6,12 +6,8 @@
  * Group 3: commitTripInputs() — optimistic updates with conflict resolution
  */
 
+import type { MockInstance } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-vi.mock('@/lib/api', () => ({ apiFetch: vi.fn() }));
-vi.mock('@/state/chatStore', () => ({
-  useChatStore: { getState: () => ({ resetChat: vi.fn() }) },
-}));
 
 import { apiFetch } from '@/lib/api';
 import {
@@ -24,7 +20,13 @@ import type { PlanDocumentData, PlanDocumentResponse } from '@/types/document';
 import type { DayCard, StrategySection } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
+vi.mock('@/lib/api', () => ({ apiFetch: vi.fn() }));
+vi.mock('@/state/chatStore', () => ({
+  useChatStore: { getState: () => ({ resetChat: vi.fn() }) },
+}));
+
 const mockApiFetch = vi.mocked(apiFetch);
+let consoleLogSpy: MockInstance;
 
 // ---------------------------------------------------------------------------
 // Fixture Factories
@@ -98,7 +100,7 @@ function makePatchResponse(
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  vi.spyOn(console, 'log').mockImplementation(() => {});
+  consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   useDocumentStore.setState({
     version: 0,
@@ -437,6 +439,79 @@ describe('setFromPlanResponse', () => {
     expect(useDocumentStore.getState().document!.trip_inputs.activity_settings?.categories).toEqual([
       'hiking',
     ]);
+  });
+
+  it('logs price-only tile changes as a real tile delta', () => {
+    const currentFlight = makeTile('flight-1', {
+      type: 'flight',
+      title: 'Etihad Airways - 2 stops',
+      price_estimate: 391,
+    });
+    useDocumentStore.setState({
+      document: makeDoc({
+        tiles: { 'flight-1': currentFlight },
+      }),
+    });
+
+    const response = makePatchResponse(2, {
+      tiles_replaced: true,
+      tiles: {
+        'flight-1': makeTile('flight-1', {
+          type: 'flight',
+          title: 'Etihad Airways - 2 stops',
+          price_estimate: 405,
+        }),
+      },
+    });
+
+    useDocumentStore.getState().setFromPlanResponse(response);
+
+    const diagLine = consoleLogSpy.mock.calls
+      .map((call) => String(call[0]))
+      .find((line) => line.includes('[DIAG:TILE_DELTA]') && line.includes('changed:'));
+
+    expect(diagLine).toContain('changed: true');
+  });
+
+  it('preserves heavy subtree references when complete payload repeats already-merged data', () => {
+    const tripInputs = {
+      ...DEFAULT_TRIP_INPUTS,
+      destination: 'Bali',
+      start_date: '2026-04-01',
+      end_date: '2026-04-07',
+      activity_settings: { categories: ['diving'], skill_level: null, day_preferences: {} },
+    };
+    const dayCards = [makeDayCard(1), makeDayCard(2)];
+    const strategySections = [makeSection('diving', { specialist_type: 'diving' })];
+    const tiles = { 'flight-1': makeTile('flight-1', { type: 'flight' }) };
+
+    useDocumentStore.setState({
+      document: makeDoc({
+        trip_inputs: tripInputs,
+        day_cards: dayCards,
+        strategy_sections: strategySections,
+        tiles,
+        plan_view_state: 'S3_ITINERARY_READY',
+      }),
+      version: 1,
+    });
+
+    const response = makePatchResponse(2, {
+      trip_inputs: structuredClone(tripInputs),
+      day_cards: structuredClone(dayCards),
+      strategy_sections: structuredClone(strategySections),
+      tiles: structuredClone(tiles),
+      tiles_replaced: true,
+      plan_view_state: 'S3_ITINERARY_READY',
+    });
+
+    useDocumentStore.getState().setFromPlanResponse(response);
+
+    const nextDoc = useDocumentStore.getState().document!;
+    expect(nextDoc.trip_inputs).toBe(tripInputs);
+    expect(nextDoc.day_cards).toBe(dayCards);
+    expect(nextDoc.strategy_sections).toBe(strategySections);
+    expect(nextDoc.tiles).toBe(tiles);
   });
 });
 

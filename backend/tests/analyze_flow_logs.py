@@ -30,6 +30,7 @@ import json
 import re
 import sys
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -181,6 +182,7 @@ FLOW_EXPECTED_TOOLS: dict[int, dict[str, Any]] = {
         "required_tools": ["extract_trip_fields"],
         "forbidden_tools": ["get_specialist_advice"],
         "max_llm_calls": 8,
+        "skip_day_fill_rate": True,
     },
     24: {
         "name": "Mixed Feasible + Infeasible — Diving + Skiing",
@@ -206,6 +208,7 @@ FLOW_EXPECTED_TOOLS: dict[int, dict[str, Any]] = {
         "required_tools": [],
         "forbidden_tools": [],
         "max_llm_calls": 14,  # 2 turns
+        "expected_turns": 2,
     },
     28: {
         "name": "Pill Category Change — PATCH + GENERATE_PLAN_NOW",
@@ -213,6 +216,18 @@ FLOW_EXPECTED_TOOLS: dict[int, dict[str, Any]] = {
         "forbidden_tools": [],
         "max_llm_calls": 18,  # 3 turns with post-refresh rebuild
         "expected_turns": 3,
+    },
+}
+
+FLOW_TURN_WARN_BUDGETS_MS: dict[int, dict[int, tuple[int, str]]] = {
+    14: {
+        2: (20000, "full-plan rebuild"),
+    },
+    19: {
+        4: (15000, "post-extension rebuild"),
+    },
+    21: {
+        4: (18000, "long-trip rebuild"),
     },
 }
 
@@ -226,6 +241,159 @@ def _expected_turns(flow_num: int) -> int:
     multi_turn_flows = {6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 25}
     four_turn_flows = {19, 20, 21}
     return 4 if flow_num in four_turn_flows else (2 if flow_num in multi_turn_flows else 1)
+
+
+def _ordered_turn_timings(backend_log: str) -> list[tuple[str, int]]:
+    """Return ordered per-turn timings from coordinator or compact logs.
+
+    Prefer coordinator `Turn complete` timings when available because they
+    include the step reason. Fall back to compact `DURATION | Nms` summaries
+    when the richer logger format is absent.
+    """
+    logger_timings = [
+        (reason, int(ms))
+        for reason, ms in re.findall(
+            r"\[coordinator\] Turn complete: (.+?) \((\d+) ms\)",
+            backend_log,
+        )
+    ]
+    if logger_timings:
+        return logger_timings
+
+    compact_timings = [
+        ("compact_duration", int(ms))
+        for ms in re.findall(
+            r"DURATION\s+\|\s*(\d+)ms",
+            backend_log,
+        )
+    ]
+    return compact_timings
+
+
+def _parse_trip_plan_from_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Extract trip_plan fields from a flattened complete event."""
+    session_state = event.get("session_state") or {}
+    if isinstance(session_state, dict):
+        trip_plan = session_state.get("trip_plan")
+        if isinstance(trip_plan, dict):
+            return trip_plan
+
+    trip_inputs = event.get("trip_inputs")
+    if isinstance(trip_inputs, dict):
+        return {
+            "destination": trip_inputs.get("destination"),
+            "start_date": trip_inputs.get("start_date"),
+            "end_date": trip_inputs.get("end_date"),
+        }
+
+    return {}
+
+
+def _normalize_activity_settings(activity_settings: Any) -> dict[str, Any]:
+    """Normalize activity settings for continuity comparison."""
+    if not isinstance(activity_settings, dict):
+        return {}
+
+    categories = activity_settings.get("categories", [])
+    if isinstance(categories, list):
+        normalized_categories = sorted(
+            str(category).strip().lower() for category in categories if str(category).strip()
+        )
+    else:
+        normalized_categories = []
+
+    day_preferences = activity_settings.get("day_preferences", {})
+    if not isinstance(day_preferences, dict):
+        day_preferences = {}
+    normalized_day_preferences = {
+        str(topic).strip().lower(): value
+        for topic, value in day_preferences.items()
+        if str(topic).strip()
+    }
+
+    skill_level = activity_settings.get("skill_level")
+    normalized_skill_level = str(skill_level).strip().lower() if skill_level else None
+
+    return {
+        "categories": normalized_categories,
+        "day_preferences": normalized_day_preferences,
+        "activities_per_day": activity_settings.get("activities_per_day"),
+        "skill_level": normalized_skill_level,
+    }
+
+
+def _parse_trip_settings_from_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Extract trip_settings-like fields from a flattened complete event."""
+    session_state = event.get("session_state") or {}
+    if isinstance(session_state, dict):
+        trip_settings = session_state.get("trip_settings")
+        if isinstance(trip_settings, dict):
+            return trip_settings
+
+    trip_inputs = event.get("trip_inputs")
+    if isinstance(trip_inputs, dict):
+        return {
+            "activity_settings": trip_inputs.get("activity_settings") or {},
+        }
+
+    return {}
+
+
+def _specialist_month_bucket(start_date: str | None, end_date: str | None) -> str | None:
+    """Mirror coordinator month-bucket logic for safe extension detection."""
+    if not start_date or not end_date:
+        return None
+    try:
+        start = datetime.strptime(str(start_date)[:10], "%Y-%m-%d").date()
+        end = datetime.strptime(str(end_date)[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+    if end < start:
+        end = start
+    midpoint = start + (end - start) / 2
+    return f"{midpoint.year}-{midpoint.month:02d}"
+
+
+def _is_safe_tail_extension_between_events(
+    previous_event: dict[str, Any],
+    current_event: dict[str, Any],
+) -> bool:
+    """Infer a safe tail extension from consecutive complete events."""
+    previous_trip_plan = _parse_trip_plan_from_event(previous_event)
+    current_trip_plan = _parse_trip_plan_from_event(current_event)
+    previous_trip_settings = _parse_trip_settings_from_event(previous_event)
+    current_trip_settings = _parse_trip_settings_from_event(current_event)
+
+    previous_destination = str(previous_trip_plan.get("destination") or "").strip().lower()
+    current_destination = str(current_trip_plan.get("destination") or "").strip().lower()
+    if not previous_destination or previous_destination != current_destination:
+        return False
+
+    previous_start = str(previous_trip_plan.get("start_date") or "")[:10]
+    current_start = str(current_trip_plan.get("start_date") or "")[:10]
+    previous_end = str(previous_trip_plan.get("end_date") or "")[:10]
+    current_end = str(current_trip_plan.get("end_date") or "")[:10]
+    if not previous_start or not previous_end or not current_start or not current_end:
+        return False
+    if current_start != previous_start or current_end <= previous_end:
+        return False
+
+    if _specialist_month_bucket(previous_start, previous_end) != _specialist_month_bucket(
+        current_start,
+        current_end,
+    ):
+        return False
+
+    previous_activity_settings = _normalize_activity_settings(
+        previous_trip_settings.get("activity_settings")
+    )
+    current_activity_settings = _normalize_activity_settings(
+        current_trip_settings.get("activity_settings")
+    )
+    if previous_activity_settings != current_activity_settings:
+        return False
+
+    return bool(previous_event.get("strategy_sections") or previous_event.get("day_cards"))
 
 
 # ── Coordinator step ordering contract ───────────────────────────────────────
@@ -625,34 +793,36 @@ def check_cache_behavior(backend_log: str, flow_num: int, report: FlowReport) ->
             report.note(f"Cache hits: {cache_hits}, misses: {cache_misses}")
 
 
-def check_turn_timing(backend_log: str, report: FlowReport) -> None:
+def check_turn_timing(backend_log: str, flow_num: int, report: FlowReport) -> None:
     """Extract and report turn timing from coordinator logs.
 
     Matches:
       - logger: ``[coordinator] Turn complete: <reason> (<N> ms)``
       - CompactLogger: ``⏱️  DURATION        | <N>ms (...)``
     """
-    # Logger format from coordinator
-    timings = re.findall(
-        r"\[coordinator\] Turn complete: (.+?) \((\d+) ms\)",
-        backend_log,
-    )
-    for change_type, ms in timings:
-        ms_int = int(ms)
+    timings = _ordered_turn_timings(backend_log)
+    budgets = FLOW_TURN_WARN_BUDGETS_MS.get(flow_num, {})
+    for turn_idx, (change_type, ms_int) in enumerate(timings, start=1):
         report.metrics[f"turn_time_{change_type}_ms"] = ms_int
+        report.metrics[f"turn_{turn_idx}_reason"] = change_type
+        report.metrics[f"turn_{turn_idx}_time_ms"] = ms_int
         if ms_int > 60000:
             report.warn(f"Turn took {ms_int}ms (>60s) for {change_type} — very slow")
         elif ms_int > 30000:
             report.note(f"Turn took {ms_int}ms (>30s) for {change_type}")
 
-    # CompactLogger request summary timing
-    compact_timings = re.findall(
-        r"DURATION\s+\|\s*(\d+)ms",
-        backend_log,
-    )
-    for ms_str in compact_timings:
-        ms_int = int(ms_str)
-        report.metrics.setdefault("turn_time_compact_ms", ms_int)
+        budget = budgets.get(turn_idx)
+        if budget is not None:
+            warn_ms, label = budget
+            if ms_int > warn_ms:
+                report.warn(
+                    f"Turn {turn_idx} {label} took {ms_int}ms "
+                    f"(budget {warn_ms}ms) — performance regression risk"
+                )
+
+    compact_timings = re.findall(r"DURATION\s+\|\s*(\d+)ms", backend_log)
+    if compact_timings:
+        report.metrics["turn_time_compact_ms"] = int(compact_timings[-1])
 
 
 def check_console_issues(console_log: str, report: FlowReport) -> None:
@@ -706,6 +876,58 @@ def check_state_rebuilds(backend_log: str, report: FlowReport) -> None:
         )
         if refreshes > 1:
             report.warn(f"Turn {i}: Tile refresh triggered {refreshes}× — duplicate refresh")
+
+
+def check_safe_extension_dispatch(
+    backend_log: str,
+    sse_data: str,
+    flow_num: int,
+    report: FlowReport,
+) -> None:
+    """Hard-check that safe extension flows do not dispatch specialists on date-change turns."""
+    if flow_num not in {19, 21}:
+        return
+
+    turns = re.split(r">>> USER INPUT", backend_log)
+    complete_events = _parse_sse_complete_events(sse_data)
+    for i, turn_log in enumerate(turns[1:], start=1):
+        continuity_match = re.search(
+            r"\[coordinator\] Date change continuity: "
+            r"safe_tail_extension=(true|false)\s+same_month_bucket=(true|false)\s+"
+            r"same_activity_settings=(true|false)\s+dispatch=\[([^\]]*)\]\s+preserve=\[([^\]]*)\]",
+            turn_log,
+            re.IGNORECASE,
+        )
+        if continuity_match:
+            is_safe_extension_turn = continuity_match.group(1).lower() == "true"
+        elif 1 < i <= len(complete_events):
+            is_safe_extension_turn = _is_safe_tail_extension_between_events(
+                complete_events[i - 2],
+                complete_events[i - 1],
+            )
+        else:
+            is_safe_extension_turn = False
+
+        if not is_safe_extension_turn:
+            continue
+
+        dispatches = re.findall(
+            r"\[coordinator\] Dispatching specialists: \[([^\]]*)\]",
+            turn_log,
+        )
+        if not dispatches:
+            continue
+
+        topics: list[str] = []
+        for dispatch in dispatches:
+            topics.extend(
+                topic.strip().strip("'\"") for topic in dispatch.split(",") if topic.strip()
+            )
+        if topics:
+            report.error(
+                f"Turn {i}: safe extension dispatched specialists {sorted(set(topics))} — "
+                "date extensions should preserve existing specialist plans"
+            )
 
 
 def check_specialist_dispatch(backend_log: str, flow_num: int, report: FlowReport) -> None:
@@ -859,7 +1081,7 @@ def check_enrichment_gaps(backend_log: str, report: FlowReport) -> None:
     )
     for enriched, total, dest in enrichment_lines:
         if int(enriched) < int(total):
-            report.info(
+            report.note(
                 f"Partial GP enrichment for {dest}: {enriched}/{total} activities (cap-limited)"
             )
 
@@ -909,7 +1131,7 @@ def check_activity_distribution(
     Skips flows without day_cards (greetings, input gates).
     """
     spec = FLOW_EXPECTED_TOOLS.get(flow_num, {})
-    if spec.get("skip_sse"):
+    if spec.get("skip_sse") or spec.get("skip_day_fill_rate"):
         return
 
     complete_events = _parse_sse_complete_events(sse_data)
@@ -1296,7 +1518,7 @@ def check_day_fill_rate(
     Warn if < 50%, error if < 30%. Skips arrival/departure day.
     """
     spec = FLOW_EXPECTED_TOOLS.get(flow_num, {})
-    if spec.get("skip_sse"):
+    if spec.get("skip_sse") or spec.get("skip_day_fill_rate"):
         return
 
     complete_events = _parse_sse_complete_events(sse_data)
@@ -1407,9 +1629,10 @@ def analyze_flow(
     check_wasted_operations(backend_log, report)
     check_unnecessary_tile_refreshes(backend_log, flow_num, report)
     check_cache_behavior(backend_log, flow_num, report)
-    check_turn_timing(backend_log, report)
+    check_turn_timing(backend_log, flow_num, report)
     check_console_issues(console_log, report)
     check_state_rebuilds(backend_log, report)
+    check_safe_extension_dispatch(backend_log, sse_data, flow_num, report)
     check_specialist_dispatch(backend_log, flow_num, report)
     check_sse_event_integrity(sse_data, flow_num, report)
     check_iata_resolver(backend_log, report)

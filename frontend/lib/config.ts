@@ -5,7 +5,7 @@
  * Server components should prefer BACKEND_URL (internal network).
  * Client components use NEXT_PUBLIC_API_URL (browser-reachable).
  */
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 export const BACKEND_URL =
   process.env.BACKEND_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  'http://localhost:8000';
+  API_BASE;

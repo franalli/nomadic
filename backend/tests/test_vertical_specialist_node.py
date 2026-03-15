@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -819,6 +820,70 @@ async def test_generate_specialist_output_llm_retries_with_fallback_model(
 
 
 @pytest.mark.asyncio
+async def test_generate_specialist_output_llm_times_out_and_uses_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib
+
+    vertical_specialist_module = importlib.import_module("app.planner.nodes.vertical_specialist")
+
+    trip_plan = TripPlan(
+        destination="Bali",
+        start_date="2026-03-01",
+        end_date="2026-03-07",
+    )
+
+    async def _slow_invoke(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+        await asyncio.sleep(0.05)
+        return {"parsed": {"feasibility_status": "feasible", "activities": [], "constraints": []}}
+
+    primary_structured = MagicMock()
+    primary_structured.ainvoke = AsyncMock(side_effect=_slow_invoke)
+    fallback_structured = MagicMock()
+    fallback_structured.ainvoke = AsyncMock(
+        return_value={
+            "parsed": {
+                "feasibility_status": "feasible",
+                "activities": [{"title": "Reef Dive"}],
+                "constraints": [],
+            }
+        }
+    )
+
+    primary_llm = MagicMock()
+    primary_llm.with_structured_output.return_value = primary_structured
+    fallback_llm = MagicMock()
+    fallback_llm.with_structured_output.return_value = fallback_structured
+
+    mock_get_llm = MagicMock(side_effect=[primary_llm, fallback_llm])
+    mock_debug_log = MagicMock()
+
+    monkeypatch.setattr(settings, "specialist_model", "gpt-4o")
+    monkeypatch.setattr(settings, "specialist_fallback_model", "gemini-2.5-flash")
+    monkeypatch.setattr(vertical_specialist_module, "SPECIALIST_LLM_TIMEOUT_SECONDS", 0.01)
+
+    with (
+        patch(f"{_VS}.load_prompt", return_value="System prompt"),
+        patch(f"{_VS}.get_llm_by_model", mock_get_llm),
+        patch("app.debug_utils._debug_log", mock_debug_log),
+    ):
+        output = await generate_specialist_output_llm(
+            topic="diving",
+            destination="Bali",
+            trip_plan=trip_plan,
+            db=None,
+            skip_cache_lookup=True,
+        )
+
+    assert output is not None
+    assert output.feasibility_status == "feasible"
+    assert len(output.activities) == 1
+    logs = " | ".join(str(call.args[0]) for call in mock_debug_log.call_args_list if call.args)
+    assert "timed out after 0.0s for diving" in logs
+    assert "Retrying with fallback model 'gemini-2.5-flash'" in logs
+
+
+@pytest.mark.asyncio
 async def test_generate_specialist_output_llm_logs_when_primary_and_fallback_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -866,6 +931,75 @@ async def test_generate_specialist_output_llm_logs_when_primary_and_fallback_fai
     assert "Retrying with fallback model 'gemini-2.5-flash'" in logs
     assert "Fallback model 'gemini-2.5-flash' failed" in logs
     assert "FAILED for diving" in logs
+
+
+@pytest.mark.asyncio
+async def test_generate_specialist_output_llm_retry_hits_negative_cache_with_raw_day_pref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Negative cache retries must reuse the raw cache day_pref key, not the padded target."""
+    from app.services.specialist_cache import clear_memory_cache
+
+    trip_plan = TripPlan(
+        destination="Bali",
+        start_date="2026-03-01",
+        end_date="2026-03-07",
+    )
+
+    structured = MagicMock()
+    structured.ainvoke = AsyncMock(side_effect=RuntimeError("primary timeout"))
+    llm = MagicMock()
+    llm.with_structured_output.return_value = structured
+
+    monkeypatch.setattr(settings, "specialist_model", "gpt-4o")
+    monkeypatch.setattr(settings, "specialist_fallback_model", None)
+
+    clear_memory_cache()
+    try:
+        with (
+            patch(f"{_VS}.load_prompt", return_value="System prompt"),
+            patch(f"{_VS}.get_llm_by_model", return_value=llm),
+            patch(
+                "app.services.specialist_cache.get_cached_specialist_output",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            first = await generate_specialist_output_llm(
+                topic="diving",
+                destination="Bali",
+                trip_plan=trip_plan,
+                db=MagicMock(),
+                target_activities=10,
+                cache_day_pref=None,
+            )
+
+        retry_db = MagicMock()
+        retry_db.execute = AsyncMock(
+            side_effect=AssertionError("DB should not be hit on L1 negative cache")
+        )
+        retry_db.rollback = AsyncMock()
+
+        with (
+            patch(f"{_VS}.load_prompt") as mock_load_prompt,
+            patch(f"{_VS}.get_llm_by_model") as mock_get_llm,
+        ):
+            second = await generate_specialist_output_llm(
+                topic="diving",
+                destination="Bali",
+                trip_plan=trip_plan,
+                db=retry_db,
+                target_activities=10,
+                cache_day_pref=None,
+            )
+
+        assert first is None
+        assert second is None
+        retry_db.execute.assert_not_awaited()
+        mock_load_prompt.assert_not_called()
+        mock_get_llm.assert_not_called()
+    finally:
+        clear_memory_cache()
 
 
 @pytest.mark.asyncio

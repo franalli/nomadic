@@ -3,9 +3,10 @@
 import { MapPin, Star } from 'lucide-react';
 
 import { DS } from '@/lib/design-system';
-import { cn } from '@/lib/utils';
 import type { ViewMode } from '@/types/plan-envelope';
 import type { PartnerPrice, Tile } from '@/types/tile';
+
+import { TileDetailsActivitySection, TileDetailsPartnerPrices } from './tileSections';
 
 export interface TileDetailsInfoProps {
   tile: Tile;
@@ -51,7 +52,7 @@ export function TileDetailsInfo({
             <Star className="h-4 w-4 fill-zinc-400 text-zinc-500 dark:text-zinc-400" />
             <span className="font-medium">{tile.rating.toFixed(1)}</span>
             {reviewCount != null && (
-              <span className="text-zinc-500 dark:text-zinc-500">
+              <span className="text-zinc-500 dark:text-zinc-400">
                 ({reviewCount} reviews)
               </span>
             )}
@@ -97,43 +98,7 @@ export function TileDetailsInfo({
       </div>
 
       {/* Activity metadata */}
-      {tile.type === 'activity' && tile.meta && (() => {
-        const m = tile.meta as Record<string, unknown>;
-        const desc = typeof m.description === 'string' && m.description ? m.description : null;
-        const category = typeof m.category === 'string' ? m.category : null;
-        const duration = typeof m.duration_hours === 'number' ? m.duration_hours : null;
-        const timeOfDay = typeof m.time_of_day === 'string' ? m.time_of_day : null;
-        const skillLevel = typeof m.skill_level === 'string' && m.skill_level !== 'beginner' ? m.skill_level : null;
-        return (
-          <div className="space-y-2">
-            {desc && (
-              <p className="text-sm italic text-zinc-500 dark:text-zinc-400">{desc}</p>
-            )}
-            <div className="flex flex-wrap gap-1.5">
-              {category && (
-                <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
-                  {category}
-                </span>
-              )}
-              {duration != null && (
-                <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-xs text-zinc-500 dark:text-zinc-400">
-                  {duration}h
-                </span>
-              )}
-              {timeOfDay && (
-                <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-xs text-zinc-500 dark:text-zinc-400">
-                  {timeOfDay.charAt(0).toUpperCase() + timeOfDay.slice(1)}
-                </span>
-              )}
-              {skillLevel && (
-                <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-xs text-zinc-500 dark:text-zinc-400">
-                  {skillLevel.charAt(0).toUpperCase() + skillLevel.slice(1)}
-                </span>
-              )}
-            </div>
-          </div>
-        );
-      })()}
+      {tile.type === 'activity' && tile.meta && <TileDetailsActivitySection tile={tile} />}
 
       {/* Amenities */}
       {amenities.length > 0 && (
@@ -149,7 +114,7 @@ export function TileDetailsInfo({
               </span>
             ))}
             {amenities.length > 8 && (
-              <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-xs text-zinc-500 dark:text-zinc-500">
+              <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-2 py-1 text-xs text-zinc-500 dark:text-zinc-400">
                 +{amenities.length - 8} more
               </span>
             )}
@@ -158,7 +123,7 @@ export function TileDetailsInfo({
       )}
 
       {/* Price block */}
-      <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800/50 p-3">
+      <div className="rounded-lg border border-zinc-200 dark:border-white/10 bg-zinc-100 dark:bg-zinc-800/50 p-3">
         <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
           {priceDisplay.perUnit}
         </div>
@@ -166,7 +131,7 @@ export function TileDetailsInfo({
           <div className="text-sm text-zinc-500 dark:text-zinc-400">{priceDisplay.total}</div>
         )}
         {tile.provider && (
-          <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-500">
+          <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
             via {tile.provider}
           </div>
         )}
@@ -198,67 +163,7 @@ export function TileDetailsInfo({
 
       {/* BOOKING mode: Partner price comparison */}
       {mode === 'booking' && partnerPrices && partnerPrices.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-            Compare prices
-          </h3>
-          <div className="space-y-2">
-            {partnerPrices.map((pp) => (
-              <div
-                key={pp.partner}
-                className={cn(
-                  'flex items-center justify-between p-3 rounded-lg border transition-colors',
-                  pp.isBestPrice
-                    ? 'border-emerald-500/50 bg-emerald-500/10'
-                    : 'border-zinc-200 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800/30 hover:bg-zinc-100 dark:hover:bg-zinc-800/50'
-                )}
-              >
-                <div className="flex items-center gap-3">
-                  {pp.logo ? (
-                    <img
-                      src={pp.logo}
-                      alt={pp.partner}
-                      loading="lazy"
-                      className="h-6 w-auto object-contain"
-                    />
-                  ) : (
-                    <span className="text-sm text-zinc-700 dark:text-zinc-300 font-medium">
-                      {pp.partner}
-                    </span>
-                  )}
-                  {pp.isBestPrice && (
-                    <span className={`px-1.5 py-0.5 rounded ${DS.textSize.micro} font-medium bg-emerald-500/20 text-emerald-400`}>
-                      Best Price
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    {new Intl.NumberFormat('en-US', {
-                      style: 'currency',
-                      currency: pp.currency,
-                      maximumFractionDigits: 0,
-                    }).format(pp.price)}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (pp.url) {
-                        window.open(pp.url, '_blank', 'noopener,noreferrer');
-                      }
-                      if (tile && onBook) {
-                        onBook(tile, pp.partner);
-                      }
-                    }}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500 text-white hover:bg-emerald-600 transition-colors"
-                  >
-                    Book
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <TileDetailsPartnerPrices tile={tile} partnerPrices={partnerPrices} onBook={onBook} />
       )}
     </div>
   );

@@ -174,9 +174,9 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     logger.info("[Shutdown] Flushed spend guard state to disk")
 
     # 5a3. Drain Google Places enrichment inflight + geocode caches
-    from app.tile_service.google_places_provider import clear_geocode_caches
+    from app.tile_service.google_places_provider import clear_google_places_runtime_caches
 
-    clear_geocode_caches()
+    await clear_google_places_runtime_caches()
     logger.info("[Shutdown] Cleared Google Places geocode caches and enrichment inflight")
 
     # 5b. Close Google Places HTTP client
@@ -196,6 +196,12 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 
     await close_gyg_http_client()
     logger.info("[Shutdown] Closed GYG HTTP client")
+
+    # 5b4. Close Aviasales HTTP client
+    from app.services.aviasales_provider import close_aviasales_http_client
+
+    await close_aviasales_http_client()
+    logger.info("[Shutdown] Closed Aviasales HTTP client")
 
     # 5c. Close Google Places sync HTTP client
     from app.tile_service.google_places_provider import close_sync_client

@@ -127,7 +127,7 @@ function FlightsSheetInner({
       title="Flights"
       hint="Configure flight search preferences"
       footer={
-        <div className="flex gap-3">
+        <div className="flex gap-2">
           <button
             type="button"
             onClick={() => onOpenChange(false)}
@@ -186,12 +186,12 @@ function FlightsSheetInner({
         <div
           className={cn(
             'space-y-6 transition-opacity',
-            !localEnabled && 'opacity-50 pointer-events-none'
+            !localEnabled && 'opacity-50 cursor-not-allowed pointer-events-none'
           )}
         >
           {/* Trip type */}
           <div>
-            <h3 className={cn(DS.text.label, 'mb-3')}>
+            <h3 className={cn(DS.text.label, 'mb-2')}>
               Trip type
             </h3>
             <div className="flex gap-2">
@@ -242,7 +242,7 @@ function FlightsSheetInner({
 
           {/* Cabin class */}
           <div>
-            <h3 className={cn(DS.text.label, 'mb-3')}>
+            <h3 className={cn(DS.text.label, 'mb-2')}>
               Cabin class
             </h3>
             <div className="flex flex-wrap gap-2">
@@ -279,7 +279,7 @@ function FlightsSheetInner({
 
           {/* Stops */}
           <div>
-            <h3 className={cn(DS.text.label, 'mb-3')}>
+            <h3 className={cn(DS.text.label, 'mb-2')}>
               Stops
             </h3>
             <div className="flex gap-2">

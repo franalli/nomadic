@@ -43,10 +43,10 @@ export const CATEGORY_ALIAS: Record<string, string> = {
   performing_arts_theater: 'cultural',
   hindu_temple: 'temples',
   temple: 'temples',
-  church: 'cultural',
-  place_of_worship: 'cultural',
-  synagogue: 'cultural',
-  mosque: 'cultural',
+  church: 'temples',
+  place_of_worship: 'temples',
+  synagogue: 'temples',
+  mosque: 'temples',
   restaurant: 'food',
   cafe: 'food',
   bar: 'food',
@@ -117,8 +117,8 @@ export function canonicalCategoryKey(value: unknown): string | null {
   if (!key) return null;
   const mapped = CATEGORY_ALIAS[key] ?? key;
   if (/(culture|cultural|heritage)/.test(key)) return 'cultural';
-  if (/(museum|landmark|historic|monument|plaza|fountain)/.test(key)) return 'cultural';
   if (/(temple|church|worship|mosque|synagogue)/.test(key)) return 'temples';
+  if (/(museum|landmark|historic|monument|plaza|fountain)/.test(key)) return 'cultural';
   if (/(restaurant|cafe|bar|bakery|food|meal)/.test(key)) return 'food';
   if (/(park|garden|nature|zoo|camp)/.test(key)) return 'nature';
   if (/(shop|store|market|mall)/.test(key)) return 'shopping';

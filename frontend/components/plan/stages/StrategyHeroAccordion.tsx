@@ -64,7 +64,7 @@ export function StrategyHeroAccordion({
       data-state={isAccordionExpanded ? 'expanded' : 'collapsed'}
       data-specialist={topic}
       className={cn(
-        'w-full rounded-xl mb-3 overflow-hidden',
+        'w-full rounded-xl mb-4 overflow-hidden',
         'transition-all duration-200',
         'bg-zinc-50 border border-zinc-100',
         'dark:bg-white/[0.03] dark:border-white/5',
@@ -82,7 +82,7 @@ export function StrategyHeroAccordion({
         onClick={onToggle}
         onKeyDown={onKeyDown}
         className={cn(
-          'flex items-center gap-3 p-3 cursor-pointer min-h-[60px]',
+          'flex items-center gap-2 p-3 cursor-pointer min-h-[60px]',
           'transition-all duration-150',
           'hover:bg-zinc-100/50 dark:hover:bg-white/[0.02]',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2',

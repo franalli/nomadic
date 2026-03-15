@@ -3,8 +3,7 @@ Expert Constraints — Pydantic models and constraint data for Local Expert.
 
 This module holds:
 - All Pydantic schema classes used by the Local Expert LLM structured output
-- LOCAL_EXPERT_CONSTRAINTS: stable constraint facts injected into LLM prompt
-- _get_constraint_context(): formats constraints as prompt text for LLM grounding
+- Reusable local-expert constraint helpers with no destination lookup table
 
 Separated from local_expert.py to keep node logic focused (~200 lines).
 """
@@ -278,240 +277,21 @@ class LocalExpertOutput(BaseModel):
 
 
 # =============================================================================
-# Static Local Expert Constraints (Injected into LLM prompt as grounding)
+# Static Local Expert Constraints
 # =============================================================================
-# Stable constraint facts (cultural norms, safety, seasonality, booking windows)
-# that rarely change. Injected into the Local Expert LLM system prompt so it
-# doesn't hallucinate them.
-#
-# NOT included: venue names, prices, hours, transport costs, visa specifics,
-# packing lists, or any data that drifts. The LLM generates those dynamically.
-#
-# Adding cities is optional — the LLM handles any destination without hints.
-# Only add entries when specific safety/cultural constraints are critical.
-#
-# Hard Rule 11 exception: These are curated medical/cultural safety constraints
-# (dress codes, altitude warnings, decompression buffers). LLM-generated safety
-# data introduces hallucination risk. Kept as static data by design.
-
-# Curated safety/cultural constraints — Hard Rule 11 exception.
-# Review process: verify facts quarterly; update _CONSTRAINTS_VERSION on any change.
-_CONSTRAINTS_VERSION = "2026-03-09"
-
-LOCAL_EXPERT_CONSTRAINTS: dict[str, dict] = {
-    "dubai": {
-        "constraints": [
-            {
-                "type": "cultural",
-                "desc": "Dress modestly in malls/public areas - shoulders and knees covered",
-                "severity": "warning",
-            },
-            {
-                "type": "seasonal",
-                "desc": "Summer (Jun-Aug) can exceed 45°C - plan indoor activities",
-                "severity": "warning",
-            },
-            {
-                "type": "cultural",
-                "desc": "Alcohol only in licensed venues (hotels, restaurants)",
-                "severity": "info",
-            },
-        ],
-    },
-    "paris": {
-        "constraints": [
-            {
-                "type": "opening_hours",
-                "desc": "Louvre closed on Tuesdays",
-                "severity": "warning",
-            },
-            {
-                "type": "opening_hours",
-                "desc": "Most museums closed Mondays or Tuesdays - check before visiting",
-                "severity": "warning",
-            },
-            {
-                "type": "booking_window",
-                "desc": "Eiffel Tower requires booking 2-3 weeks ahead for summit access",
-                "severity": "warning",
-            },
-        ],
-    },
-    "rome": {
-        "constraints": [
-            {
-                "type": "booking_window",
-                "desc": "Vatican Museums require advance tickets - same-day often sold out",
-                "severity": "warning",
-            },
-            {
-                "type": "booking_window",
-                "desc": "Colosseum timed entry tickets sell out days in advance",
-                "severity": "warning",
-            },
-            {
-                "type": "cultural",
-                "desc": "Dress code for churches: covered shoulders and knees required",
-                "severity": "info",
-            },
-        ],
-    },
-    "london": {
-        "constraints": [
-            {
-                "type": "booking_window",
-                "desc": "West End shows sell out weeks ahead for popular productions",
-                "severity": "info",
-            },
-            {
-                "type": "opening_hours",
-                "desc": "Tube runs until ~midnight (24h on weekends on some lines)",
-                "severity": "info",
-            },
-            {
-                "type": "seasonal",
-                "desc": "Rain likely year-round - pack layers and waterproof jacket",
-                "severity": "info",
-            },
-        ],
-    },
-    "amsterdam": {
-        "constraints": [
-            {
-                "type": "booking_window",
-                "desc": "Anne Frank House requires booking 6+ weeks ahead",
-                "severity": "warning",
-            },
-            {
-                "type": "booking_window",
-                "desc": "Van Gogh Museum timed tickets sell out - book 2 weeks ahead",
-                "severity": "warning",
-            },
-            {
-                "type": "cultural",
-                "desc": "Cycling rules: stay in bike lanes, signal turns",
-                "severity": "info",
-            },
-        ],
-    },
-    "tokyo": {
-        "constraints": [
-            {
-                "type": "cultural",
-                "desc": "Many restaurants don't accept credit cards - carry cash",
-                "severity": "warning",
-            },
-            {
-                "type": "cultural",
-                "desc": "No tipping in Japan - considered rude",
-                "severity": "info",
-            },
-            {
-                "type": "booking_window",
-                "desc": "teamLab exhibitions require advance booking",
-                "severity": "warning",
-            },
-        ],
-    },
-    "new york": {
-        "constraints": [
-            {
-                "type": "booking_window",
-                "desc": "Statue of Liberty crown access books out 3+ months ahead",
-                "severity": "warning",
-            },
-            {
-                "type": "booking_window",
-                "desc": "Broadway: book 2+ weeks for popular shows, or try TKTS day-of",
-                "severity": "info",
-            },
-            {
-                "type": "cultural",
-                "desc": "Tipping expected: 18-20% at restaurants",
-                "severity": "info",
-            },
-        ],
-    },
-    "bali": {
-        "constraints": [
-            {
-                "type": "cultural",
-                "desc": "Cover shoulders and knees when visiting temples - sarongs at entrances",
-                "severity": "warning",
-            },
-            {
-                "type": "cultural",
-                "desc": "Hindu island - daily offerings (canang sari) everywhere, step over not on",
-                "severity": "info",
-            },
-            {
-                "type": "cultural",
-                "desc": "Never touch someone's head (sacred); don't point feet at shrines",
-                "severity": "info",
-            },
-            {
-                "type": "seasonal",
-                "desc": "Rainy season Nov-Mar brings afternoon showers - mornings best for diving",
-                "severity": "info",
-            },
-            {
-                "type": "safety",
-                "desc": "Strong currents at some beaches - swim only at patrolled areas",
-                "severity": "warning",
-            },
-            {
-                "type": "safety",
-                "desc": "Tap water not safe - drink bottled water only",
-                "severity": "warning",
-            },
-            {
-                "type": "transport",
-                "desc": "International Driving Permit required for scooter - police checkpoints",
-                "severity": "warning",
-            },
-        ],
-    },
-}
+# Local Expert no longer carries destination-specific scaffolding. Any immediate
+# UX-density needs are handled by the generic fallback floor in local_expert.py,
+# while destination-specific guidance comes from the LLM/cache path.
+LOCAL_EXPERT_CONSTRAINTS: dict[str, dict] = {}
 
 
 def _get_constraint_context(destination: str) -> str:
-    """Format static constraints as LLM prompt context for a destination.
-
-    Returns a string block to inject into the system prompt, or empty string
-    if no constraints are known for this destination.
-    """
-    dest_lower = destination.lower().strip()
-
-    entry = None
-    for key in LOCAL_EXPERT_CONSTRAINTS:
-        if key in dest_lower or dest_lower in key:
-            entry = LOCAL_EXPERT_CONSTRAINTS[key]
-            break
-
-    if not entry:
-        return ""
-
-    constraints = entry.get("constraints", [])
-    if not constraints:
-        return ""
-
-    lines = [f"\n## Known constraints for {destination} (verified facts — do not contradict):"]
-    for c in constraints:
-        severity_tag = "[WARNING]" if c["severity"] == "warning" else "[INFO]"
-        lines.append(f"- {severity_tag} ({c['type']}) {c['desc']}")
-    return "\n".join(lines)
+    """Return extra prompt grounding for reusable local-expert constraints."""
+    return ""
 
 
 def _get_constraints_as_list(destination: str) -> list[dict]:
-    """Return raw constraint dicts for a destination (no formatting).
-
-    Used by Phase A skeleton to build constraints_applied instantly,
-    without any LLM call.
-    """
-    dest_lower = destination.lower().strip()
-    for key in LOCAL_EXPERT_CONSTRAINTS:
-        if key in dest_lower or dest_lower in key:
-            return LOCAL_EXPERT_CONSTRAINTS[key].get("constraints", [])
+    """Return reusable static constraints for the destination skeleton path."""
     return []
 
 

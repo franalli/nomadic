@@ -6,11 +6,97 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from typing import Any
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+_PARTNER_GEO_MAX_DISTANCE_KM = 120.0
+_AFFILIATE_PARTNERS = {"viator", "gyg", "getyourguide", "get_your_guide"}
+
+
+def _coords_from_tile(tile: dict[str, Any]) -> tuple[float, float] | None:
+    """Extract (lat, lng) coordinates from a tile-like dict."""
+    geo = tile.get("geo")
+    if isinstance(geo, dict):
+        lat = geo.get("lat")
+        lng = geo.get("lng")
+        if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            return float(lat), float(lng)
+
+    coords = tile.get("coordinates")
+    if isinstance(coords, dict):
+        lat = coords.get("lat")
+        lng = coords.get("lng")
+        if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            return float(lat), float(lng)
+    if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+        lng, lat = coords[0], coords[1]
+        if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            return float(lat), float(lng)
+
+    return None
+
+
+def _haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Return the great-circle distance between two lat/lng points."""
+    lat1, lng1 = a
+    lat2, lng2 = b
+    radius_km = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    sin_dlat = math.sin(dlat / 2.0)
+    sin_dlng = math.sin(dlng / 2.0)
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    arc = sin_dlat**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * sin_dlng**2
+    return 2.0 * radius_km * math.asin(math.sqrt(arc))
+
+
+def _partner_match_is_geo_compatible(
+    source_tile: dict[str, Any], partner_tile: dict[str, Any]
+) -> bool:
+    """Reject partner matches that land implausibly far from the source tile."""
+    source_coords = _coords_from_tile(source_tile)
+    partner_coords = _coords_from_tile(partner_tile)
+    if not source_coords or not partner_coords:
+        return True
+
+    distance_km = _haversine_km(source_coords, partner_coords)
+    if distance_km <= _PARTNER_GEO_MAX_DISTANCE_KM:
+        return True
+
+    logger.info(
+        "[PARTNER] Rejecting geo-mismatched match for '%s': source=%s partner=%s distance=%.1fkm",
+        source_tile.get("title", ""),
+        source_coords,
+        partner_coords,
+        distance_km,
+    )
+    return False
+
+
+def _has_persisted_partner_match(tile: dict[str, Any]) -> bool:
+    """Return True when a tile already carries persisted affiliate enrichment."""
+    provider = str(tile.get("provider") or "").strip().lower()
+    partner = str(tile.get("partner") or "").strip().lower()
+    if provider in {"viator", "gyg"} or partner in _AFFILIATE_PARTNERS:
+        return True
+
+    meta = tile.get("meta")
+    if isinstance(meta, dict) and (meta.get("viator_product_code") or meta.get("gyg_tour_id")):
+        return True
+
+    partner_product_id = str(tile.get("partner_product_id") or "").strip()
+    if not partner_product_id:
+        return False
+
+    if tile.get("live_price") is not None or tile.get("is_estimate_only") is False:
+        return True
+
+    deeplink = str(tile.get("deeplink") or tile.get("deeplink_url") or "").lower()
+    return any(marker in deeplink for marker in ("viator", "getyourguide", "gyg"))
 
 
 async def match_activity_to_best_partner(
@@ -92,9 +178,9 @@ async def enrich_tiles_with_partners(
         (i, t)
         for i, t in enumerate(experience_tiles)
         if t.get("title")
-        and t.get("provider") not in ("viator", "gyg")
-        and not (t.get("meta") or {}).get("viator_product_code")
-        and not (t.get("meta") or {}).get("gyg_tour_id")
+        and t.get("type", "activity") == "activity"
+        and "hotel" not in {str(tag).lower() for tag in t.get("tags", [])}
+        and not _has_persisted_partner_match(t)
     ]
     tasks = [
         _throttled_match(
@@ -109,6 +195,8 @@ async def enrich_tiles_with_partners(
     matched = 0
     for (_, tile), result in zip(filtered, results, strict=False):
         if isinstance(result, Exception) or result is None:
+            continue
+        if not _partner_match_is_geo_compatible(tile, result):
             continue
         matched += 1
         # Merge partner data onto existing tile

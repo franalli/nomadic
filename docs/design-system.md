@@ -193,6 +193,19 @@ Non-emerald box shadows for light-mode surfaces. Unlike `DS.glowClass.*`, these 
 | `DS.brand.emerald` | `#10b981` | SVG stroke, Mapbox route lines |
 | `DS.brand.emeraldMuted` | `rgba(16, 185, 129, 0.3)` | SVG background strokes |
 
+### Map Colors
+
+These marker-palette tokens live under `DS.map` and are consumed by
+`frontend/components/map/map-marker-config.tsx`.
+
+| Token | Value | Use For |
+|-------|-------|---------|
+| `DS.map.flight` | `#60a5fa` | Flight, arrival, and departure pins |
+| `DS.map.family` | `#f59e0b` | Family-oriented pins |
+| `DS.map.activity` | `#a855f7` | Default activity pins |
+| `DS.map.defaultPin` | `#a1a1aa` | Fallback uncategorized pins |
+| `DS.map.browsePin` | `#f59e0b` | Browse-sheet activity pins |
+
 ### Stepper (Traveler Counts)
 
 | Token | Description |
@@ -319,9 +332,9 @@ Map panel configuration is now owned by `PlanFullDensityView`; `PlanDensityViews
 ```
 
 **fitBounds Behavior:**
-- Uses responsive padding: desktop 40px, mobile 20px (via `useIsDesktop` hook)
-- `maxZoom: 12` prevents over-zoom on single-POI clusters
-- `minZoom: 7` prevents zooming out to show the whole globe
+- Uses responsive padding: desktop 60px, mobile 30px (via `useIsDesktop` hook)
+- `maxZoom: 14` prevents over-zoom on single-POI clusters
+- `minZoom: 5` prevents zooming out to show the whole globe
 - `duration: 1000` for smooth 1s animation
 
 **Map Base Style (Theme-Aware):**
@@ -544,7 +557,7 @@ const borderAccentClass: Record<string, string> = {
 
 <div
   className={cn(
-    'group relative flex flex-col lg:flex-row gap-3 p-3 rounded-xl border border-l-4 transition-shadow',
+    'group relative flex flex-col gap-3 p-3 rounded-xl border border-l-4 transition-colors duration-150',
     'bg-white dark:bg-zinc-800/50 hover:shadow-soft',
     borderAccentClass[block.specialist_type] || 'border-l-zinc-300 dark:border-l-zinc-600'
   )}
@@ -671,7 +684,9 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 
 | Component | Location | Key DS Tokens / Patterns |
 |-----------|----------|--------------------------|
-| BaseSheet | `plan/sheets/BaseSheet.tsx` | Raw glass pattern (matches `DS.materials.glass`), raw iconBtn pattern |
+| BaseSheet | `plan/sheets/BaseSheet.tsx` | Responsive wrapper that selects `BaseSheetDesktopDialog` on desktop and `BaseSheetMobileSheet` on mobile; keeps the shared glass/icon-btn pattern behind one import surface |
+| BaseSheetDesktopDialog | `plan/sheets/BaseSheetDesktopDialog.tsx` | Centered glass dialog variant; raw glass pattern (matches `DS.materials.glass`), raw iconBtn pattern |
+| BaseSheetMobileSheet | `plan/sheets/BaseSheetMobileSheet.tsx` | Bottom-sheet variant with drag-to-dismiss handle; raw glass pattern (matches `DS.materials.glass`), raw iconBtn pattern |
 | DestinationSheet | `plan/sheets/DestinationSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, raw Void Input pattern, raw Tactile pills |
 | OriginSheet | `plan/sheets/OriginSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, raw Void Input pattern, raw Tactile pills |
 | TravelersSheet | `plan/sheets/TravelersSheet.tsx` | `DS.actions.primary`, `DS.text.label`, raw Tactile pills, inline stepper (w-12 h-12 mobile variant) |
@@ -681,7 +696,7 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | ActivitiesSheet | `plan/sheets/ActivitiesSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, same as Flights, `Stepper` from `ui/stepper.tsx` (day preference steppers) |
 | TripSettingsSheet | `plan/sheets/TripSettingsSheet.tsx` | BaseSheet, field rows for mobile settings relay |
 | DatesSheet | `plan/sheets/DatesSheet.tsx` | `DS.actions.primary/primaryDisabled`, `DS.text.label`, `DS.textSize.micro`, raw glass pattern, raw Tactile pills |
-| ChatPanel | `chat/ChatPanel.tsx` | Shell only; delegates S0 hero styling to `ChatBootstrapHero` and bubble styling to child chat components |
+| ChatPanel | `chat/ChatPanel.tsx` | Barrel export; implementation in `ChatPanelContent.tsx` which delegates S0 hero styling to `ChatBootstrapHero` and bubble styling to child chat components |
 | ChatBootstrapHero | `chat/ChatBootstrapHero.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText`, `DS.glowClass.cursor` (desktop bootstrap hero terminal text) |
 | ChatMessageList | `chat/ChatMessageList.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText`, `DS.glowClass.cursor` (terminal status text) |
 | ChatInputBar | `chat/ChatInputBar.tsx` | `DS.glowClass.sm`, `DS.glowClass.md`, Living Void pattern (emerald glow + pulse), Stop button (monochrome square) |
@@ -689,10 +704,10 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | SmartLoader | `chat/SmartLoader.tsx` | `DS.textSize.micro` (mutating status line with dynamic Lucide icon) |
 | ChatSuggestionChips | `chat/ChatSuggestionChips.tsx` | Raw Tactile pills (suggestion chips), `Sparkles` icon (planning trigger), `SlidersHorizontal` icon (sheet actions) |
 | BrowseActivitiesSheet | `plan/BrowseActivitiesSheet.tsx` | `DS.pills.shapeFull`, `DS.pills.active`, `DS.pills.inactive`, `DS.infoBox.container` |
-| TripSummaryPills | `plan/TripSummaryPills.tsx` | `DS.glowClass.dotGlow`, `DS.glowClass.commandBar`, `DS.textSize.badgeLabel`, `DS.textSize.micro` (command bar shell, separator dots, counts) |
-| UnifiedChipRow | `plan/UnifiedChipRow.tsx` | `CoreChip` (CSS custom properties, not DS pills) |
+| TripSummaryPills | `plan/TripSummaryPills.tsx` | `DS.glowClass.commandBar` (command bar shell); child `TripSummaryPillsSegment` uses `DS.glowClass.dotGlow`, `DS.textSize.badgeLabel`, `DS.textSize.micro` (separator dots, counts) |
+| UnifiedChipRow | `plan/UnifiedChipRow.tsx` | `SetupCoreChip` (CSS custom properties, not DS pills) |
 | Calendar | `ui/calendar.tsx` | Custom (see Calendar section) |
-| StrategyHero | `plan/stages/StrategyHero.tsx` | `DS.textSize.nano`, `DS.textSize.micro` directly; child sheets (`StrategyHeroCompactSheet`, `StrategyHeroHeroSheet`, `StrategyHeroAccordion`) use `DS.text.label`, `DS.text.body`, `DS.infoBox.container`. 3 variants: `hero`, `compact`, `accordion` |
+| StrategyHero | `plan/stages/StrategyHero.tsx` | Parent orchestrator (no direct DS imports); child components (`StrategyHeroCompact`, `StrategyHeroContent`, `StrategyHeroAccordion`, `StrategyHeroCompactSheet`, `StrategyHeroHeroSheet`) use `DS.textSize.nano`, `DS.textSize.micro`, `DS.text.label`, `DS.text.body`, `DS.infoBox.container`. 3 variants: `hero`, `compact`, `accordion` |
 | Stepper (shared) | `ui/stepper.tsx` | Raw DS.stepper pattern (sm/default size variants) |
 | TileCard | `tiles/TileCard.tsx` | Raw glass card pattern, rating stars use neutral zinc scale; signed Google Places photo URLs (`googlePlacesPhoto`) take precedence when present |
 | MiniCard | `tiles/MiniCard.tsx` | Compact glass card pattern, rating stars use neutral zinc scale |
@@ -702,9 +717,9 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | CategorySection | `plan/booking/CategorySection.tsx` | `DS.textSize.micro`, booking status dots/text with dark-aware zinc/emerald states |
 | NextStepBar | `plan/NextStepBar.tsx` | Command Island sticky CTA; `DS.text.label`, `DS.textSize.micro`, `DS.glowClass.action`, glass `dark:bg-zinc-900/95` |
 | GhostSlot | `plan/timeline/blocks/GhostSlot.tsx` | Dashed-border CTA slot; `border-dashed border-zinc-300 dark:border-white/10` pattern |
-| LogisticsBlock | `plan/timeline/blocks/LogisticsBlock.tsx` | Flight/transfer timeline block; glass `dark:bg-zinc-900/50` pattern |
+| LogisticsBlock | `plan/timeline/blocks/LogisticsBlock.tsx` | Flight/transfer timeline block; type-specific bg patterns (see Section 31.5) |
 | MapErrorBoundary | `map/MapErrorBoundary.tsx` | Map error fallback; raw zinc pattern (`bg-zinc-100 dark:bg-zinc-900`, `text-zinc-500`) |
-| PlanFullDensityView | `plan/PlanFullDensityView.tsx` | Subdued toggle pills (Section 32.1); `bg-zinc-100 dark:bg-white/[0.06] border-zinc-300 dark:border-white/15` |
+| PlanFullDensityView | `plan/PlanFullDensityView.tsx` | Orchestrator (no direct DS tokens); section toggle chips use `ModuleChip` (Section 32.1) |
 | PreferenceAttributionBadge | `plan/timeline/blocks/PreferenceAttributionBadge.tsx` | Inline badge for user-preferred/ai-override tile states; `bg-emerald-500/15 text-emerald-600 dark:text-emerald-400` |
 | FreeDayCard | `plan/timeline/blocks/FreeDayCard.tsx` | Section 31.8 + constraint-buffer variant (Section 32.4); uses `DS.actions.primary` for CTA |
 
@@ -1923,7 +1938,7 @@ The hero header uses a **vertical stack** layout: compact image above, summary p
 - No specialist pills — Trip DNA bar below already shows specialists
 - Hero hidden on mobile — trip context is handled by `MobileModeHeader` and the route header chrome instead
 
-### CoreChip Sizing (default variant)
+### SetupCoreChip Sizing (default variant)
 
 | Property | Value |
 |----------|-------|
@@ -1941,7 +1956,7 @@ The hero header uses a **vertical stack** layout: compact image above, summary p
 
 - Hero header: `frontend/components/plan/PlanHeader.tsx`
 - Chip components: `frontend/components/plan/TripSummaryPills.tsx`
-- CoreChip: `frontend/components/plan/CoreChip.tsx`
+- SetupCoreChip: `frontend/components/plan/SetupCoreChip.tsx`
 
 ---
 
@@ -2134,7 +2149,7 @@ The Reset button allows users to start over with a fresh planning session. It mu
 
 ### Implementation Reference
 
-- Web: `frontend/components/layout/NomadicLanding.tsx`
+- Web: `frontend/components/layout/LandingHeaderContent.tsx`
 - Mobile: `frontend/components/layout/MobileModeHeader.tsx`
 
 ---
@@ -2155,6 +2170,7 @@ Custom tokens defined in `frontend/tailwind.config.mts` beyond the DS object. Th
 | Token | Stack | Use For |
 |-------|-------|---------|
 | `font-sans` | Inter, system sans-serif | Default body text |
+| `font-body` | Inter, system sans-serif | Alias for body text (same stack as sans) |
 | `font-heading` | Playfair Display, Georgia, serif | Decorative headings |
 | `font-display` | Space Grotesk, Inter, system sans-serif | Display text, hero elements |
 | `font-mono` | JetBrains Mono, system monospace | Code, terminal status text |
@@ -2286,7 +2302,7 @@ The `local_expert` specialist type maps to Neutral Gray in the DS specialist pal
 
 ### Implementation Reference
 - SmartLoader: `frontend/components/chat/SmartLoader.tsx`
-- Integration: `frontend/components/chat/ChatPanel.tsx`
+- Integration: `frontend/components/chat/ChatPanelContent.tsx`
 - Backend graph: `backend/app/streaming.py` + `backend/app/planner/coordinator.py` (coordinator step status streamed via SSE `node_status`)
 
 ---
@@ -2341,7 +2357,7 @@ The NextStepBar ("Command Island") is a sticky footer CTA that appears when the 
 There is no standalone "Refresh" button. Plan regeneration is triggered automatically or via existing CTAs:
 
 - **Chat auto-regen:** Structural plan changes trigger automatic itinerary rebuild
-- **Preference auto-regen:** Heart changes trigger via `usePreferenceAutoRegen` hook
+- **Preference auto-regen:** Heart changes trigger via `startPreferenceAutoRegen()`
 - **Manual build:** "Build Itinerary" CTA in `StrategyStageRenderer.tsx`
 - **Branch manager:** Trip input changes tracked by `useBranchManager` / `useTripInputsEditor` hooks
 
@@ -2351,7 +2367,7 @@ There is no standalone "Refresh" button. Plan regeneration is triggered automati
 - Build CTA: `frontend/components/plan/StrategyStageRenderer.tsx`
 - Trip input editing: `frontend/components/layout/hooks/useTripInputsEditor.ts`
 - Branch management: `frontend/components/layout/hooks/useBranchManager.ts`
-- Generation logic: `frontend/components/layout/NomadicLanding.tsx` (`proceedWithItineraryGeneration`)
+- Generation logic: `frontend/components/layout/hooks/useItineraryGenerationController.ts` (`proceedWithItineraryGeneration`, re-exported via `useItineraryGeneration.ts`)
 - UX Flow: `docs/ux_unified_architecture.md` (Regeneration Flow section)
 
 ---
@@ -2556,7 +2572,7 @@ Components must use this z-index tier system to prevent collisions:
 | Floating CTA | `z-[900]` | `FloatingBuildButton` — must float above timeline content but below sheets |
 | Mobile header | `z-[1100]` | `MobileModeHeader` |
 | Floating status pill | `z-[1099]` | Status pill stacked just below mobile header (intentional 1-unit gap) |
-| Sheets / drawers | `z-[1200]` backdrop, `z-[1201]` panel | `BaseSheet`, `DatesSheet`, drawer overlays |
+| Sheets / drawers | `z-[1200]` backdrop, `z-[1201]` panel | `BaseSheetDesktopDialog`, `BaseSheetMobileSheet`, `DatesSheet`, drawer overlays |
 | Toasts | `z-[9999]` | Toast container |
 | Mapbox marker tooltips | `z-[9999]` | Map marker tooltips |
 
@@ -2587,23 +2603,23 @@ All Lucide React icons must use one of these standard sizes:
 
 ## 30. Component Mapping Additions
 
-Updates to Section 6 — new components discovered in audit:
+Additional components in the current codebase:
 
 | Component | File | DS Tokens Used | Notes |
 |-----------|------|----------------|-------|
-| `MiniCard` | `tiles/MiniCard.tsx` | `DS.textSize.*`, `DS.glowClass.*`, `DS.infoBox` | `shadow-card hover:shadow-soft` for card elevation |
+| `MiniCard` | `tiles/MiniCard.tsx` | None (delegates to `MiniCardContent`) | `shadow-card hover:shadow-soft` for card elevation; DS tokens used in child components |
 | `MiniCardSkeleton` | `tiles/MiniCard.tsx` | Custom skeleton colors | `bg-zinc-200/50 dark:bg-zinc-700/50` |
-| `TileDetailsModal` | `tiles/TileDetailsModal.tsx` | `DS.actions.primary`, `DS.text.*` | `shadow-card` for modal container; primary CTA label adapts by deeplink provider (`Book on Viator` / `Book on GYG` vs Google travel/maps copy) |
-| `SuggestionCard` | `plan/tiles/SuggestionCard.tsx` | `DS.textSize.*` | `shadow-card hover:shadow-soft`; provider-aware deeplink pill (`Map` for map links, `Book` + `ExternalLink` for Viator/GYG) |
+| `TileDetailsModal` | `tiles/TileDetailsModal.tsx` | None (raw patterns) | `shadow-card` for modal container; primary CTA label adapts by deeplink provider (`Book on Viator` / `Book on GYG` vs Google travel/maps copy) |
+| `SuggestionCard` | `plan/tiles/SuggestionCard.tsx` | None (delegates to children) | `shadow-card hover:shadow-soft`; child `suggestionCardSections.tsx` uses `DS.textSize.micro`, `DS.actions.primary` |
 | `CategorySection` | `plan/booking/CategorySection.tsx` | `DS.textSize.micro` | `shadow-card hover:shadow-soft` for accordion card |
 | `CheckoutSidebar` | `plan/booking/CheckoutSidebar.tsx` | None | `shadow-card` for summary card |
-| `StrategyHero` | `plan/stages/StrategyHero.tsx` | `DS.text.*`, `DS.infoBox` | Specialist colors from `SPECIALIST_STYLE_CLASSES` map (in `StrategyHeroUtils.tsx`) |
-| `ActivityMiniCard` | `plan/timeline/blocks/ActivityMiniCard.tsx` | `DS.textSize.*` | `hover:shadow-soft` for card hover; default card uses a full-width landscape banner plus metadata/action row, and the row stacks on narrow screens to prevent CTA overflow |
-| `UnifiedChipRow` | `plan/UnifiedChipRow.tsx` | `DS.textSize.*` | Constraint chips; disabled: `opacity-50 cursor-not-allowed` |
-| `MobileModeHeader` | `layout/MobileModeHeader.tsx` | `DS.textSize.*` | `shadow-card` for status pill; condensed summary bar renders below the fixed header and icon/menu controls use `h-11 w-11` touch targets |
+| `StrategyHero` | `plan/stages/StrategyHero.tsx` | None (orchestrator; delegates to children) | Specialist colors from `SPECIALIST_STYLE_CLASSES` map (in `StrategyHeroUtils.tsx`); child components use `DS.text.*`, `DS.textSize.*`, `DS.infoBox` |
+| `ActivityMiniCard` | `plan/timeline/blocks/ActivityMiniCard.tsx` | None (orchestrator; delegates to `ActivityCardPhoto`, `ActivityCardMeta`, `ActivityCardActions`) | `hover:shadow-soft` for card hover; default card uses a full-width landscape banner plus metadata/action row |
+| `UnifiedChipRow` | `plan/UnifiedChipRow.tsx` | None (uses `SetupCoreChip` with CSS custom properties) | Constraint chips; disabled: `opacity-50 cursor-not-allowed` |
+| `MobileModeHeader` | `layout/MobileModeHeader.tsx` | None (delegates to children) | Condensed summary bar renders below the fixed header; child components (`MobileModeHeaderSections`, `MobileHeaderMenu`) use `DS.textSize.micro` and `h-11 w-11` touch targets |
 | `NextStepBar` | `plan/NextStepBar.tsx` | `DS.text.label`, `DS.textSize.micro`, `DS.glowClass.action` | Command Island; `shadow-card` for status pill, `shadow-soft` for island |
 | `GhostSlot` | `plan/timeline/blocks/GhostSlot.tsx` | None (raw pattern) | Dashed CTA slot; `border-dashed border-zinc-300 dark:border-white/10` |
-| `LogisticsBlock` | `plan/timeline/blocks/LogisticsBlock.tsx` | None (raw pattern) | Flight/transfer block; `dark:bg-zinc-900/50 dark:border-white/[0.08]` glass pattern |
+| `LogisticsBlock` | `plan/timeline/blocks/LogisticsBlock.tsx` | None (raw pattern) | Flight/transfer block; type-specific bg (e.g. `dark:bg-zinc-800/50` for departure/checkout, `dark:bg-emerald-950/20` for arrival, `dark:bg-blue-950/20` for checkin) |
 | `MapErrorBoundary` | `map/MapErrorBoundary.tsx` | None (raw pattern) | Error fallback; `bg-zinc-100 dark:bg-zinc-900 border-zinc-200 dark:border-white/10`, text: `text-zinc-500` |
 | `DragPreviewCard` | `plan/timeline/DragPreviewCard.tsx` | `SPRING_CONFIG.BOUNCE` | Custom elevated shadow; `ring-emerald-500/30` accent ring; see Section 31.6 |
 | `DroppableDay` | `plan/timeline/DroppableDay.tsx` | `SPRING_CONFIG.SLIDE` | Drop zone highlight; `ring-emerald-500/25` when `isOver`; see Section 31.7 |
@@ -2612,22 +2628,22 @@ Updates to Section 6 — new components discovered in audit:
 | `StrategyHeroAccordion` | `plan/stages/StrategyHeroAccordion.tsx` | `DS.textSize.*` | Collapsible accordion variant of StrategyHero; specialist colors via `SPECIALIST_STYLE_CLASSES` (in `StrategyHeroUtils.tsx`) |
 | `S2AgentCard` | `plan/stages/S2AgentCard.tsx` | `DS.textSize.*` | Legacy specialist card with topic CSS vars; `shadow-card` on card, `hover:shadow-soft` on hover |
 | `PlanDensityViews` | `plan/PlanDensityViews.tsx` | None | Loading shell only (`PlanMirrorLoader`); keeps live indicator dot. |
-| `PlanFullDensityView` | `plan/PlanFullDensityView.tsx` | None (raw pattern) | Full-density itinerary layout; subdued toggle pills for Flights/Stays/Travel Intel and sticky desktop map column |
+| `PlanFullDensityView` | `plan/PlanFullDensityView.tsx` | None (orchestrator) | Full-density itinerary layout; section toggle chips use `ModuleChip` (see Section 32.1) and sticky desktop map column |
 | `BookingSummary` | `plan/BookingSummary.tsx` | `DS.materials.glass`, `DS.text.label`, `DS.textSize.micro` | Stage-3-only venue-link summary (stays + activities) rendered below timeline |
-| `TimelineThread` | `plan/TimelineThread.tsx` | `DS.textSize.*` | Day-thread renderer; constraint/status chips with light/dark contrast pairs and unschedulable overlays |
-| `BookingSection` | `plan/BookingSection.tsx` | `DS.textSize.*` | Booking tiles + checkout strip; category segmentation with specialist-aware activity filtering |
+| `TimelineThread` | `plan/TimelineThread.tsx` | None (delegates to children) | Day-thread renderer; constraint/status chips with light/dark contrast pairs and unschedulable overlays |
+| `BookingSection` | `plan/BookingSection.tsx` | None (delegates to children) | Booking tiles + checkout strip; category segmentation with specialist-aware activity filtering |
 | `InlineDatePrompt` | `plan/timeline/InlineDatePrompt.tsx` | `DS.actions.primary` | Inline CTA to set dates within timeline |
 | `ChatStatusHeader` | `chat/ChatStatusHeader.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText` | Desktop status chip rendered above chat with transition-safe chrome |
-| `LandingHeaderContent` | `layout/LandingHeaderContent.tsx` | `DS.materials.glass`, `DS.textSize.micro` | Desktop split-layout header chrome; auth popover, recent trips, and compact TripSummaryPills strip |
-| `MobileHeaderMenu` | `layout/MobileHeaderMenu.tsx` | `DS.textSize.micro`, `DS.materials.glass` | Mobile overflow menu action list; shared menu-item styling inside popover glass shell |
+| `LandingHeaderContent` | `layout/LandingHeaderContent.tsx` | `DS.textSize.micro` | Desktop split-layout header chrome; compact TripSummaryPills strip. Child `LandingHeaderUserMenu` uses `DS.materials.glass` for auth popover |
+| `MobileHeaderMenu` | `layout/MobileHeaderMenu.tsx` | `DS.textSize.micro` | Mobile overflow menu action list; shared menu-item styling |
 | `ChatMessageRenderer` | `chat/ChatMessageRenderer.tsx` | `DS.shadow.bubble`, `DS.shadow.bubbleHover`, `DS.shadow.bubbleWhite` | Chat bubble elevation tokens; `bubbleWhite` remains the single documented dark-mode white-glow exception |
-| `TileDetailsInfo` | `tiles/TileDetailsInfo.tsx` | `DS.textSize.mini` | Metadata strip (distance/ratings/metadata) used by tile cards |
+| `TileDetailsInfo` | `tiles/TileDetailsInfo.tsx` | `DS.textSize.micro` | Metadata strip (distance/ratings/metadata) used by tile cards |
 | `SuggestionCardContent` | `plan/tiles/SuggestionCardContent.tsx` | `DS.textSize.*` | Shared content block for suggestion rendering |
-| `MiniCardContent` | `tiles/MiniCardContent.tsx` | `DS.textSize.*`, `DS.text.accent` | Shared compact tile body renderer with provider-aware deeplink CTA copy |
-| `TileCardContent` | `tiles/TileCardContent.tsx` | `DS.textSize.*`, `DS.actions.smallAction` | Shared booking/tile body renderer with provider-aware deeplink CTA copy |
-| `ActivityCardMeta` | `plan/timeline/blocks/ActivityCardMeta.tsx` | `DS.textSize.micro`, `DS.text.muted` | Activity metadata badges and metadata row formatting; traveler ratings use amber star treatment and live prices switch copy from `~123` to `from 123` when the partner price is authoritative |
-| `ActivityCardActions` | `plan/timeline/blocks/ActivityCardActions.tsx` | `DS.actions.primary`, `DS.text.label` | Action row for activity detail/visit links; partner deeplinks render as booking CTAs instead of map CTAs, shorten to `Book` on mobile, and overlay controls stay visible on touch layouts with `h-11` targets |
-| `ActivityCardPhoto` | `plan/timeline/blocks/ActivityCardPhoto.tsx` | `DS.glowClass.dropText` | Full-width landscape photo banner for `ActivityMiniCard`; signed Google Places proxies now request up to 720px width and the allowlist accepts TripAdvisor plus GetYourGuide CDN hosts |
+| `MiniCardContent` | `tiles/MiniCardContent.tsx` | None (delegates to children) | Shared compact tile body renderer with provider-aware deeplink CTA copy; child components (`MiniCardSummary`, `MiniCardSummaryPricing`, `MiniCardQuickFacts`) use `DS.textSize.micro`, `DS.textSize.mini` |
+| `TileCardContent` | `tiles/TileCardContent.tsx` | `DS.textSize.badgeLabel`, `DS.textSize.priceDisplay` | Shared booking/tile body renderer with provider-aware deeplink CTA copy |
+| `ActivityCardMeta` | `plan/timeline/blocks/ActivityCardMeta.tsx` | `DS.textSize.micro` | Activity metadata badges and metadata row formatting; traveler ratings use amber star treatment and live prices switch copy from `~123` to `from 123` when the partner price is authoritative |
+| `ActivityCardActions` | `plan/timeline/blocks/ActivityCardActions.tsx` | `DS.actions.primary`, `DS.textSize.micro` | Action row for activity detail/visit links; partner deeplinks render as booking CTAs instead of map CTAs, shorten to `Book` on mobile, and overlay controls stay visible on touch layouts with `h-11` targets |
+| `ActivityCardPhoto` | `plan/timeline/blocks/ActivityCardPhoto.tsx` | None (raw pattern) | Full-width landscape photo banner for `ActivityMiniCard`; signed Google Places proxies now request up to 720px width and the allowlist accepts TripAdvisor plus GetYourGuide CDN hosts |
 
 ### Provider-Aware Deeplink Pills
 
@@ -2709,14 +2725,20 @@ The fallback UI displayed when the Mapbox component throws an error.
 
 ### 31.5 Flight/Transfer Timeline Block (LogisticsBlock)
 
-Inline timeline block for flight segments and transfers.
+Inline timeline block for flight segments and transfers. Styling is type-specific:
+
+| Type | Icon Background (Light / Dark) | Border Color |
+|------|-------------------------------|-------------|
+| `arrival` | `bg-emerald-50` / `dark:bg-emerald-950/20` | `border-emerald-500` |
+| `departure` | `bg-zinc-50` / `dark:bg-zinc-800/50` | `border-zinc-400 dark:border-zinc-500` |
+| `checkin` | `bg-blue-50` / `dark:bg-blue-950/20` | `border-blue-500` |
+| `checkout` | `bg-zinc-50` / `dark:bg-zinc-800/50` | `border-zinc-500` |
 
 | Property | Light Mode | Dark Mode |
 |----------|-----------|-----------|
-| Background | `bg-white/60` or `bg-transparent` | `dark:bg-zinc-900/50` |
-| Border | `border border-zinc-200/80` | `dark:border-white/[0.08]` |
-| Icon background | `bg-blue-50` | `dark:bg-blue-950/30` |
-| Icon color | `text-blue-600` | `dark:text-blue-400` |
+| Icon color (arrival) | `text-emerald-600` | `dark:text-emerald-400` |
+| Icon color (checkin) | `text-blue-600` | `dark:text-blue-400` |
+| Icon color (departure/checkout) | `text-zinc-600` | `dark:text-zinc-400` |
 | Label text | `text-xs text-zinc-500` | `dark:text-zinc-400` |
 | Value text | `text-sm font-medium text-zinc-900` | `dark:text-white` |
 
@@ -2787,6 +2809,10 @@ Activity block hover and map POI hover must stay synchronized to maintain spatia
 
 **State source:** `useUIStore.hoveredActivityId` controls hover synchronization.
 
+**Pin palette source:** Marker colors are resolved in `map-marker-config.tsx` from
+`DS.map.flight`, `DS.map.family`, `DS.map.activity`, `DS.map.defaultPin`, and
+`DS.map.browsePin`.
+
 **Map marker interaction classes (MapMarkerItem):**
 ```tsx
 isActive
@@ -2804,36 +2830,19 @@ These patterns appear in production code and are now documented to prevent futur
 
 ---
 
-### 32.1 Subdued Toggle Pills (PlanFullDensityView Row-Two Chips)
+### 32.1 Section Toggle Chips (PlanFullDensityView Row-Two Chips)
 
-Small rounded toggle pills for collapsing/expanding sub-sections (Stays, Flights, Destination Travel Intel). These are NOT selection pills — they toggle visibility, not select a value.
+Toggle chips for collapsing/expanding sub-sections (Stays, Flights, Travel Advice). These use the `ModuleChip` component with standard DS pill patterns, not a separate subdued toggle style.
 
-| Property | Light Mode | Dark Mode |
-|----------|-----------|-----------|
-| Background | `bg-zinc-100` | `dark:bg-white/[0.06]` |
-| Border | `border-zinc-300` | `dark:border-white/15` |
-| Text | `text-zinc-700` | `dark:text-zinc-300` |
-| Hover bg | `hover:bg-zinc-200` | `dark:hover:bg-white/10` |
-| Shape | `h-7 px-2.5 rounded-lg text-sm whitespace-nowrap` | Same |
-| Transition | `transition-colors` | Same |
+| State | Light Mode | Dark Mode |
+|-------|-----------|-----------|
+| Off (inactive) | `bg-white border-2 border-zinc-200 text-zinc-400` | `dark:bg-white/5 dark:border-white/15 dark:text-zinc-500` |
+| On (active) | `bg-zinc-900 text-white border-2 border-transparent` | `dark:bg-white dark:text-black dark:border-transparent` |
+| Shape | `h-9 px-4 rounded-full` (desktop), `h-11 px-5` (mobile) | Same |
 
-**Rule:** Border must be `dark:border-white/15` (not `/10`) to meet Tactile Rule. Use `h-7` for consistent row height across collapsible toggles.
-**Interaction Rule (Hard):** Row-two pills are mutually exclusive with no exceptions. Opening one (`Flights`, `Stays`, `Travel Advice`) must close the other two first. Only one row-two panel can be open at any time.
+**Interaction Rule (Hard):** Row-two panels are mutually exclusive with no exceptions. Opening one (`Flights`, `Stays`, `Travel Advice`) must close the other two first. Only one row-two panel can be open at any time. State managed via `panelToggleStore`.
 
-```tsx
-<button
-  className={cn(
-    'inline-flex h-7 items-center gap-1.5 rounded-lg border px-2.5 text-sm whitespace-nowrap transition-colors',
-    'border-zinc-300 dark:border-white/15 bg-zinc-100 dark:bg-white/[0.06]',
-    'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-white/10',
-  )}
->
-  🏨 Stays (3)
-  <ChevronDown className={cn('w-3 h-3 transition-transform', isExpanded && 'rotate-180')} />
-</button>
-```
-
-**Implementation:** `frontend/components/plan/PlanFullDensityView.tsx`
+**Implementation:** `frontend/components/plan/ModuleChip.tsx`, toggled via `frontend/state/panelToggleStore.ts`
 
 ---
 
@@ -2934,7 +2943,7 @@ Status key:
 | `FloatingBuildButton` | `layout/FloatingBuildButton.tsx` | `DS.glowClass.elevated/elevatedHover`; z-index follows Section 28 (`z-[900]`) | Provisional |
 | `LandingSheets` | `layout/LandingSheets.tsx` | Sheet router only; styling delegated to mapped sheet components | Non-Visual |
 | `InteractiveMap` | `map/InteractiveMap.tsx` | Base layer at map tier (`z-0`); map overlays/controls follow Section 28 exceptions | Provisional |
-| `MapMarkerItem` | `map/MapMarkerItem.tsx` | `DS.textSize.mapMarkerLabel`, `DS.textSize.mini`; marker tooltip allowed `z-[9999]` exception | Provisional |
+| `MapMarkerItem` | `map/MapMarkerItem.tsx` | `DS.map.*`, `DS.textSize.mapMarkerLabel`, `DS.textSize.mini`; marker tooltip allowed `z-[9999]` exception | Provisional |
 | `MapboxErrorSuppressor` | `map/MapboxErrorSuppressor.tsx` | Error suppression utility; no direct style surface | Non-Visual |
 | `legal-page` | `nomadic/legal-page.tsx` | Legal prose component remains on shadcn/prose tokens (Section 6 out-of-scope note) | Out-of-Scope |
 | `Providers` | `providers/Providers.tsx` | Context provider wrapper; no visual surface | Non-Visual |
@@ -2946,7 +2955,7 @@ Status key:
 | `BookingPlanningView` | `plan/BookingPlanningView.tsx` | Planning-mode surfaces should use zinc/emerald pairs and DS micro typography (`DS.textSize.*`) | Provisional |
 | `ChipGroup` | `plan/ChipGroup.tsx` | Chip text uses `DS.textSize.micro`; selected/inactive chips follow DS tactile pill rules | Provisional |
 | `ChipScrollContainer` | `plan/ChipScrollContainer.tsx` | Horizontal chip rail rule from Section 11/12 (`no vertical wrap`, edge bleed) | Provisional |
-| `FullDensityTimeline` | `plan/FullDensityTimeline.tsx` | Subdued toggle pills must follow Section 32.1 visual contract | Provisional |
+| `FullDensityTimeline` | `plan/FullDensityTimeline.tsx` | Mobile inline map shell and timeline spacing must stay aligned with the `ModuleChip`/panel-toggle layout defined in Section 32.1 | Provisional |
 | `ItineraryProgressIndicator` | `plan/ItineraryProgressIndicator.tsx` | State/severity colors align with Section 24 and Section 4 restricted color usage | Provisional |
 | `OriginPromptCard` | `plan/OriginPromptCard.tsx` | CTA hierarchy should use `DS.actions.primary` and DS text label/body patterns | Provisional |
 | `PlanTimelineSection` | `plan/PlanTimelineSection.tsx` | Timeline loading states follow Section 26 skeleton standards and spacing tiers | Provisional |

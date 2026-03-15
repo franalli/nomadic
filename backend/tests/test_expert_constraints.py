@@ -2,7 +2,7 @@
 Unit tests for expert_constraints.py — Pydantic models and constraint data.
 
 Tests:
-- LOCAL_EXPERT_CONSTRAINTS data integrity (all entries well-formed)
+- LOCAL_EXPERT_CONSTRAINTS remains destination-agnostic
 - _get_constraint_context() prompt formatting
 - _get_constraints_as_list() raw constraint retrieval
 - _get_static_must_dos() deprecated (always returns [])
@@ -10,6 +10,9 @@ Tests:
 """
 
 from __future__ import annotations
+
+import importlib
+from pathlib import Path
 
 from app.planner.nodes.expert_constraints import (
     LOCAL_EXPERT_CONSTRAINTS,
@@ -33,67 +36,27 @@ from app.planner.nodes.expert_constraints import (
     _get_static_must_dos,
 )
 
-# =============================================================================
-# Data integrity for LOCAL_EXPERT_CONSTRAINTS
-# =============================================================================
+_le_mod = importlib.import_module("app.planner.nodes.local_expert")
+_LOCAL_EXPERT_PROMPT = (
+    Path(__file__).resolve().parent.parent / "app" / "prompts" / "specialists" / "local_expert.txt"
+)
+
+
+def _schema_contains_key(node: object, key: str) -> bool:
+    if isinstance(node, dict):
+        if key in node:
+            return True
+        return any(_schema_contains_key(value, key) for value in node.values())
+    if isinstance(node, list):
+        return any(_schema_contains_key(item, key) for item in node)
+    return False
 
 
 class TestConstraintDataIntegrity:
-    """All entries in LOCAL_EXPERT_CONSTRAINTS must be well-formed."""
+    """Static local-expert helpers must not embed destination world data."""
 
-    VALID_SEVERITY = {"warning", "info"}
-    VALID_TYPES = {
-        "cultural",
-        "seasonal",
-        "safety",
-        "transport",
-        "booking_window",
-        "opening_hours",
-        "general",
-    }
-
-    def test_all_keys_are_lowercase(self) -> None:
-        for key in LOCAL_EXPERT_CONSTRAINTS:
-            assert key == key.lower(), f"Key {key!r} should be lowercase"
-
-    def test_all_entries_have_constraints(self) -> None:
-        for key, entry in LOCAL_EXPERT_CONSTRAINTS.items():
-            assert "constraints" in entry, f"{key} missing 'constraints'"
-            assert isinstance(entry["constraints"], list)
-            assert len(entry["constraints"]) > 0, f"{key} has empty constraints"
-
-    def test_no_entries_have_must_dos(self) -> None:
-        """must_dos have been removed from all entries."""
-        for key, entry in LOCAL_EXPERT_CONSTRAINTS.items():
-            assert "must_dos" not in entry, f"{key} should not have 'must_dos'"
-
-    def test_constraint_fields_valid(self) -> None:
-        for key, entry in LOCAL_EXPERT_CONSTRAINTS.items():
-            for i, c in enumerate(entry["constraints"]):
-                assert "type" in c, f"{key} constraint[{i}] missing 'type'"
-                assert "desc" in c, f"{key} constraint[{i}] missing 'desc'"
-                assert "severity" in c, f"{key} constraint[{i}] missing 'severity'"
-
-                assert c["severity"] in self.VALID_SEVERITY, (
-                    f"{key} constraint[{i}] has invalid severity: {c['severity']!r}"
-                )
-                assert c["type"] in self.VALID_TYPES, (
-                    f"{key} constraint[{i}] has invalid type: {c['type']!r}"
-                )
-                assert len(c["desc"]) > 10, f"{key} constraint[{i}] desc too short: {c['desc']!r}"
-
-    def test_entries_only_have_constraints_key(self) -> None:
-        """After must_dos removal, entries should only contain 'constraints'."""
-        for key, entry in LOCAL_EXPERT_CONSTRAINTS.items():
-            assert set(entry.keys()) == {"constraints"}, (
-                f"{key} has unexpected keys: {set(entry.keys())}"
-            )
-
-    def test_known_destinations_present(self) -> None:
-        expected = {"paris", "tokyo", "bali", "london", "rome", "dubai"}
-        actual = set(LOCAL_EXPERT_CONSTRAINTS.keys())
-        missing = expected - actual
-        assert not missing, f"Missing expected destinations: {missing}"
+    def test_destination_constraint_table_is_empty(self) -> None:
+        assert LOCAL_EXPERT_CONSTRAINTS == {}
 
 
 # =============================================================================
@@ -102,34 +65,10 @@ class TestConstraintDataIntegrity:
 
 
 class TestGetConstraintContext:
-    def test_known_destination_returns_context(self) -> None:
-        result = _get_constraint_context("Bali")
-        assert result != ""
-        assert "Known constraints" in result
-        assert "Bali" in result
-
-    def test_case_insensitive_lookup(self) -> None:
-        result = _get_constraint_context("PARIS")
-        assert result != ""
-        assert "Paris" in result or "PARIS" in result
-
-    def test_unknown_destination_returns_empty(self) -> None:
-        result = _get_constraint_context("Atlantis")
-        assert result == ""
-
-    def test_severity_tags_present(self) -> None:
-        result = _get_constraint_context("Bali")
-        assert "[WARNING]" in result or "[INFO]" in result
-
-    def test_partial_match_works(self) -> None:
-        """'New York City' should match 'new york' key."""
-        result = _get_constraint_context("New York City")
-        assert result != ""
-        assert "constraint" in result.lower() or "Known" in result
-
-    def test_whitespace_handling(self) -> None:
-        result = _get_constraint_context("  tokyo  ")
-        assert result != ""
+    def test_returns_empty_for_any_destination(self) -> None:
+        assert _get_constraint_context("Bali") == ""
+        assert _get_constraint_context("PARIS") == ""
+        assert _get_constraint_context("New York City") == ""
 
 
 # =============================================================================
@@ -138,23 +77,11 @@ class TestGetConstraintContext:
 
 
 class TestGetConstraintsAsList:
-    def test_returns_list_of_dicts(self) -> None:
-        result = _get_constraints_as_list("Dubai")
-        assert isinstance(result, list)
-        assert len(result) > 0
-        for c in result:
-            assert isinstance(c, dict)
-            assert "type" in c
-            assert "desc" in c
+    def test_returns_empty_for_known_destination(self) -> None:
+        assert _get_constraints_as_list("Dubai") == []
 
     def test_unknown_returns_empty_list(self) -> None:
-        result = _get_constraints_as_list("Narnia")
-        assert result == []
-
-    def test_matches_source_data(self) -> None:
-        result = _get_constraints_as_list("paris")
-        source = LOCAL_EXPERT_CONSTRAINTS["paris"]["constraints"]
-        assert len(result) == len(source)
+        assert _get_constraints_as_list("Narnia") == []
 
 
 # =============================================================================
@@ -283,3 +210,41 @@ class TestPydanticModels:
         assert len(output.constraints) == 1
         assert output.constraints[0].severity == "warning"
         assert len(output.quick_tips) == 2
+
+
+class TestLocalExpertStructuredOutputContract:
+    def test_flat_schema_has_no_defs_or_refs(self) -> None:
+        schema = _le_mod._LOCAL_EXPERT_FLAT_SCHEMA
+        assert "$defs" not in schema
+        assert not _schema_contains_key(schema, "$ref")
+
+
+class TestLocalExpertPromptContract:
+    def test_prompt_avoids_removed_json_keys(self) -> None:
+        prompt = _LOCAL_EXPERT_PROMPT.read_text()
+        for removed_key in (
+            "visa_free_for",
+            "street_food_safe",
+            "public_transit",
+            "scooter_rental",
+            "avoid_months",
+            "day_trips",
+            "hidden_gems",
+            "tourist_traps",
+            "buy_locally",
+            "clothing_tips",
+        ):
+            assert f'"{removed_key}"' not in prompt
+
+    def test_prompt_mentions_current_schema_fields(self) -> None:
+        prompt = _LOCAL_EXPERT_PROMPT.read_text()
+        for current_key in (
+            "passport_validity_months",
+            "traffic_note",
+            "important_taboos",
+            "book_ahead",
+            "constraints",
+            "recommendations",
+            "quick_tips",
+        ):
+            assert f'"{current_key}"' in prompt

@@ -166,7 +166,7 @@ export function AlternativesModal({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto bg-white dark:bg-zinc-900">
         <ModalErrorBoundary>
-        <SheetHeader className="border-b border-zinc-200 dark:border-zinc-700/50 pb-4">
+        <SheetHeader className="border-b border-zinc-200 dark:border-white/10 pb-4">
           <SheetTitle className="text-zinc-900 dark:text-zinc-100">
             Change {category}
           </SheetTitle>
@@ -180,7 +180,7 @@ export function AlternativesModal({
               <p className="text-xs text-zinc-500 dark:text-zinc-400 uppercase tracking-wide font-medium">
                 Current Selection
               </p>
-              <div className="flex gap-3 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
+              <div className="flex gap-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
                 {/* Thumbnail */}
                 <div className="relative w-16 h-16 rounded-lg overflow-hidden flex-shrink-0">
                   <TileThumbnail tile={currentTile} size="64px" />
@@ -259,10 +259,10 @@ export function AlternativesModal({
                       onClick={() => !isCurrentlySelected && onSelect(alt)}
                       disabled={isCurrentlySelected}
                       className={cn(
-                        'w-full flex gap-3 p-3 rounded-xl text-left transition-colors',
+                        'w-full flex gap-4 p-3 rounded-xl text-left transition-colors',
                         isCurrentlySelected
                           ? 'bg-zinc-50 dark:bg-zinc-800/30 opacity-50 cursor-not-allowed'
-                          : 'bg-zinc-100 dark:bg-zinc-800/50 hover:bg-zinc-200 dark:hover:bg-zinc-700/50 border border-zinc-200 dark:border-zinc-700/30 hover:border-zinc-300 dark:hover:border-zinc-600/50'
+                          : 'bg-zinc-100 dark:bg-zinc-800/50 hover:bg-zinc-200 dark:hover:bg-zinc-700/50 border border-zinc-200 dark:border-white/10/30 hover:border-zinc-300 dark:hover:border-zinc-600/50'
                       )}
                     >
                       {/* Thumbnail */}

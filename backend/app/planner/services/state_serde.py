@@ -11,7 +11,10 @@ Extracted from plan_graph.py (Stage 7, Phase 1).
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
+import zlib
 from typing import Any, Dict, Optional
 
 from langchain_core.messages import (
@@ -330,11 +333,11 @@ _SESSION_BOOKED_TILE_KEYS = {
     "live_price",
     "currency",
     "price_basis",
-    "image_url",
-    "geo",
     "deeplink",
     "is_estimate_only",
     "provider",
+    "rating",
+    "review_count",
 }
 
 _SESSION_BROWSEABLE_KEYS = {
@@ -377,6 +380,197 @@ _TRAVEL_INTEL_KEEP = {
     "best_time",
     "health_notes",
 }
+
+_SESSION_STATE_SOFT_BYTES = 51200
+_SESSION_STATE_MAX_BYTES = 65536
+_SESSION_COMPRESSED_TILES_KEY = "_compressed_tiles"
+_SESSION_BROWSEABLE_TARGETS = (5, 3, 1)
+_SESSION_BOOKED_TILE_BUDGET_KEYS = _SESSION_BOOKED_TILE_KEYS
+_SESSION_TILE_BUDGET_DROP_STAGES = (
+    {"tags", "availability_status"},
+    {"image_url"},
+    {"geo"},
+)
+
+
+def _serialized_size(value: Any) -> int:
+    return len(json.dumps(value, default=str))
+
+
+def _compress_session_value(value: Any) -> str:
+    raw = json.dumps(value, separators=(",", ":"), default=str).encode("utf-8")
+    return base64.b64encode(zlib.compress(raw, level=9)).decode("ascii")
+
+
+def _decompress_session_value(value: str) -> Any:
+    raw = zlib.decompress(base64.b64decode(value.encode("ascii")))
+    return json.loads(raw.decode("utf-8"))
+
+
+def _compressed_tiles_state(
+    state: Dict[str, Any],
+    tiles_payload: Dict[str, Any],
+    max_bytes: int = _SESSION_STATE_MAX_BYTES,
+) -> Optional[Dict[str, Any]]:
+    compressed_state = dict(state)
+    compressed_state[_SESSION_COMPRESSED_TILES_KEY] = _compress_session_value(tiles_payload)
+    compressed_state["tiles"] = {}
+    if _serialized_size(compressed_state) <= max_bytes:
+        return compressed_state
+    return None
+
+
+def _apply_session_state_budget(
+    state: Dict[str, Any],
+    max_bytes: int = _SESSION_STATE_MAX_BYTES,
+) -> Dict[str, Any]:
+    """Keep serialized session_state under the requested byte budget."""
+    size = _serialized_size(state)
+    if size <= max_bytes:
+        return state
+
+    original_tiles = state.get("tiles") if isinstance(state.get("tiles"), dict) else None
+    if original_tiles:
+        compressed_state = _compressed_tiles_state(state, original_tiles, max_bytes=max_bytes)
+        if compressed_state is not None:
+            return compressed_state
+
+    day_cards = state.get("day_cards")
+    if isinstance(day_cards, list):
+        trimmed_cards = []
+        for card in day_cards:
+            if not isinstance(card, dict):
+                trimmed_cards.append(card)
+                continue
+            slim_card = {
+                "day_number": card.get("day_number"),
+                "date": card.get("date"),
+                "label": card.get("label"),
+            }
+            blocks = card.get("blocks")
+            if isinstance(blocks, list):
+                slim_blocks = []
+                for block in blocks:
+                    if not isinstance(block, dict):
+                        slim_blocks.append(block)
+                        continue
+                    slim_block = {
+                        "id": block.get("id"),
+                        "period": block.get("period"),
+                        "activity_type": block.get("activity_type"),
+                        "specialist_type": block.get("specialist_type"),
+                        "is_buffer": block.get("is_buffer"),
+                        "buffer_type": block.get("buffer_type"),
+                    }
+                    if "summary" in block:
+                        slim_block["summary"] = block["summary"]
+                    booked_tile = block.get("booked_tile")
+                    if isinstance(booked_tile, dict):
+                        slim_block["booked_tile"] = {
+                            k: v
+                            for k, v in booked_tile.items()
+                            if k in _SESSION_BOOKED_TILE_BUDGET_KEYS
+                        }
+                    elif booked_tile is not None:
+                        slim_block["booked_tile"] = booked_tile
+                    slim_blocks.append(slim_block)
+                slim_card["blocks"] = slim_blocks
+            trimmed_cards.append(slim_card)
+        state["day_cards"] = trimmed_cards
+        size = _serialized_size(state)
+        if size <= max_bytes:
+            return state
+
+        # Keep the block shell but drop narrative summaries before touching tiles.
+        compact_cards = []
+        for card in trimmed_cards:
+            if not isinstance(card, dict):
+                compact_cards.append(card)
+                continue
+            compact_card = dict(card)
+            blocks = compact_card.get("blocks")
+            if isinstance(blocks, list):
+                compact_card["blocks"] = [
+                    {k: v for k, v in block.items() if k != "summary"}
+                    if isinstance(block, dict)
+                    else block
+                    for block in blocks
+                ]
+            compact_cards.append(compact_card)
+        state["day_cards"] = compact_cards
+        size = _serialized_size(state)
+        if size <= max_bytes:
+            return state
+
+        # Document hydration restores full day_cards on the next turn, so
+        # dropping the persisted snapshot is safer than trimming the tile catalog.
+        state["day_cards"] = []
+        size = _serialized_size(state)
+        if size <= max_bytes:
+            return state
+
+    if original_tiles:
+        compressed_state = _compressed_tiles_state(state, original_tiles, max_bytes=max_bytes)
+        if compressed_state is not None:
+            return compressed_state
+
+    pm = state.get("persistent_meta")
+    if isinstance(pm, dict):
+        pm = dict(pm)
+        state["persistent_meta"] = pm
+        browseable = pm.get("browseable_activities")
+        if isinstance(browseable, list):
+            for keep in _SESSION_BROWSEABLE_TARGETS:
+                if keep and len(browseable) <= keep:
+                    continue
+                pm["browseable_activities"] = browseable[:keep] if keep else []
+                size = _serialized_size(state)
+                if size <= max_bytes:
+                    return state
+                if original_tiles:
+                    compressed_state = _compressed_tiles_state(
+                        state,
+                        original_tiles,
+                        max_bytes=max_bytes,
+                    )
+                    if compressed_state is not None:
+                        return compressed_state
+
+    tiles = state.get("tiles")
+    if isinstance(tiles, dict):
+        compact_tiles = tiles
+        for drop_keys in _SESSION_TILE_BUDGET_DROP_STAGES:
+            next_tiles: Dict[str, Any] = {}
+            for cat_key, tile_list in compact_tiles.items():
+                if not isinstance(tile_list, list):
+                    next_tiles[cat_key] = tile_list
+                    continue
+                slim_list = []
+                for tile in tile_list:
+                    if not isinstance(tile, dict):
+                        continue
+                    slim_tile = {k: v for k, v in tile.items() if k not in drop_keys}
+                    if "meta" in slim_tile and isinstance(slim_tile["meta"], dict):
+                        slim_tile["meta"] = {
+                            k: v
+                            for k, v in slim_tile["meta"].items()
+                            if k in _SESSION_TILE_META_KEYS
+                        }
+                    slim_list.append(slim_tile)
+                next_tiles[cat_key] = slim_list
+            state["tiles"] = next_tiles
+            compact_tiles = next_tiles
+            size = _serialized_size(state)
+            if size <= max_bytes:
+                return state
+            compressed_state = _compressed_tiles_state(state, compact_tiles, max_bytes=max_bytes)
+            if compressed_state is not None:
+                return compressed_state
+
+    if size > max_bytes and max_bytes >= _SESSION_STATE_MAX_BYTES:
+        logger.warning("session_state still exceeds 64KB after budget trim: %s bytes", size)
+
+    return state
 
 
 def _trim_for_session_state(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -480,6 +674,9 @@ def _trim_for_session_state(state: Dict[str, Any]) -> Dict[str, Any]:
             "content_added",
             "gallery_images",
             "hero_image",
+            "destination_gallery",
+            "vibe_trio",
+            "local_expert_enrichment",
         }
         state["strategy_sections"] = [
             {k: v for k, v in sec.items() if k not in _SECTION_DROP}
@@ -519,20 +716,17 @@ def _trim_for_session_state(state: Dict[str, Any]) -> Dict[str, Any]:
             trimmed_sp[topic] = slim
         state["specialist_plans"] = trimmed_sp
 
-    # 6. Progressive trim: drop browseable_activities if state is still large
-    # 6. Progressive trim: drop browseable_activities if state is large
-    import json as _json_sizecheck
+    state = _apply_session_state_budget(state, max_bytes=_SESSION_STATE_SOFT_BYTES)
+    state = _apply_session_state_budget(state)
 
     try:
-        _size = len(_json_sizecheck.dumps(state, default=str))
-        if _size > 51200:  # 50KB threshold
-            pm = state.get("persistent_meta")
-            if isinstance(pm, dict) and "browseable_activities" in pm:
-                ba = pm["browseable_activities"]
-                if isinstance(ba, list) and len(ba) > 10:
-                    pm["browseable_activities"] = ba[:10]
+        _size = _serialized_size(state)
+        if _size > _SESSION_STATE_SOFT_BYTES:
+            logger.warning(
+                "session_state approaching 64KB limit during serialization: %s bytes", _size
+            )
     except Exception as exc:
-        logger.debug("Progressive trim size check failed: %s", exc)
+        logger.debug("Session-state size check failed: %s", exc)
 
     return state
 
@@ -547,6 +741,17 @@ def restore_agent_state(session_state: Optional[Dict[str, Any]]) -> Dict[str, An
     if not session_state:
         logger.debug("restore_agent_state: no session_state, returning defaults")
         return {**_agent_state_defaults(), "messages": []}
+
+    if not session_state.get("tiles") and isinstance(
+        session_state.get(_SESSION_COMPRESSED_TILES_KEY), str
+    ):
+        try:
+            session_state = dict(session_state)
+            session_state["tiles"] = _decompress_session_value(
+                session_state[_SESSION_COMPRESSED_TILES_KEY]
+            )
+        except Exception as exc:
+            logger.warning("Failed to restore compressed session tiles: %s", exc)
 
     # Restore messages -- single-pass to preserve interleaved order
     raw_messages = session_state.get("messages", [])

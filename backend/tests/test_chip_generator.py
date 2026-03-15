@@ -172,6 +172,20 @@ class TestPostItinerary:
         messages = [c["message"].lower() for c in chips]
         assert any("browse" in m or "activit" in m for m in messages)
 
+    def test_browse_activities_chip_present_without_categories(self) -> None:
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+            trip_settings={"activity_settings": {"categories": []}},
+            day_cards=[{"day": 1}],
+        )
+        chips = _generate_chips_from_state(state)
+        messages = [c["message"].lower() for c in chips]
+        assert any("browse" in m or "activit" in m for m in messages)
+
     def test_no_origin_suggests_departure(self) -> None:
         state = _make_state(
             trip_plan={

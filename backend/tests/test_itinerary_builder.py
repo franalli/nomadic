@@ -1949,3 +1949,48 @@ class TestPhase56SpecialistExclusion:
 
         # Manta Point placed by Phase 5 (specialist path), not duplicated by 5.6
         assert manta_count <= 1, f"Manta Point placed {manta_count} times (expected <= 1)"
+
+    def test_pure_tier1_backfill_survives_active_category_filter(
+        self,
+        builder: ItineraryBuilder,
+    ) -> None:
+        """Pure Tier 1 trips should still use tagged logistics backfill on reserved free days."""
+        inp = ItineraryBuilderInput(
+            start_date="2024-03-15",
+            end_date="2024-03-19",
+            activity_categories=["hiking"],
+            strategy_sections=[
+                {
+                    "specialist_type": "hiking",
+                    "content_added": [
+                        {"title": "Summit Trail", "duration_hours": 4.0},
+                        {"title": "Forest Loop", "duration_hours": 3.0},
+                        {"title": "River Walk", "duration_hours": 2.5},
+                    ],
+                    "constraints_applied": [],
+                }
+            ],
+            tiles={
+                "backfill_1": {
+                    "id": "backfill_1",
+                    "type": "activity",
+                    "title": "Temple Visit",
+                    "source_agent": "logistics_node",
+                    "meta": {
+                        "category": "temples",
+                        "duration_hours": 2.0,
+                        "is_backfill": True,
+                    },
+                }
+            },
+            destination="Kyoto",
+        )
+
+        result = builder.build(inp)
+
+        assert result.success
+        backfill_days = [
+            day for day in result.day_cards if any(block.id == "backfill_1" for block in day.blocks)
+        ]
+        assert len(backfill_days) == 1
+        assert not any(block.activity_type == "free_day" for block in backfill_days[0].blocks)

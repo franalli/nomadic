@@ -18,7 +18,7 @@ Use `backend/.venv` (e.g. `backend/.venv/bin/python`, `backend/.venv/bin/pytest`
 # Nomadic Backend Specialist
 
 Backend engineer for a coordinator-driven travel planning engine.
-Python 3.12 / FastAPI / SQLAlchemy / LangGraph / LangChain (OpenAI + Gemini).
+Python 3.12 / FastAPI / SQLAlchemy / LangChain (OpenAI + Gemini).
 
 ## MANDATORY: Read Before Writing Code
 
@@ -69,7 +69,8 @@ backend/app/
                        experience_generator.py, regen_strategy.py, itinerary_builder.py,
                        unsplash.py, unsplash_queries.py, task_tracker.py, activity_browser.py,
                        viator_provider.py, gyg_provider.py, partner_enrichment.py,
-                       circuit_breaker.py, spend_guard.py, sharing.py
+                       circuit_breaker.py, spend_guard.py, sharing.py,
+                       aviasales_provider.py, activity_category_conflicts.py
   tile_service/      → curated_provider.py, mock_provider.py,
                        google_places_provider.py, provider_base.py, service.py,
                        models.py, title_utils.py
@@ -111,16 +112,18 @@ All keywords, constraints, cross-domain blocks, aliases, feasibility flags come 
 `regen_strategy.py` maps field changes to minimum regen tier: `FULL` (destination) → `SPECIALISTS` (dates/categories) → `LOGISTICS` (budget/travelers) → `BUILDER` (origin/preferences).
 `GENERATE_PLAN_NOW` reuses existing strategy/tiles only when full-invalidating fields are unchanged. If `activity_categories` changed, coordinator must still clear planning artifacts and re-dispatch specialists before rebuild.
 `execute_turn()` now previews `plan_turn()` before geographic feasibility prechecks. True response-only no-op turns skip feasibility I/O entirely, and `_should_clear_planning_artifacts()` prevents full-invalidation turns from wiping derived planning data unless the turn actually changed relevant fields.
+Coordinator also records explicit flight disables in `persistent_meta["user_disabled_booking_types"]`; no-fly/activity refreshes may still fetch flight data, but `allow_flight_auto_upgrade` must stay false on those turns so logistics does not silently re-enable flights.
 
 ### State Serialization
 
-`state_serde.py`: `serialize_agent_state()` now trims persisted runtime state under a 64KB ceiling via `_trim_for_session_state()` without mutating live planner structures. If you change session-state shape, keep the trim path, restore path, and envelope/document hydration consistent. `typed_meta.py`: `get_trip_settings(state)` → typed `TripSettings`. `TurnMeta` / `PersistentMeta` for per-turn vs cross-turn metadata.
+`state_serde.py`: `serialize_agent_state()` now trims persisted runtime state under a 64KB ceiling via `_trim_for_session_state()` without mutating live planner structures, and can compress oversized tile catalogs into `_compressed_tiles` for `restore_agent_state()` to rehydrate before later runtime/document restores. If you change session-state shape, keep the trim path, compression path, restore path, and envelope/document hydration consistent. `typed_meta.py`: `get_trip_settings(state)` → typed `TripSettings`. `TurnMeta` / `PersistentMeta` for per-turn vs cross-turn metadata.
 `_migrate_legacy_agent_fields()` intentionally excludes `activity_settings` from the legacy trip-settings backfill. Re-copying merged `trip_inputs.activity_settings` into `metadata["trip_settings"]` breaks post-refresh category diff detection and causes stale specialist reuse on the next `GENERATE_PLAN_NOW`.
 Trimmed session payloads must preserve reload-safe partner fields on activity and browse tiles (`partner`, `partner_product_id`, `source`, `source_agent`, `provider`, `live_price`, `price_basis`, `is_estimate_only`, plus browse `rating`/`review_count`). Do not “optimize” those fields away without checking reload and booking-card hydration paths.
 
 ### Partner Providers
 
 `viator_provider.py` and `gyg_provider.py` are live affiliate integrations with client reuse, in-memory caches, and circuit breakers. Viator matching now uses normalized title variants plus anchor-token overlap scoring, and `_NO_MATCH` is only negative-cached when destination resolution and all freetext queries were definitive. Do not reintroduce transient-failure negative caching.
+`partner_enrichment.py` now also rejects partner matches whose coordinates land >120km from the source tile when both sides expose geo data. Do not remove that geo-compatibility gate without checking false-positive booking merges first.
 Partner provider modules no longer reserve spend guard budget inline before every request. If cost-control behavior changes, treat it as an explicit architecture change and verify the replacement path rather than re-adding ad-hoc provider-local guards.
 
 ### LLM Factory

@@ -100,7 +100,7 @@ function OriginSheetInner({
       title="Origin"
       hint="Where are you departing from?"
       footer={
-        <div className="flex gap-3">
+        <div className="flex gap-2">
           <button
             type="button"
             onClick={() => onOpenChange(false)}
@@ -162,7 +162,7 @@ function OriginSheetInner({
         {/* Recent origins */}
         {recentOrigins.length > 0 && (
           <div>
-            <h3 className={cn(DS.text.label, 'mb-3')}>
+            <h3 className={cn(DS.text.label, 'mb-2')}>
               Recent
             </h3>
             <div className="flex flex-wrap gap-2">
@@ -194,7 +194,7 @@ function OriginSheetInner({
 
         {/* Popular origins */}
         <div>
-          <h3 className={cn(DS.text.label, 'mb-3')}>
+          <h3 className={cn(DS.text.label, 'mb-2')}>
             Major hubs
           </h3>
           <div className="flex flex-wrap gap-2">

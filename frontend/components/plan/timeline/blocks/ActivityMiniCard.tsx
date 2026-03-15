@@ -196,11 +196,11 @@ export function ActivityMiniCard({
     <div className="flex flex-col gap-1.5" data-block-id={block.id}>
       <div
         className={cn(
-          'group relative flex flex-col gap-3 p-3 rounded-xl border border-l-4 transition-colors duration-150',
+          'group relative flex flex-col gap-2 p-3 rounded-xl border border-l-4 transition-colors duration-150',
           isUnschedulable
             ? 'bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/40'
             : isHighlighted
-              ? 'bg-zinc-700/70 border-emerald-500/40 shadow-lg shadow-emerald-500/10'
+              ? 'bg-zinc-700/70 border-emerald-500/40 shadow-soft'
               : 'bg-white dark:bg-zinc-800/50 hover:shadow-soft',
           activityBorderClass,
           activityGlowClass,
@@ -215,7 +215,7 @@ export function ActivityMiniCard({
         />
 
         {/* Content + Actions row */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
           {/* Content: rating, price, duration, badges, description */}
           <ActivityCardMeta
             block={block}

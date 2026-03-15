@@ -7,8 +7,8 @@ description: >
   pill chips, timeline blocks, tile cards, Framer Motion, Mapbox, mobile layout,
   ghost timeline, content policy guard, loader states, fill-day flow,
   preference auto-regen, stream parser, browse activities, booking drawer,
-  panel toggles,
-  undo stack, drag-and-drop, travel intelligence, consent/legal, booking summary,
+  message pipeline, header actions, local-expert polling,
+  undo stack, drag-and-drop, travel intelligence, destination intel, panel toggles, consent/legal, booking summary,
   shared trip, auth callback, oauth, user menu, user store, avatar, theme mode constants,
   or any file under frontend/.
 tools: Read, Write, Edit, Bash, Glob, Grep

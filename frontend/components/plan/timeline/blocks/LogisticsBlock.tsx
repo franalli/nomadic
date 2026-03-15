@@ -120,7 +120,7 @@ export function LogisticsBlock({
   return (
     <div
       className={cn(
-        'group relative flex items-center gap-3 p-3 rounded-lg border-l-4',
+        'group relative flex items-center gap-4 p-3 rounded-lg border-l-4',
         config.borderColor,
         config.bgColor
       )}
@@ -222,7 +222,7 @@ export function LogisticsBlock({
 
         {/* Inline Constraint Badges */}
         {activeConstraints && activeConstraints.length > 0 && (
-          <div className="mt-3 space-y-2">
+          <div className="mt-4 space-y-2">
             {activeConstraints.map((constraint) => (
               <div
                 key={constraint.id}

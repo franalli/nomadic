@@ -976,8 +976,11 @@ async def generate_sse(
                                 )
 
                             booking_types_in = trip_inputs.get("booking_types")
+                            flight_toggle_applied = "flights_toggle" in applied_fields or (
+                                "booking_types.flights" in applied_fields
+                            )
                             if (
-                                "flights_toggle" in applied_fields
+                                flight_toggle_applied
                                 and isinstance(booking_types_in, dict)
                                 and booking_types_in.get("flights") is not None
                             ):
@@ -2059,6 +2062,7 @@ async def generate_ndjson(
                         "conflicts": [c.model_dump() for c in itinerary_result.conflicts],
                         "resolutions": [r.model_dump() for r in itinerary_result.resolutions],
                         "day_cards": partial_day_cards,  # Include in conflict data too
+                        "plan_view_state": failure_view_state,
                         "version": doc.version if doc else None,
                     }
                     event = ExpandItineraryStreamEvent(

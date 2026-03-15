@@ -18,6 +18,9 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.services.activity_category_conflicts import (
+    has_category_conflict as _has_category_conflict,
+)
 from app.services.cache_core import MemoryCache
 from app.services.circuit_breaker import CircuitBreaker
 
@@ -64,26 +67,6 @@ _dest_cache = MemoryCache(maxsize=500, ttl=86400 * 30)  # destination taxonomy (
 _viator_cache_ttl = settings.viator_cache_ttl_hours * 3600
 _match_cache = MemoryCache(maxsize=512, ttl=_viator_cache_ttl)  # title->product matches
 _browse_viator_cache = MemoryCache(maxsize=256, ttl=_viator_cache_ttl)  # browse results
-
-# Known activity categories that must not cross-match
-_CATEGORY_CONFLICTS: dict[str, set[str]] = {
-    "diving": {"snorkel", "snorkeling", "snorkelling"},
-    "snorkeling": {"scuba", "scuba diving", "deep dive"},
-    "hiking": {"walking tour", "city walk", "food tour"},
-    "cycling": {"motorbike", "scooter", "atv"},
-    "surfing": {"bodyboard", "paddleboard", "kayak"},
-    "sailing": {"cruise", "ferry"},
-}
-
-
-def _has_category_conflict(specialist_category: str | None, product_title: str) -> bool:
-    """Return True if the product title contains a conflicting category term."""
-    if not specialist_category:
-        return False
-    conflicts = _CATEGORY_CONFLICTS.get(specialist_category.lower(), set())
-    product_lower = product_title.lower()
-    return any(conflict in product_lower for conflict in conflicts)
-
 
 _TITLE_CATEGORY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?:hike|hiking|trek|trekking|trail\b)", re.I), "hiking"),
@@ -162,6 +145,7 @@ _GENERIC_ACTIVITY_TOKENS = frozenset(
     }
 )
 _PAREN_SUFFIX_RE = re.compile(r"\([^)]*\)")
+_SESSION_PAREN_SUFFIX_RE = re.compile(r"\(\s*session\s+\d+\s*\)", re.IGNORECASE)
 _SESSION_SUFFIX_RE = re.compile(r"\bsession\s+\d+\b", re.IGNORECASE)
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
@@ -182,11 +166,6 @@ def record_viator_usage(event: str) -> None:
     if field:
         with _viator_usage_lock:
             _viator_usage_counters[field] += 1
-
-
-def get_viator_usage_counters() -> dict[str, int]:
-    with _viator_usage_lock:
-        return dict(_viator_usage_counters)
 
 
 # -- API helpers --------------------------------------------------------------
@@ -219,6 +198,23 @@ def _clean_activity_title(activity_title: str) -> str:
     clean_title = _SESSION_SUFFIX_RE.sub(" ", clean_title)
     clean_title = re.sub(r"\s+", " ", clean_title).strip(" -")
     return clean_title or activity_title
+
+
+def _normalize_match_cache_title(activity_title: str) -> str:
+    """Coalesce only synthetic specialist suffixes while preserving meaningful qualifiers."""
+    clean_title = _strip_location_prefix(activity_title or "")
+    clean_title = _SESSION_PAREN_SUFFIX_RE.sub(" ", clean_title)
+    clean_title = _SESSION_SUFFIX_RE.sub(" ", clean_title)
+    clean_title = re.sub(r"\s+", " ", clean_title).strip(" -")
+    return clean_title or activity_title
+
+
+def _normalize_match_cache_category(category: str | None) -> str:
+    """Scope match cache entries by category, including uncategorized lookups."""
+    if not category or not category.strip():
+        return "uncategorized"
+    normalized = _NON_ALNUM_RE.sub("_", category.strip().lower()).strip("_")
+    return normalized or "uncategorized"
 
 
 def _simplify_activity_title(activity_title: str) -> str:
@@ -653,18 +649,20 @@ async def match_activity_to_viator(
     category: str | None = None,
 ) -> dict | None:
     """Match an activity title to a Viator product. Returns tile dict or None."""
-    cache_key = f"viator_match:{destination.lower()}:{activity_title.lower()}"
+    cache_title = _normalize_match_cache_title(activity_title)
+    category_key = _normalize_match_cache_category(category)
+    cache_key = f"viator_match:{destination.lower()}:{category_key}:{cache_title.lower()}"
     cached = _match_cache.get(cache_key)
     if cached is not None:
         record_viator_usage("cache_hit")
         return cached if cached is not _NO_MATCH else None
+    clean_title = _clean_activity_title(activity_title)
 
     dest_id, destination_is_definitive = await resolve_destination_id(
         destination,
         return_status=True,
     )
 
-    clean_title = _clean_activity_title(activity_title)
     query_variants = _search_query_variants(activity_title, destination, dest_id)
     products: list[dict] = []
     seen_products: set[str] = set()

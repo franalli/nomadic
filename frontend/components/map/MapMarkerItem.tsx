@@ -1,264 +1,33 @@
 'use client';
 
-/**
- * MapMarkerItem — Per-marker component for InteractiveMap.
- *
- * Includes pin config (icon + color lookup by activity/specialist type),
- * coordinate helpers, and the isolated marker with tooltip.
- *
- * Each instance subscribes to a boolean selector so only the 2 affected markers
- * re-render on hover instead of the entire marker list.
- */
-
-import {
-  Anchor, Bed, Bike, Binoculars, Camera, Church, Compass, Dumbbell,
-  Flower2, Landmark, type LucideIcon,
-  MapPin, Mountain, Music, Palmtree, Plane, Search, ShoppingBag, Snowflake, Star,
-  Sunset, Utensils, Waves,
-} from 'lucide-react';
-import { memo } from 'react';
+import { Star } from 'lucide-react';
+import { memo, type MutableRefObject } from 'react';
 import { Marker } from 'react-map-gl/mapbox';
 
 import { DS } from '@/lib/design-system';
-import { getSpecialistColor } from '@/lib/specialists';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/state/uiStore';
 
-// =============================================================================
-// Types
-// =============================================================================
+import {
+  formatReviewCount,
+  getCategoryLabel,
+  getIntensityLabel,
+  getPinConfig,
+  getPriceLabel,
+  type MapItem,
+  MARKER_Z_INDEX_STYLE,
+} from './map-marker-config';
 
-export interface MapItem {
-  id: string;
-  title: string;
-  type: string;
-  coordinates: { lat: number; lng: number };
-  dayNumber?: number;
-  period?: 'morning' | 'afternoon' | 'evening';
-  source?: 'itinerary' | 'specialist' | 'browse';
-  intensity?: 'light' | 'moderate' | 'challenging';
-  duration?: string;
-  rating?: number;
-  reviewCount?: number;
-  priceLevel?: number;
-}
-
-export interface MapCenter {
-  lat: number;
-  lng: number;
-  zoom: number;
-}
-
-// =============================================================================
-// Pin Config — exact-key lookup (no fragile string matching)
-// =============================================================================
-
-interface PinConfig {
-  icon: LucideIcon;
-  color: string; // hex color — use style={{ backgroundColor }} to avoid Tailwind JIT purge
-}
-
-/**
- * Map-only color overrides for logistics and uncategorized marker types
- * not covered by getSpecialistColor() from specialists.ts (the SSoT).
- *
- * DS exception: Mapbox GL markers require inline hex color values for
- * dynamic backgroundColor styling — Tailwind JIT purges unknown classes.
- */
-const MAP_LOGISTICS_COLORS: Record<string, string> = {
-  flight:          '#60a5fa', // blue-400
-  arrival:         '#60a5fa', // blue-400
-  departure:       '#60a5fa', // blue-400
-  hotel:           '#10b981', // emerald-500
-  accommodation:   '#10b981', // emerald-500
-  lodging:         '#10b981', // emerald-500
-  stay:            '#10b981', // emerald-500
-  'check-in':      '#10b981', // emerald-500
-  'check-out':     '#10b981', // emerald-500
-  check_in:        '#10b981', // emerald-500
-  check_out:       '#10b981', // emerald-500
-  family:          '#f59e0b', // amber-500
-  activity:        '#a855f7', // purple-500
-};
-
-/** Horizontal surfboard icon for surfing map markers. */
-function SurfboardIcon({ className, size = 16 }: { className?: string; size?: number }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <ellipse cx="12" cy="12" rx="11" ry="3.5" />
-      <line x1="8" y1="12" x2="5" y2="9.5" />
-    </svg>
-  );
-}
-
-/** Pin icon per activity/specialist type for map markers. */
-const PIN_ICON: Record<string, LucideIcon> = {
-  // ── Tier 1: Specialist types ──
-  diving:          Waves,
-  hiking:          Mountain,
-  skiing:          Snowflake,
-  cycling:         Bike,
-  surfing:         SurfboardIcon as unknown as LucideIcon,
-  sailing:         Anchor,
-  climbing:        Compass,
-  wildlife_safari: Binoculars,
-  // ── Tier 2: General activity categories ──
-  yoga:            Flower2,
-  wellness:        Dumbbell,
-  spa:             Flower2,
-  nightlife:       Music,
-  cooking:         Utensils,
-  culture:         Church,
-  cultural:        Church,
-  temples:         Landmark,
-  food:            Utensils,
-  beach:           Palmtree,
-  shopping:        ShoppingBag,
-  sightseeing:     Camera,
-  photography:     Camera,
-  relaxation:      Sunset,
-  nature:          Palmtree,
-  tours:           Camera,
-  adventure:       Compass,
-  family:          Landmark,
-  activity:        Flower2,
-  // ── Logistics ──
-  flight:          Plane,
-  arrival:         Plane,
-  departure:       Plane,
-  hotel:           Bed,
-  accommodation:   Bed,
-  stay:            Bed,
-  'check-in':      Bed,
-  'check-out':     Bed,
-  check_in:        Bed,
-  check_out:       Bed,
-  lodging:         Bed,
-};
-
-/** Resolve marker hex color: logistics local map, then specialist SSoT. */
-function getMarkerColor(type: string): string {
-  return MAP_LOGISTICS_COLORS[type] ?? getSpecialistColor(type);
-}
-
-/** Combined pin config derived from icon map + color resolution. */
-const PIN_CONFIG: Record<string, PinConfig> = Object.fromEntries(
-  Object.keys(PIN_ICON).map((key) => [
-    key,
-    { icon: PIN_ICON[key] ?? MapPin, color: getMarkerColor(key) },
-  ])
-);
-
-// DS exception: Mapbox GL requires hex color values for marker pins
-const DEFAULT_PIN: PinConfig = { icon: MapPin, color: '#a1a1aa' }; // zinc-400
-const BROWSE_PIN: PinConfig = { icon: Search, color: '#f59e0b' }; // amber-500
-
-// =============================================================================
-// Helpers
-// =============================================================================
-
-const CATEGORY_LABEL: Record<string, string> = {
-  cultural: 'Cultural',
-  food: 'Food',
-  nature: 'Nature',
-  spa: 'Spa',
-  tours: 'Tours',
-  adventure: 'Adventure',
-};
-
-const PRICE_LEVEL_LABEL: Record<number, string> = {
-  0: 'Free',
-  1: '$',
-  2: '$$',
-  3: '$$$',
-  4: '$$$$',
-};
-
-const INTENSITY_LABEL: Record<'light' | 'moderate' | 'challenging', string> = {
-  light: 'Easy',
-  moderate: 'Moderate',
-  challenging: 'Challenging',
-};
-
-function normalizeTypeKey(type: string): string {
-  return (type || '').trim().toLowerCase();
-}
-
-export function getPinConfig(type: string, source?: MapItem['source']): PinConfig {
-  const normalizedType = normalizeTypeKey(type);
-  const categoryPin = PIN_CONFIG[normalizedType];
-  if (categoryPin) return categoryPin;
-  // Fallback: type not in PIN_ICON but may have a specialist color
-  const color = getMarkerColor(normalizedType);
-  const fallbackDefault = color !== getSpecialistColor() ? { icon: MapPin, color } : null;
-  if (source === 'browse') {
-    return fallbackDefault ?? BROWSE_PIN;
-  }
-  return fallbackDefault ?? DEFAULT_PIN;
-}
-
-function toTitleCase(value: string): string {
-  return value
-    .replace(/_/g, ' ')
-    .split(' ')
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
-
-function formatReviewCount(value: number): string {
-  return value >= 1000 ? `${Math.round(value / 1000)}K` : value.toLocaleString();
-}
-
-function getCategoryLabel(type: string, source?: MapItem['source']): string | null {
-  const normalized = normalizeTypeKey(type);
-  if (!normalized) return source === 'browse' ? 'Browse' : null;
-  const base = CATEGORY_LABEL[normalized] ?? toTitleCase(normalized);
-  return source === 'browse' ? `Browse ${base}` : base;
-}
-
-export function normalizeMapCoordinates(
-  coordinates: { lat: number; lng: number } | null | undefined
-): { lat: number; lng: number } | null {
-  if (!coordinates) return null;
-  const lat = Number(coordinates.lat);
-  const lng = Number(coordinates.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
-  return { lat, lng };
-}
-
-// =============================================================================
-// Marker z-index styles
-// =============================================================================
-
-export const MARKER_Z_INDEX_STYLE: Record<'active' | 'hovered' | 'default', { zIndex: number }> = {
-  active: { zIndex: 100 },
-  hovered: { zIndex: 90 },
-  default: { zIndex: 1 },
-};
-
-// =============================================================================
-// MapMarkerItem — isolated per-marker component
-// =============================================================================
+export type { MapCenter, MapItem } from './map-marker-config';
+export { normalizeMapCoordinates } from './map-marker-config';
+export { getPinConfig, MARKER_Z_INDEX_STYLE } from './map-marker-config';
 
 interface MapMarkerItemProps {
   item: MapItem;
   activeItemId: string | null;
   highlightedDay?: number | null;
   onMarkerClick?: (id: string) => void;
-  lastClickRef: React.RefObject<number>;
+  lastClickRef: MutableRefObject<number>;
 }
 
 export const MapMarkerItem = memo(function MapMarkerItem({
@@ -274,7 +43,7 @@ export const MapMarkerItem = memo(function MapMarkerItem({
   const pin = getPinConfig(item.type, item.source);
   const MarkerIcon = pin.icon;
   // DS exception: Mapbox GL requires hex color values for marker background
-  const markerBg = isActive ? '#10b981' : pin.color;
+  const markerBg = isActive ? DS.brand.emerald : pin.color;
   const isDimmed =
     highlightedDay != null &&
     item.dayNumber !== undefined &&
@@ -283,10 +52,8 @@ export const MapMarkerItem = memo(function MapMarkerItem({
   const isHovered = isStoreHovered;
   const showTooltip = isActive || isHovered;
   const categoryLabel = getCategoryLabel(item.type, item.source);
-  const priceLabel =
-    item.priceLevel != null ? PRICE_LEVEL_LABEL[item.priceLevel] : undefined;
-  const intensityLabel =
-    item.intensity != null ? INTENSITY_LABEL[item.intensity] : undefined;
+  const priceLabel = getPriceLabel(item.priceLevel);
+  const intensityLabel = getIntensityLabel(item.intensity);
   const hasMeta =
     !!categoryLabel || !!intensityLabel || !!item.duration || item.rating != null || !!priceLabel;
 

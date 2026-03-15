@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 from unittest.mock import MagicMock, patch
 
-from app.planner.state.graph_state import GraphState, TripSettings
+from app.planner.state.graph_state import GraphState, SpecialistConstraint, TripSettings
 from app.services.itinerary_builder import (
     ItineraryBuilderInput,
     ItineraryResult,
@@ -33,6 +33,7 @@ def _make_state(
     end_date: Optional[str] = "2026-03-07",
     sections: Optional[list] = None,
     pinned_tiles: Optional[Dict[str, Any]] = None,
+    constraints: Optional[list] = None,
 ) -> GraphState:
     """Build a GraphState with sensible defaults for adapter tests."""
     state = GraphState()
@@ -47,6 +48,9 @@ def _make_state(
 
     if pinned_tiles is not None:
         state.metadata["user_pinned_tiles"] = pinned_tiles
+
+    if constraints is not None:
+        state.trip_plan.constraints = constraints
 
     # Ensure trip_settings exists so get_trip_settings works
     state.metadata["trip_settings"] = TripSettings().model_dump()
@@ -332,3 +336,91 @@ class TestPinnedTilesPreferences:
         assert prefs is not None
         # Default priority is "high"
         assert prefs.pinned_priority_map == {"tile_no_prio": "high"}
+
+
+class TestCanonicalConstraints:
+    """TripPlan constraints are forwarded into the pure-Python builder."""
+
+    @patch("app.planner.services.itinerary_adapter.ItineraryBuilder")
+    @patch("app.planner.services.itinerary_adapter.flatten_tiles_to_id_map")
+    def test_trip_plan_constraints_are_passed_to_builder(
+        self, mock_flatten: MagicMock, mock_builder_cls: MagicMock
+    ) -> None:
+        mock_flatten.return_value = {}
+        mock_instance = MagicMock()
+        mock_instance.build.return_value = _fake_result()
+        mock_builder_cls.return_value = mock_instance
+
+        state = _make_state(
+            constraints=[
+                SpecialistConstraint(
+                    constraint_id="no_altitude_after_dive",
+                    type="temporal",
+                    rule="no_altitude_after_dive",
+                    severity="blocking",
+                    reason="24h buffer before altitude",
+                )
+            ]
+        )
+
+        from app.planner.services.itinerary_adapter import build_itinerary_from_state
+
+        build_itinerary_from_state(state)
+
+        builder_input = mock_instance.build.call_args[0][0]
+        assert len(builder_input.canonical_constraints) == 1
+        assert builder_input.canonical_constraints[0]["rule"] == "no_altitude_after_dive"
+        assert builder_input.canonical_constraints[0]["reason"] == "24h buffer before altitude"
+
+    def test_trip_plan_constraints_are_honored_without_section_constraint(self) -> None:
+        state = _make_state(
+            start_date="2026-03-01",
+            end_date="2026-03-08",
+            sections=[
+                {
+                    "specialist_type": "diving",
+                    "content_added": [
+                        {"title": "USAT Liberty Wreck", "duration_hours": 3.0},
+                        {"title": "Manta Point", "duration_hours": 3.0},
+                    ],
+                    "constraints_applied": [],
+                },
+                {
+                    "specialist_type": "hiking",
+                    "content_added": [
+                        {"title": "Mount Batur Sunrise", "duration_hours": 4.0},
+                        {"title": "Campuhan Ridge Walk", "duration_hours": 2.5},
+                    ],
+                    "constraints_applied": [],
+                },
+            ],
+            constraints=[
+                SpecialistConstraint(
+                    constraint_id="no_altitude_after_dive",
+                    type="temporal",
+                    rule="no_altitude_after_dive",
+                    severity="blocking",
+                    reason="24h buffer before altitude",
+                )
+            ],
+        )
+
+        from app.planner.services.itinerary_adapter import build_itinerary_from_state
+
+        result = build_itinerary_from_state(state)
+
+        assert result is not None
+        assert result.success is True
+
+        diving_days: list[int] = []
+        hiking_days: list[int] = []
+        for day in result.day_cards:
+            for block in day.blocks:
+                if block.specialist_type == "diving" and not block.is_buffer:
+                    diving_days.append(day.day_number)
+                if block.specialist_type == "hiking" and not block.is_buffer:
+                    hiking_days.append(day.day_number)
+
+        assert diving_days
+        assert hiking_days
+        assert max(diving_days) < min(hiking_days)

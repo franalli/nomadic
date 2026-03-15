@@ -11,6 +11,7 @@ import threading
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,8 +27,17 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 import app.db_models as models  # noqa: E402  pylint: disable=C0413
 import app.main as main_module  # noqa: E402  pylint: disable=C0413
+import app.request_dedup as request_dedup_module  # noqa: E402  pylint: disable=C0413
+import app.services.spend_guard as spend_guard_module  # noqa: E402  pylint: disable=C0413
 from app.db import Base, get_async_db, get_db  # noqa: E402  pylint: disable=C0413
 from app.main import app  # noqa: E402  pylint: disable=C0413
+from app.planner.state import ConstraintSeverity  # noqa: E402  pylint: disable=C0413
+from app.services.itinerary_builder import (  # noqa: E402  pylint: disable=C0413
+    BuilderConflict,
+    DayCardOutput,
+    ItineraryResult,
+    Resolution,
+)
 
 TEST_DB_PATH = BACKEND_DIR / "test_plan_document_pytest.db"
 TEST_DATABASE_URL = f"sqlite+pysqlite:///{TEST_DB_PATH.as_posix()}"
@@ -222,6 +232,8 @@ def set_document_fields(
 
 app.dependency_overrides[get_async_db] = override_get_async_db
 app.dependency_overrides[get_db] = override_get_db
+request_dedup_module.db_module.SessionLocal = TestingSessionLocal
+spend_guard_module.db_module.SessionLocal = TestingSessionLocal
 client = TestClient(app)
 
 # CSRF token for tests - must match what we set in cookies
@@ -456,6 +468,51 @@ def test_fill_day_uses_effective_total_days_from_cards_and_trip_inputs():
     assert response.status_code == 200
     payload = response.json()
     assert payload.get("rejected") is not True
+
+
+def test_fill_day_accepts_categories_at_schema_limit():
+    seed = seed_session_with_document(session_token="session-fill-day-category-limit-ok")
+    day_cards = [{"day_number": 1, "label": "Day 1", "blocks": []}]
+    set_document_fields(seed["session_token"], day_cards=day_cards)
+
+    with patch(
+        "app.services.experience_generator.generate_experience_tiles_for_day",
+        new=AsyncMock(return_value=[]),
+    ):
+        response = request_with_session(
+            client,
+            "POST",
+            "/api/document/fill-day",
+            seed["session_token"],
+            headers=get_csrf_headers(),
+            json={"day_number": 1, "categories": ["food"] * 16},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["day_number"] == 1
+    assert payload["tiles_added"] == 0
+
+
+def test_fill_day_rejects_categories_above_schema_limit():
+    seed = seed_session_with_document(session_token="session-fill-day-category-limit-too-long")
+    day_cards = [{"day_number": 1, "label": "Day 1", "blocks": []}]
+    set_document_fields(seed["session_token"], day_cards=day_cards)
+
+    response = request_with_session(
+        client,
+        "POST",
+        "/api/document/fill-day",
+        seed["session_token"],
+        headers=get_csrf_headers(),
+        json={"day_number": 1, "categories": ["food"] * 17},
+    )
+
+    assert response.status_code == 422
+    assert any(
+        error.get("loc") == ["body", "categories"] and error.get("type") == "too_long"
+        for error in response.json().get("detail", [])
+    )
 
 
 @pytest.mark.slow
@@ -1073,35 +1130,52 @@ def test_patch_trip_inputs_noop_does_not_bump_version():
 def test_expand_itinerary_duplicate_idempotency_returns_done_noop():
     """POST /api/expand-itinerary should return duplicate_noop for reused idempotency key."""
 
+    original_generate_ndjson = main_module.generate_ndjson
+
+    async def fake_generate_ndjson(*, session_id, req, resolve_stage3_view_state):  # noqa: ANN001
+        yield (
+            json.dumps(
+                {
+                    "type": "done",
+                    "plan_view_state": "S3_ITINERARY_READY",
+                    "version": 1,
+                }
+            )
+            + "\n"
+        )
+
     session_token = f"session-expand-dup-{time.time_ns()}"
     headers = get_csrf_headers()
     idempotency_key = f"dup-key-{time.time_ns()}"
+    main_module.generate_ndjson = fake_generate_ndjson
+    try:
+        first = request_with_session(
+            client,
+            "POST",
+            "/api/expand-itinerary",
+            session_token,
+            headers=headers,
+            json={"idempotency_key": idempotency_key},
+        )
+        assert first.status_code == 200
 
-    first = request_with_session(
-        client,
-        "POST",
-        "/api/expand-itinerary",
-        session_token,
-        headers=headers,
-        json={"idempotency_key": idempotency_key},
-    )
-    assert first.status_code == 200
+        second = request_with_session(
+            client,
+            "POST",
+            "/api/expand-itinerary",
+            session_token,
+            headers=headers,
+            json={"idempotency_key": idempotency_key},
+        )
+        assert second.status_code == 200
 
-    second = request_with_session(
-        client,
-        "POST",
-        "/api/expand-itinerary",
-        session_token,
-        headers=headers,
-        json={"idempotency_key": idempotency_key},
-    )
-    assert second.status_code == 200
-
-    lines = [line for line in second.text.splitlines() if line.strip()]
-    assert lines
-    event = json.loads(lines[-1])
-    assert event["type"] == "done"
-    assert event["message"] == "duplicate_noop"
+        lines = [line for line in second.text.splitlines() if line.strip()]
+        assert lines
+        event = json.loads(lines[-1])
+        assert event["type"] == "done"
+        assert event["message"] == "duplicate_noop"
+    finally:
+        main_module.generate_ndjson = original_generate_ndjson
 
 
 def test_expand_itinerary_stream_contract_first_and_duplicate():
@@ -1173,3 +1247,70 @@ def test_expand_itinerary_stream_contract_first_and_duplicate():
         assert "plan_view_state" not in duplicate_events[0]
     finally:
         main_module.generate_ndjson = original_generate_ndjson
+
+
+def test_expand_itinerary_conflict_error_includes_persisted_plan_view_state():
+    """Conflict error payload should expose the same backend-owned Stage 3 state that persists."""
+
+    session_token = f"session-expand-conflict-{time.time_ns()}"
+    seed_session_with_document(session_token=session_token)
+    headers = get_csrf_headers()
+    idempotency_key = f"conflict-key-{time.time_ns()}"
+    conflict_result = ItineraryResult(
+        success=False,
+        day_cards=[DayCardOutput(day_number=1, label="Arrival", blocks=[])],
+        conflicts=[
+            BuilderConflict(
+                type="constraint_clash",
+                severity=ConstraintSeverity.BLOCKING,
+                day=2,
+                message="Need a 24h no-fly buffer after diving",
+                specialists=["diving"],
+            )
+        ],
+        resolutions=[
+            Resolution(
+                action="reduce_activities",
+                description="Move the dive earlier or reduce activities",
+                feasibility="recommended",
+            )
+        ],
+    )
+
+    with (
+        patch("app.streaming._get_async_session_factory", return_value=TestingAsyncSessionLocal),
+        patch(
+            "app.services.itinerary_builder.ItineraryBuilder.build",
+            return_value=conflict_result,
+        ),
+    ):
+        response = request_with_session(
+            client,
+            "POST",
+            "/api/expand-itinerary",
+            session_token,
+            headers=headers,
+            json={
+                "idempotency_key": idempotency_key,
+                "strategy_sections": [{"id": "diving-plan", "title": "Diving Plan"}],
+            },
+        )
+
+    assert response.status_code == 200
+    events = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+    assert [event["type"] for event in events] == ["progress", "progress", "envelope", "error"]
+    assert events[2]["plan_envelope"]["plan_view_state"] == "S3_PARTIAL_CONFLICT"
+
+    error_payload = json.loads(events[3]["message"])
+    assert error_payload["error"] == "CONSTRAINT_CONFLICT"
+    assert error_payload["plan_view_state"] == "S3_PARTIAL_CONFLICT"
+    assert error_payload["day_cards"][0]["label"] == "Arrival"
+
+    with TestingSessionLocal() as db:
+        session = (
+            db.query(models.Session).filter(models.Session.session_token == session_token).one()
+        )
+        doc = (
+            db.query(models.PlanDocument).filter(models.PlanDocument.session_id == session.id).one()
+        )
+        assert doc.document["plan_view_state"] == "S3_PARTIAL_CONFLICT"

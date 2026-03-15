@@ -8,7 +8,7 @@ after the first unique query.
 L1: In-memory TTLCache with RLock (1h TTL, 128 entries)
 L2: PostgreSQL response_cache (72h TTL, env-configurable) via ResponseCache table
 
-Cache key format: experience::v3::{destination}::{sorted_categories}::{month}::n{count}
+Cache key format: experience::v2::{destination}::{sorted_categories}::{month_or_half}::n{count}
 
 Usage:
     from app.services.experience_generator import generate_experiences
@@ -41,6 +41,7 @@ from app.planner.llm_factory import (
     resolve_schema_refs,
     strip_unsupported_schema_keys,
 )
+from app.planner.specialist_registry import TIER2_BROWSE_CATEGORIES
 from app.services.cache_core import MemoryCache, l2_upsert
 from app.services.task_tracker import track as _track_task
 
@@ -141,7 +142,7 @@ def has_cached(
 # =============================================================================
 
 
-# Seasonal categories keep month-level precision; non-seasonal normalize to quarter
+# Seasonal categories keep month-level precision; non-seasonal normalize to half-year
 _SEASONAL_CATEGORIES: frozenset[str] = frozenset(
     {
         "skiing",
@@ -187,7 +188,7 @@ def _normalize_month_for_cache(month: str, categories: list[str]) -> str:
 
 
 def _bucket_tile_count(n: int) -> int:
-    """Round up to cache-friendly tiers so n4 reuses n8's cached set."""
+    """Round up into cache-friendly tiers so n5 reuses n8's cached set."""
     for tier in (4, 8, 12, 16, 24, 40):
         if n <= tier:
             return tier
@@ -199,13 +200,14 @@ def _experience_cache_key(
 ) -> str:
     """
     Generate stable cache key:
-    experience::v3::{dest}::{sorted_cats}::{month}::n{count}
+    experience::v2::{dest}::{sorted_cats}::{month_or_half}::n{count}
 
     Categories are sorted alphabetically for stable keys regardless of input order.
-    Month granularity (not full dates) — experiences are seasonal, not date-specific.
+    The date slot keeps month precision for seasonal categories and half-year buckets for
+    non-seasonal categories, since experiences are not date-specific.
     Tile count is bucketed to cache-friendly tiers so smaller requests reuse larger caches.
 
-    Example: "experience::v3::bali::cooking|nightlife|yoga::2026-03::n4"
+    Example: "experience::v2::bali::cooking|nightlife|yoga::2026-H1::n4"
     """
     dest_normalized = destination.lower().strip() if destination else "unknown"
     cats_normalized = "|".join(sorted(c.lower().strip() for c in categories))
@@ -774,8 +776,7 @@ async def generate_experience_tiles_for_day(
         # Rotate through real Tier-2 categories so different days get different content.
         # "activities" is not a real category — using it causes the LLM to set
         # meta.category="activities" → specialist_type="activities" → "ACTIVITIES" badge.
-        _default_cats = ["cultural", "nature", "food", "tours", "shopping"]
-        categories = [_default_cats[day_number % len(_default_cats)]]
+        categories = [TIER2_BROWSE_CATEGORIES[day_number % len(TIER2_BROWSE_CATEGORIES)]]
 
     # Round-robin categories across tile slots
     cat_tile_counts: dict[str, int] = {}

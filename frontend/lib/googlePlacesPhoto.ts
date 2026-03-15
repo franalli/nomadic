@@ -1,7 +1,6 @@
-import { apiFetch } from './api';
+import { API_BASE, apiFetch } from './api';
 
 const GOOGLE_PLACES_PHOTO_NAME_RE = /^places\/[A-Za-z0-9_-]+\/photos\/[A-Za-z0-9_-]+$/;
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 interface GooglePlacesPhotoOptions {
   maxWidth?: number;

@@ -17,7 +17,7 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
       {/* Destination Gallery — Vibe Trio for Local Expert */}
       {section.specialist_type === 'local_expert' && section.destination_gallery && section.destination_gallery.length > 0 && (
         <div className="mb-2">
-          <div className="flex gap-3 overflow-x-auto pb-3 snap-x no-scrollbar md:hidden">
+          <div className="flex gap-2 overflow-x-auto pb-3 snap-x no-scrollbar md:hidden">
             {section.destination_gallery.filter(img => Boolean(img.image_url)).map((img, idx) => (
               <div key={idx} className="shrink-0 snap-center relative w-64 h-40 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-200 dark:border-white/10">
                 <Image src={img.image_url} alt={img.label} fill className="object-cover" />
@@ -39,12 +39,12 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
       {/* Specialist Constraints */}
       {section.constraints_applied && section.constraints_applied.length > 0 && (
         <div>
-          <h5 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-3 flex items-center gap-2">
+          <h5 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-4 flex items-center gap-2">
             <ShieldCheck size={12} className="text-emerald-600 dark:text-emerald-400" /> Applied Constraints
           </h5>
-          <div className="space-y-3">
+          <div className="space-y-2">
             {section.constraints_applied.map((c, idx) => (
-              <div key={idx} className="flex items-start gap-3">
+              <div key={idx} className="flex items-start gap-2">
                 <div className="shrink-0 mt-0.5 w-5 h-5 rounded-full bg-emerald-50 dark:bg-emerald-500/20 flex items-center justify-center">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                 </div>
@@ -61,12 +61,12 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
       {/* Expert Recommendations — skip for local_expert */}
       {section.content_added && section.content_added.length > 0 && section.specialist_type !== 'local_expert' && (
         <div>
-          <h5 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-3 flex items-center gap-2">
+          <h5 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-4 flex items-center gap-2">
             <Lightbulb size={12} className="text-emerald-600 dark:text-emerald-400" /> Expert Recommendations
           </h5>
-          <div className="grid gap-3">
+          <div className="grid gap-2">
             {section.content_added.map((c, idx) => (
-              <div key={idx} className={cn('rounded-xl border transition-colors p-4 flex gap-3', 'bg-white border-zinc-200 hover:border-emerald-500/30 shadow-card', 'dark:bg-zinc-900 dark:border-white/10 dark:hover:border-white/20 dark:shadow-none')}>
+              <div key={idx} className={cn('rounded-xl border transition-colors p-4 flex gap-2', 'bg-white border-zinc-200 hover:border-emerald-500/30 shadow-card', 'dark:bg-zinc-900 dark:border-white/10 dark:hover:border-white/20 dark:shadow-none')}>
                 {c.image_url && (
                   <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-100 dark:bg-zinc-900">
                     <Image src={c.image_url} alt={c.title} width={64} height={64} className="object-cover w-full h-full" />

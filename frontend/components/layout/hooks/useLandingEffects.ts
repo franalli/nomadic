@@ -189,16 +189,22 @@ export function useLandingEffects({
 
   // Badge notification: Track when specialists update
   const lastSeenTopicsRef = useRef<Set<string>>(new Set());
+  const hasSeededExecutedTopicsRef = useRef(false);
   useEffect(() => {
     const executed = new Set(executedTopics);
+    if (!hasSeededExecutedTopicsRef.current || isHydrating) {
+      lastSeenTopicsRef.current = executed;
+      hasSeededExecutedTopicsRef.current = true;
+      return;
+    }
     const newTopics = [...executed].filter((t) => !lastSeenTopicsRef.current.has(t));
     const hasNew = newTopics.length > 0;
     if (hasNew) {
       const topicLabel = getTopicLabel(newTopics[0]);
       toast(`Plan Updated: ${topicLabel} Strategy Added`);
-      lastSeenTopicsRef.current = executed;
     }
-  }, [executedTopics, toast]);
+    lastSeenTopicsRef.current = executed;
+  }, [executedTopics, isHydrating, toast]);
 
   // ─── Auto-switch to Plan view when framing ─────────────────────────────
 

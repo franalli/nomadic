@@ -23,8 +23,10 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import re
 import time
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from urllib.parse import quote
@@ -76,6 +78,10 @@ _FAILURE_LABELS = {
     "local_intel": "Local knowledge temporarily unavailable",
 }
 
+_USER_DISABLED_BOOKING_TYPES_KEY = "user_disabled_booking_types"
+_TRACKED_BOOKING_TYPE_KEYS = frozenset({"flights", "hotels", "activities", "ground_transport"})
+_PENDING_ITINERARY_ENRICHMENT_TASK_KEY = "_pending_itinerary_enrichment_task"
+
 
 # =============================================================================
 # Normalization helpers
@@ -85,6 +91,66 @@ _FAILURE_LABELS = {
 def _norm_topic(topic: str) -> str:
     """Normalize specialist topic IDs to lowercase canonical form."""
     return (topic or "").strip().lower()
+
+
+def _get_user_disabled_booking_types(state: Dict[str, Any]) -> set[str]:
+    """Return booking types the user explicitly disabled across turns."""
+    persistent_meta = state.get("persistent_meta", {})
+    if not isinstance(persistent_meta, dict):
+        return set()
+    raw_disabled = persistent_meta.get(_USER_DISABLED_BOOKING_TYPES_KEY, [])
+    if not isinstance(raw_disabled, (list, tuple, set)):
+        return set()
+    return {
+        key for item in raw_disabled if (key := str(item).strip()) in _TRACKED_BOOKING_TYPE_KEYS
+    }
+
+
+def _set_user_disabled_booking_type(
+    state: Dict[str, Any],
+    booking_type: str,
+    disabled: bool,
+) -> None:
+    """Persist explicit user-disabled booking toggles in internal metadata only."""
+    booking_type = str(booking_type).strip()
+    if booking_type not in _TRACKED_BOOKING_TYPE_KEYS:
+        return
+
+    disabled_types = _get_user_disabled_booking_types(state)
+    if disabled:
+        disabled_types.add(booking_type)
+    else:
+        disabled_types.discard(booking_type)
+
+    persistent_meta = state.get("persistent_meta", {})
+    persistent_meta = dict(persistent_meta) if isinstance(persistent_meta, dict) else {}
+    if disabled_types:
+        persistent_meta[_USER_DISABLED_BOOKING_TYPES_KEY] = sorted(disabled_types)
+    else:
+        persistent_meta.pop(_USER_DISABLED_BOOKING_TYPES_KEY, None)
+    state["persistent_meta"] = persistent_meta
+
+
+def _sync_booking_type_overrides(
+    state: Dict[str, Any],
+    previous_settings: Dict[str, Any],
+    trip_settings: Dict[str, Any],
+) -> None:
+    """Track explicit user flight disables without mutating public trip settings."""
+    previous_booking_types = previous_settings.get("booking_types", {})
+    next_booking_types = trip_settings.get("booking_types", {})
+    if not isinstance(previous_booking_types, dict) or not isinstance(next_booking_types, dict):
+        return
+
+    previous_flights = previous_booking_types.get("flights")
+    next_flights = next_booking_types.get("flights")
+    if previous_flights == next_flights:
+        return
+
+    if next_flights == "off" and previous_flights != "off":
+        _set_user_disabled_booking_type(state, "flights", True)
+    elif next_flights in ("suggested", "on"):
+        _set_user_disabled_booking_type(state, "flights", False)
 
 
 def _has_local_intel_for_destination(state: Dict[str, Any], destination: str | None) -> bool:
@@ -150,6 +216,77 @@ def _canonicalize_applied_updates(fields_changed: List[str]) -> List[str]:
         if key and key not in canonical:
             canonical.append(key)
     return canonical
+
+
+def _resolve_activity_category_filters(
+    state: Dict[str, Any],
+) -> tuple[list[str], list[str] | None, list[str], bool]:
+    """Return requested, effective, and infeasible activity filters for the builder."""
+    trip_settings: Dict[str, Any] = state.get("trip_settings", {})
+    activity_settings = trip_settings.get("activity_settings", {})
+    booking_types = trip_settings.get("booking_types", {})
+    activities_off = isinstance(booking_types, dict) and booking_types.get("activities") == "off"
+
+    requested_categories: list[str] = []
+    if isinstance(activity_settings, dict):
+        requested_categories = [
+            _norm_topic(str(category))
+            for category in activity_settings.get("categories", [])
+            if _norm_topic(str(category))
+        ]
+
+    if activities_off:
+        return requested_categories, [], [], True
+
+    prechecks = state.get("turn_meta", {}).get("feasibility_prechecks", {})
+    infeasible_requested: list[str] = []
+    effective_categories: list[str] = []
+    for category in requested_categories:
+        precheck = prechecks.get(category) if isinstance(prechecks, dict) else None
+        status = precheck[0] if isinstance(precheck, (list, tuple)) and precheck else None
+        if category in TIER1_SPECIALIST_NAMES and status == "infeasible":
+            infeasible_requested.append(category)
+            continue
+        if category not in effective_categories:
+            effective_categories.append(category)
+
+    if requested_categories and not effective_categories:
+        return requested_categories, [], infeasible_requested, False
+
+    return requested_categories, (effective_categories or None), infeasible_requested, False
+
+
+def _builder_conflicts_to_constraint_violations(
+    conflicts: Any,
+    resolutions: Any = None,
+) -> list[Dict[str, Any]]:
+    """Map builder conflicts into the existing constraint_violations shape."""
+    if not isinstance(conflicts, list) or not conflicts:
+        return []
+
+    suggested_action = None
+    if isinstance(resolutions, list) and resolutions:
+        first_resolution = resolutions[0]
+        if isinstance(first_resolution, dict):
+            suggested_action = first_resolution.get("description")
+
+    mapped: list[Dict[str, Any]] = []
+    for conflict in conflicts:
+        if not isinstance(conflict, dict):
+            continue
+        raw_severity = conflict.get("severity", "warning")
+        severity = getattr(raw_severity, "value", raw_severity)
+        mapped.append(
+            {
+                "code": str(conflict.get("type", "itinerary_conflict")).upper(),
+                "message": str(conflict.get("message", "Itinerary conflict detected")),
+                "severity": str(severity).lower(),
+                "category": "itinerary",
+                "rule": str(conflict.get("type", "itinerary_conflict")),
+                "suggested_action": suggested_action,
+            }
+        )
+    return mapped
 
 
 # =============================================================================
@@ -366,6 +503,7 @@ _TILE_REFRESH_CHANGES: frozenset[ChangeType] = frozenset(
     {
         ChangeType.INITIAL_PLAN,
         ChangeType.DESTINATION_CHANGE,
+        ChangeType.DAY_COUNT,
         ChangeType.DATE_CHANGE,
         ChangeType.LOGISTICS,
         ChangeType.SETTINGS,
@@ -738,7 +876,7 @@ def plan_turn(
 
     # Tile search
     if _needs_tile_refresh(classifier) and has_destination and has_dates:
-        tile_types = _tile_refresh_types(classifier)
+        tile_types = _tile_refresh_types(classifier, state)
         # No activity tiles yet + user has categories → force-include activities
         # so the first "dates added" turn doesn't skip the activity pipeline.
         if "activities" not in tile_types:
@@ -839,6 +977,37 @@ def _compute_dispatch_list(
         # Fresh start — dispatch all active Tier 1 specialists
         return tier1_active
 
+    if classifier.change_type == ChangeType.DATE_CHANGE:
+        existing_plans: Dict[str, Any] = state.get("specialist_plans", {})
+        dispatch_topics: set[str] = set()
+        existing_topics = {_norm_topic(topic) for topic in existing_plans}
+        preserved_topics: set[str] = set()
+
+        for topic, plan in existing_plans.items():
+            topic_norm = _norm_topic(topic)
+            if topic_norm not in TIER1_SPECIALIST_NAMES:
+                continue
+            if _should_preserve_specialist_for_date_change(topic_norm, plan, state):
+                preserved_topics.add(topic_norm)
+                continue
+            dispatch_topics.add(topic_norm)
+
+        for topic in tier1_active:
+            if topic not in existing_topics and topic not in removed_topics:
+                dispatch_topics.add(topic)
+
+        if classifier.affects:
+            for topic in classifier.affects:
+                topic_norm = _norm_topic(topic)
+                if (
+                    topic_norm in TIER1_SPECIALIST_NAMES
+                    and topic_norm not in removed_topics
+                    and topic_norm not in preserved_topics
+                ):
+                    dispatch_topics.add(topic_norm)
+
+        return sorted(dispatch_topics)
+
     # Targeted change — only dispatch affected specialists
     if classifier.affects:
         # Classifier told us exactly which to re-dispatch
@@ -866,13 +1035,6 @@ def _compute_dispatch_list(
         ChangeType.REMOVE_ACTIVITY,
     ):
         return tier1_active
-
-    # Date changes affect all existing specialists
-    if classifier.change_type == ChangeType.DATE_CHANGE:
-        existing_plans: Dict[str, Any] = state.get("specialist_plans", {})
-        return sorted(
-            {_norm_topic(t) for t in existing_plans if _norm_topic(t) in TIER1_SPECIALIST_NAMES}
-        )
 
     return []
 
@@ -904,11 +1066,111 @@ def _needs_tile_refresh(classifier: ClassifierOutput) -> bool:
     return classifier.change_type in _TILE_REFRESH_CHANGES
 
 
-def _tile_refresh_types(classifier: ClassifierOutput) -> List[str]:
+def _active_specialist_topics(state: Dict[str, Any]) -> set[str]:
+    """Collect current specialist topics from persisted trip state."""
+    topics: set[str] = set()
+
+    trip_settings = state.get("trip_settings", {})
+    activity_settings = trip_settings.get("activity_settings", {})
+    if isinstance(activity_settings, dict):
+        topics.update(
+            _norm_topic(value)
+            for value in activity_settings.get("categories", [])
+            if _norm_topic(value)
+        )
+
+    for section in state.get("strategy_sections", []):
+        if not isinstance(section, dict):
+            continue
+        topic = _norm_topic(section.get("specialist_type", ""))
+        if topic:
+            topics.add(topic)
+
+    specialist_plans = state.get("specialist_plans", {})
+    if isinstance(specialist_plans, dict):
+        topics.update(_norm_topic(topic) for topic in specialist_plans if _norm_topic(topic))
+
+    return {topic for topic in topics if topic in SPECIALIST_REGISTRY}
+
+
+def _has_current_or_future_nofly_specialist(
+    classifier: ClassifierOutput,
+    state: Dict[str, Any],
+) -> bool:
+    """Return True when the current or resulting plan includes a no-fly specialist."""
+    nofly_topics = {
+        topic for topic, config in SPECIALIST_REGISTRY.items() if config.has_nofly_buffer
+    }
+    if not nofly_topics:
+        return False
+
+    current_topics = _active_specialist_topics(state)
+    next_topics = set(current_topics)
+    for values in (
+        classifier.affects,
+        classifier.preserves,
+        classifier.specialist_hints,
+        classifier.activity_categories,
+    ):
+        next_topics.update(_norm_topic(value) for value in values if _norm_topic(value))
+    for target in classifier.removal_targets:
+        next_topics.discard(_norm_topic(target))
+
+    return bool((current_topics & nofly_topics) or (next_topics & nofly_topics))
+
+
+def _classifier_has_activity_refresh_signal(classifier: ClassifierOutput) -> bool:
+    """Return True when activity tiles should be recomputed for this change."""
+    return bool(
+        classifier.activity_categories
+        or classifier.specialist_hints
+        or classifier.affects
+        or classifier.removal_targets
+        or classifier.activity_day_preferences
+        or classifier.activities_per_day is not None
+    )
+
+
+def _should_allow_flight_auto_upgrade(
+    classifier: ClassifierOutput,
+    state: Dict[str, Any],
+    requested_types: set[str],
+) -> bool:
+    """Allow flight auto-upgrade only on origin/logistics flows, not safety refreshes."""
+    if "flights" not in requested_types:
+        return False
+    if "flights" in _get_user_disabled_booking_types(state):
+        return False
+
+    turn_meta = state.get("turn_meta", {})
+    if isinstance(turn_meta, dict) and turn_meta.get("origin_just_set"):
+        return True
+
+    trip_plan = state.get("trip_plan", {})
+    has_origin = isinstance(trip_plan, dict) and bool(trip_plan.get("origin"))
+
+    if classifier.change_type in (
+        ChangeType.INITIAL_PLAN,
+        ChangeType.DESTINATION_CHANGE,
+        ChangeType.LOGISTICS,
+    ):
+        return has_origin
+
+    return classifier.change_type == ChangeType.SETTINGS and (
+        classifier.flight_direct_only is not None or bool(classifier.flight_cabin_class)
+    )
+
+
+def _tile_refresh_types(
+    classifier: ClassifierOutput,
+    state: Dict[str, Any],
+) -> List[str]:
     """Which tile types to refresh."""
     ct = classifier.change_type
     if ct in (ChangeType.INITIAL_PLAN, ChangeType.DESTINATION_CHANGE):
         return ["flights", "hotels", "activities"]
+    if ct == ChangeType.DAY_COUNT:
+        return ["activities", "flights", "hotels"]
     if ct == ChangeType.LOGISTICS:
         return ["flights"]
     if ct == ChangeType.SETTINGS:
@@ -926,12 +1188,19 @@ def _tile_refresh_types(classifier: ClassifierOutput) -> List[str]:
         ChangeType.REMOVE_ACTIVITY,
         ChangeType.SWAP_ACTIVITY,
     ):
-        return ["activities"]
+        types = ["activities"]
+        if _has_current_or_future_nofly_specialist(classifier, state):
+            types.append("flights")
+        return types
     if ct == ChangeType.PREFERENCE:
-        # APD change → regenerate activity tiles with new density
-        if classifier.activities_per_day is not None:
-            return ["activities"]
-        return []
+        types: List[str] = []
+        if _classifier_has_activity_refresh_signal(classifier):
+            types.append("activities")
+        if classifier.activities_per_day is not None and "activities" not in types:
+            types.append("activities")
+        if types and _has_current_or_future_nofly_specialist(classifier, state):
+            types.append("flights")
+        return types
     return []
 
 
@@ -959,6 +1228,596 @@ def _scaled_target(
             available * apd, 10
         )  # Cap at 10 — structured output reliability drops beyond this
     return None
+
+
+def _specialist_month_bucket(start_date: str | None, end_date: str | None) -> str | None:
+    """Return the specialist cache month bucket for a date range."""
+    if not start_date or not end_date:
+        return None
+    try:
+        start = datetime.strptime(str(start_date)[:10], "%Y-%m-%d").date()
+        end = datetime.strptime(str(end_date)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+    if end < start:
+        end = start
+    midpoint = start + (end - start) / 2
+    return f"{midpoint.year}-{midpoint.month:02d}"
+
+
+def _normalize_activity_settings_for_date_continuity(activity_settings: Any) -> Dict[str, Any]:
+    """Normalize activity settings for date-continuity comparisons."""
+    if not isinstance(activity_settings, dict):
+        return {}
+
+    categories = activity_settings.get("categories", [])
+    normalized_categories = sorted(
+        _norm_topic(category) for category in categories if _norm_topic(category)
+    )
+
+    day_preferences = activity_settings.get("day_preferences", {})
+    if not isinstance(day_preferences, dict):
+        day_preferences = {}
+    normalized_day_preferences = {
+        _norm_topic(topic): value for topic, value in day_preferences.items() if _norm_topic(topic)
+    }
+
+    skill_level = activity_settings.get("skill_level")
+    normalized_skill_level = str(skill_level).strip().lower() if skill_level else None
+
+    return {
+        "categories": normalized_categories,
+        "day_preferences": normalized_day_preferences,
+        "activities_per_day": activity_settings.get("activities_per_day"),
+        "skill_level": normalized_skill_level,
+    }
+
+
+def _specialist_target_count_from_inputs(
+    topic: str,
+    trip_plan: Dict[str, Any],
+    trip_settings: Dict[str, Any],
+) -> Optional[int]:
+    """Compute the coordinator brief target for a specialist from raw state inputs."""
+    activity_settings = trip_settings.get("activity_settings", {})
+    if not isinstance(activity_settings, dict):
+        activity_settings = {}
+    day_preferences = activity_settings.get("day_preferences", {})
+    if not isinstance(day_preferences, dict):
+        day_preferences = {}
+    apd = activity_settings.get("activities_per_day") or 2
+    if not isinstance(apd, int):
+        apd = 2
+    num_days = _compute_num_days(
+        str(trip_plan.get("start_date") or ""),
+        str(trip_plan.get("end_date") or ""),
+    )
+    return _scaled_target(day_preferences.get(topic), apd, num_days)
+
+
+def _parse_trip_date_range(trip_plan: Dict[str, Any]) -> tuple[Any, Any] | None:
+    """Parse and normalize a trip date range into date objects."""
+    start_date = trip_plan.get("start_date")
+    end_date = trip_plan.get("end_date")
+    if not start_date or not end_date:
+        return None
+    try:
+        start = datetime.strptime(str(start_date)[:10], "%Y-%m-%d").date()
+        end = datetime.strptime(str(end_date)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+    if end < start:
+        end = start
+    return start, end
+
+
+def _specialist_trip_duration_days(trip_plan: Dict[str, Any]) -> int:
+    """Return exact trip duration days for specialist reuse checks."""
+    return _compute_num_days(
+        str(trip_plan.get("start_date") or ""),
+        str(trip_plan.get("end_date") or ""),
+    )
+
+
+def _has_reusable_specialist_content(topic: str, plan: Any, state: Dict[str, Any]) -> bool:
+    """Return True when an existing specialist plan has content worth preserving."""
+    if isinstance(plan, dict):
+        day_plans = plan.get("day_plans", [])
+        if isinstance(day_plans, list) and any(isinstance(dp, dict) for dp in day_plans):
+            return True
+
+    for section in state.get("strategy_sections", []):
+        if not isinstance(section, dict):
+            continue
+        if _norm_topic(section.get("specialist_type", "")) != topic:
+            continue
+        if section.get("feasibility_status") == "infeasible":
+            continue
+        content_added = section.get("content_added", [])
+        if isinstance(content_added, list) and content_added:
+            return True
+
+    return False
+
+
+def _is_pure_tail_extension(
+    previous_trip_plan: Dict[str, Any],
+    current_trip_plan: Dict[str, Any],
+) -> bool:
+    """Return True when the new dates extend the existing trip at the tail only."""
+    previous_range = _parse_trip_date_range(previous_trip_plan)
+    current_range = _parse_trip_date_range(current_trip_plan)
+    if not previous_range or not current_range:
+        return False
+
+    previous_destination = str(previous_trip_plan.get("destination") or "").strip().lower()
+    current_destination = str(current_trip_plan.get("destination") or "").strip().lower()
+    if not previous_destination or previous_destination != current_destination:
+        return False
+
+    previous_start, previous_end = previous_range
+    current_start, current_end = current_range
+    return current_start == previous_start and current_end > previous_end
+
+
+def _should_preserve_specialist_for_date_change(
+    topic: str,
+    plan: Any,
+    state: Dict[str, Any],
+) -> bool:
+    """Keep an existing specialist plan on safe continuity-preserving date changes."""
+    if not isinstance(plan, dict) or not plan:
+        return False
+
+    pre_change = state.get("_pre_change_briefs")
+    if not isinstance(pre_change, dict):
+        return False
+
+    previous_trip_plan = pre_change.get("trip_plan", {})
+    previous_trip_settings = pre_change.get("trip_settings", {})
+    current_trip_plan = state.get("trip_plan", {})
+    current_trip_settings = state.get("trip_settings", {})
+    if not isinstance(previous_trip_plan, dict) or not isinstance(previous_trip_settings, dict):
+        return False
+    if not isinstance(current_trip_plan, dict) or not isinstance(current_trip_settings, dict):
+        return False
+
+    previous_bucket = _specialist_month_bucket(
+        previous_trip_plan.get("start_date"),
+        previous_trip_plan.get("end_date"),
+    )
+    current_bucket = _specialist_month_bucket(
+        current_trip_plan.get("start_date"),
+        current_trip_plan.get("end_date"),
+    )
+    if not previous_bucket or previous_bucket != current_bucket:
+        return False
+
+    previous_target = _specialist_target_count_from_inputs(
+        topic,
+        previous_trip_plan,
+        previous_trip_settings,
+    )
+    current_target = _specialist_target_count_from_inputs(
+        topic,
+        current_trip_plan,
+        current_trip_settings,
+    )
+    if previous_target != current_target:
+        return False
+
+    previous_duration = _specialist_trip_duration_days(previous_trip_plan)
+    current_duration = _specialist_trip_duration_days(current_trip_plan)
+    if previous_duration == current_duration:
+        return True
+    if current_duration < previous_duration:
+        return False
+
+    return _is_pure_tail_extension(
+        previous_trip_plan,
+        current_trip_plan,
+    ) and _has_reusable_specialist_content(topic, plan, state)
+
+
+def _refresh_preserved_specialist_section_metadata(
+    state: Dict[str, Any],
+    topics: List[str],
+) -> None:
+    """Refresh cache metadata on preserved specialist sections after date changes."""
+    target_topics = {_norm_topic(topic) for topic in topics if _norm_topic(topic)}
+    if not target_topics:
+        return
+
+    trip_plan = state.get("trip_plan", {})
+    trip_settings = state.get("trip_settings", {})
+    if not isinstance(trip_plan, dict) or not isinstance(trip_settings, dict):
+        return
+
+    start_date = trip_plan.get("start_date")
+    end_date = trip_plan.get("end_date")
+    if not start_date or not end_date:
+        return
+
+    activity_settings = trip_settings.get("activity_settings", {})
+    if not isinstance(activity_settings, dict):
+        activity_settings = {}
+    day_preferences = activity_settings.get("day_preferences", {})
+    if not isinstance(day_preferences, dict):
+        day_preferences = {}
+
+    current_dates = f"{start_date}:{end_date}"
+    destination = trip_plan.get("destination")
+    skill_level = activity_settings.get("skill_level")
+
+    sections = state.get("strategy_sections", [])
+    if not isinstance(sections, list):
+        return
+
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        topic = _norm_topic(section.get("specialist_type", ""))
+        if topic not in target_topics:
+            continue
+        section["subtitle"] = destination
+        section["_cache_dates"] = current_dates
+        section["_cache_day_pref"] = day_preferences.get(topic)
+        section["_cache_skill_level"] = skill_level
+
+
+def _date_change_continuity_details(
+    classifier: ClassifierOutput,
+    state: Dict[str, Any],
+    plan: ExecutionPlan,
+) -> Optional[Dict[str, Any]]:
+    """Summarize whether a DATE_CHANGE preserved safe trip continuity."""
+    if classifier.change_type != ChangeType.DATE_CHANGE:
+        return None
+
+    pre_change = state.get("_pre_change_briefs")
+    previous_trip_plan = pre_change.get("trip_plan", {}) if isinstance(pre_change, dict) else {}
+    previous_trip_settings = (
+        pre_change.get("trip_settings", {}) if isinstance(pre_change, dict) else {}
+    )
+    current_trip_plan = state.get("trip_plan", {})
+    current_trip_settings = state.get("trip_settings", {})
+
+    same_month_bucket = False
+    same_activity_settings = False
+    safe_tail_extension = False
+    if (
+        isinstance(previous_trip_plan, dict)
+        and isinstance(previous_trip_settings, dict)
+        and isinstance(current_trip_plan, dict)
+        and isinstance(current_trip_settings, dict)
+    ):
+        previous_bucket = _specialist_month_bucket(
+            previous_trip_plan.get("start_date"),
+            previous_trip_plan.get("end_date"),
+        )
+        current_bucket = _specialist_month_bucket(
+            current_trip_plan.get("start_date"),
+            current_trip_plan.get("end_date"),
+        )
+        same_month_bucket = bool(previous_bucket and previous_bucket == current_bucket)
+        same_activity_settings = _normalize_activity_settings_for_date_continuity(
+            previous_trip_settings.get("activity_settings")
+        ) == _normalize_activity_settings_for_date_continuity(
+            current_trip_settings.get("activity_settings")
+        )
+        safe_tail_extension = (
+            same_month_bucket
+            and same_activity_settings
+            and _is_pure_tail_extension(previous_trip_plan, current_trip_plan)
+        )
+
+    dispatch_topics: set[str] = set()
+    preserve_topics = {_norm_topic(topic) for topic in _compute_preserve_list(classifier, state)}
+    preserve_topics.discard("")
+    for step in plan.steps:
+        if step.step_type != StepType.DISPATCH_SPECIALISTS:
+            continue
+        params = step.params if isinstance(step.params, dict) else {}
+        dispatch_topics.update(
+            _norm_topic(topic) for topic in params.get("topics", []) if _norm_topic(topic)
+        )
+        preserve_topics.update(
+            _norm_topic(topic) for topic in params.get("preserves", []) if _norm_topic(topic)
+        )
+
+    return {
+        "safe_tail_extension": safe_tail_extension,
+        "same_month_bucket": same_month_bucket,
+        "same_activity_settings": same_activity_settings,
+        "dispatch": sorted(dispatch_topics),
+        "preserve": sorted(preserve_topics),
+    }
+
+
+def _normalize_activity_title_key(value: Any) -> str:
+    """Normalize activity/block titles for post-build tile matching."""
+    if not isinstance(value, str):
+        return ""
+    normalized = value.strip().lower().replace("&", " and ")
+    normalized = re.sub(r"\s*\([^)]*\)\s*$", "", normalized)
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    return " ".join(normalized.split())
+
+
+def _normalize_activity_exact_title_key(value: Any) -> str:
+    """Normalize titles conservatively for exact-title rehydration matching."""
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.strip().lower().split())
+
+
+def _apply_activity_tile_enrichment_to_day_cards(
+    activity_tiles: list[Dict[str, Any]],
+    day_cards: list[Dict[str, Any]],
+) -> None:
+    """Patch itinerary blocks from enriched activity tiles after the builder returns.
+
+    Builder normally inherits deeplinks/images from already-enriched tiles. When
+    partner enrichment moves off the pre-builder path, we need a post-build pass
+    to rehydrate those affiliate fields on the rendered blocks before the final
+    envelope is emitted.
+    """
+    if not activity_tiles or not day_cards:
+        return
+
+    def _provider_priority(tile: Dict[str, Any]) -> int:
+        provider = str(tile.get("provider") or "").lower()
+        partner = str(tile.get("partner") or "").lower()
+        if provider == "viator" or partner == "viator":
+            return 3
+        if provider == "gyg" or partner in {"gyg", "getyourguide", "get_your_guide"}:
+            return 2
+        if partner:
+            return 1
+        return 0
+
+    tile_by_id: dict[str, Dict[str, Any]] = {}
+    tile_by_partner_product_id: dict[str, Dict[str, Any]] = {}
+    exact_title_candidates: dict[str, list[Dict[str, Any]]] = defaultdict(list)
+    relaxed_title_candidates: dict[str, list[Dict[str, Any]]] = defaultdict(list)
+    for tile in activity_tiles:
+        if not isinstance(tile, dict):
+            continue
+        tile_id = str(tile.get("id") or "").strip()
+        if tile_id:
+            tile_by_id[tile_id] = tile
+        partner_product_id = str(tile.get("partner_product_id") or "").strip()
+        if partner_product_id:
+            existing = tile_by_partner_product_id.get(partner_product_id)
+            if existing is None or _provider_priority(tile) > _provider_priority(existing):
+                tile_by_partner_product_id[partner_product_id] = tile
+
+        exact_title_key = _normalize_activity_exact_title_key(tile.get("title"))
+        if exact_title_key:
+            exact_title_candidates[exact_title_key].append(tile)
+        title_key = _normalize_activity_title_key(tile.get("title"))
+        if title_key:
+            relaxed_title_candidates[title_key].append(tile)
+
+    def _select_unique_title_matches(
+        candidates: dict[str, list[Dict[str, Any]]],
+    ) -> dict[str, Dict[str, Any]]:
+        unique_matches: dict[str, Dict[str, Any]] = {}
+        for key, tiles_for_key in candidates.items():
+            unique_ids = {
+                str(tile.get("id") or tile.get("partner_product_id") or "").strip()
+                for tile in tiles_for_key
+            }
+            unique_ids.discard("")
+            if len(unique_ids) > 1:
+                continue
+            unique_matches[key] = max(tiles_for_key, key=_provider_priority)
+        return unique_matches
+
+    tile_by_exact_title = _select_unique_title_matches(exact_title_candidates)
+    tile_by_title = _select_unique_title_matches(relaxed_title_candidates)
+
+    for card in day_cards:
+        if not isinstance(card, dict):
+            continue
+        blocks = card.get("blocks", [])
+        if not isinstance(blocks, list):
+            continue
+
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            if block.get("is_buffer"):
+                continue
+            if block.get("activity_type") == "free_day":
+                continue
+
+            block_id = str(block.get("id") or "").strip()
+            tile = tile_by_id.get(block_id) if block_id else None
+            booked_tile = block.get("booked_tile")
+            if tile is None and isinstance(booked_tile, dict):
+                booked_tile_id = str(booked_tile.get("id") or "").strip()
+                if booked_tile_id:
+                    tile = tile_by_id.get(booked_tile_id)
+            if tile is None and isinstance(booked_tile, dict):
+                partner_product_id = str(booked_tile.get("partner_product_id") or "").strip()
+                if partner_product_id:
+                    tile = tile_by_partner_product_id.get(partner_product_id)
+            if tile is None:
+                title_candidates = []
+                if isinstance(booked_tile, dict):
+                    title_candidates.append(booked_tile.get("title"))
+                title_candidates.append(block.get("summary"))
+                for candidate in title_candidates:
+                    exact_title_key = _normalize_activity_exact_title_key(candidate)
+                    if exact_title_key:
+                        tile = tile_by_exact_title.get(exact_title_key)
+                    if tile is not None:
+                        break
+                    title_key = _normalize_activity_title_key(candidate)
+                    if not title_key:
+                        continue
+                    tile = tile_by_title.get(title_key)
+                    if tile is not None:
+                        break
+            if tile is None:
+                continue
+
+            partner_override = _provider_priority(tile) >= 2
+            tile_deeplink = tile.get("deeplink") or tile.get("deeplink_url") or tile.get("maps_uri")
+            tile_image = tile.get("image_url")
+            tile_coords = tile.get("coordinates")
+            tile_geo = tile.get("geo") or (tile.get("meta") or {}).get("geo") or {}
+
+            if not block.get("id") and tile.get("id"):
+                block["id"] = tile["id"]
+            if tile_deeplink and (not block.get("deeplink") or partner_override):
+                block["deeplink"] = tile_deeplink
+            if tile_image and (not block.get("image_url") or partner_override):
+                block["image_url"] = tile_image
+            if tile.get("rating") is not None and (block.get("rating") is None or partner_override):
+                block["rating"] = tile["rating"]
+            if tile.get("review_count") is not None and (
+                block.get("review_count") is None or partner_override
+            ):
+                block["review_count"] = tile["review_count"]
+            if tile.get("price_level") is not None and block.get("price_level") is None:
+                block["price_level"] = tile["price_level"]
+            if tile.get("price_estimate") is not None and block.get("price_estimate") is None:
+                block["price_estimate"] = tile["price_estimate"]
+            if tile.get("google_place_id") and not block.get("google_place_id"):
+                block["google_place_id"] = tile["google_place_id"]
+            if not block.get("booked_tile"):
+                block["booked_tile"] = tile
+            if block.get("booked_tile"):
+                block["requires_booking"] = True
+            if block.get("booking_category") is None and block.get("booked_tile"):
+                block["booking_category"] = "activity"
+
+            if block.get("coordinates"):
+                continue
+            if isinstance(tile_coords, dict) and {
+                "lat",
+                "lng",
+            }.issubset(tile_coords):
+                block["coordinates"] = {"lat": tile_coords["lat"], "lng": tile_coords["lng"]}
+                continue
+            if isinstance(tile_coords, list) and len(tile_coords) >= 2:
+                block["coordinates"] = {"lng": tile_coords[0], "lat": tile_coords[1]}
+                continue
+            if (
+                isinstance(tile_geo, dict)
+                and tile_geo.get("lat") is not None
+                and tile_geo.get("lng") is not None
+            ):
+                block["coordinates"] = {"lat": tile_geo["lat"], "lng": tile_geo["lng"]}
+
+
+async def _run_itinerary_enrichment_pipeline(
+    trip_plan: Dict[str, Any],
+    activity_tiles: list[Dict[str, Any]],
+    day_cards: list[Dict[str, Any]],
+    session_id: str = "",
+) -> Dict[str, Any]:
+    """Run deferred tile/day-card enrichment outside the builder critical path."""
+    destination = trip_plan.get("destination", "")
+    currency = trip_plan.get("currency") or "USD"
+    has_viator = settings.viator_enabled and settings.viator_api_key
+    has_gyg = settings.get_your_guide_enabled and settings.get_your_guide_api_key
+
+    if destination and activity_tiles and (has_viator or has_gyg):
+        from app.services.partner_enrichment import enrich_tiles_with_partners
+
+        await enrich_tiles_with_partners(activity_tiles, destination, currency)
+        _apply_activity_tile_enrichment_to_day_cards(activity_tiles, day_cards)
+
+    if day_cards:
+        shadow_state = {
+            "trip_plan": trip_plan,
+            "tiles": {"activities": activity_tiles},
+            "session_id": session_id,
+        }
+        await _post_build_enrich_placed_activities(shadow_state, day_cards)
+
+    return {"activities": activity_tiles, "day_cards": day_cards}
+
+
+def _cancel_pending_itinerary_enrichment(state: Dict[str, Any]) -> None:
+    """Cancel any deferred itinerary enrichment task still attached to state."""
+    task = state.pop(_PENDING_ITINERARY_ENRICHMENT_TASK_KEY, None)
+    if isinstance(task, asyncio.Task) and not task.done():
+        task.cancel()
+
+
+def _start_pending_itinerary_enrichment(
+    state: Dict[str, Any],
+    session_id: str = "",
+) -> None:
+    """Start deferred enrichment so builder output can stream before it finishes."""
+    _cancel_pending_itinerary_enrichment(state)
+
+    trip_plan = state.get("trip_plan", {})
+    destination = trip_plan.get("destination", "")
+    activity_tiles = (state.get("tiles") or {}).get("activities", [])
+    day_cards = state.get("day_cards", [])
+    if not isinstance(activity_tiles, list):
+        activity_tiles = []
+    if not isinstance(day_cards, list):
+        day_cards = []
+
+    has_partner_enrichment = (
+        bool(destination)
+        and bool(activity_tiles)
+        and (
+            (settings.viator_enabled and settings.viator_api_key)
+            or (settings.get_your_guide_enabled and settings.get_your_guide_api_key)
+        )
+    )
+    has_post_build_enrichment = (
+        bool(destination)
+        and bool(day_cards)
+        and settings.use_google_places_provider
+        and settings.google_places_enrichment_enabled
+    )
+    if not has_partner_enrichment and not has_post_build_enrichment:
+        return
+
+    state[_PENDING_ITINERARY_ENRICHMENT_TASK_KEY] = asyncio.create_task(
+        _run_itinerary_enrichment_pipeline(
+            trip_plan=copy.deepcopy(trip_plan),
+            activity_tiles=copy.deepcopy(activity_tiles),
+            day_cards=copy.deepcopy(day_cards),
+            session_id=session_id,
+        )
+    )
+
+
+async def _await_pending_itinerary_enrichment(state: Dict[str, Any]) -> None:
+    """Apply deferred itinerary enrichment results back onto live state."""
+    task = state.pop(_PENDING_ITINERARY_ENRICHMENT_TASK_KEY, None)
+    if not isinstance(task, asyncio.Task):
+        return
+
+    try:
+        result = await task
+    except asyncio.CancelledError:
+        return
+    except Exception as exc:
+        logger.warning("[coordinator] Deferred itinerary enrichment failed: %s", exc)
+        return
+
+    if not isinstance(result, dict):
+        return
+
+    activities = result.get("activities")
+    if isinstance(activities, list):
+        tiles = state.setdefault("tiles", {})
+        if isinstance(tiles, dict):
+            tiles["activities"] = activities
+
+    day_cards = result.get("day_cards")
+    if isinstance(day_cards, list):
+        state["day_cards"] = day_cards
 
 
 def build_brief(
@@ -1148,6 +2007,7 @@ def _merge_doc_settings(
         if value is not None and field in _ALLOWED_DOC_SETTINGS_KEYS:
             trip_settings[field] = value
     state["trip_settings"] = trip_settings
+    _sync_booking_type_overrides(state, previous_settings, trip_settings)
 
     # Track settings deltas so persistence can correctly apply explicit clears.
     turn_meta = dict(state.get("turn_meta", {}))
@@ -1641,7 +2501,8 @@ def _apply_classifier_to_state(
     if has_origin_now and not old_origin:
         origin_just_set = True
         current_flights_mode = booking_types.get("flights")
-        if current_flights_mode in (None, "off", ""):
+        user_disabled_flights = "flights" in _get_user_disabled_booking_types(state)
+        if current_flights_mode in (None, "off", "") and not user_disabled_flights:
             booking_types["flights"] = "suggested"
             fields_changed.append("booking_types.flights")
             turn_steps.append(
@@ -1997,6 +2858,72 @@ def _specialist_content_to_tiles(
     return tiles
 
 
+def _normalize_constraint_key(constraint: Dict[str, Any]) -> str:
+    """Build a stable dedupe key for canonical builder constraints."""
+    rule = str(constraint.get("rule") or constraint.get("constraint_id") or "").strip().lower()
+    return rule.replace("-", "_").replace(" ", "_")
+
+
+def _collect_canonical_builder_constraints(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Collect canonical trip constraints for the itinerary builder."""
+    collected: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    active_topics = _active_specialist_topics(state)
+
+    raw_sources = [state.get("constraints")]
+    trip_plan = state.get("trip_plan", {})
+    if isinstance(trip_plan, dict):
+        raw_sources.append(trip_plan.get("constraints"))
+
+    for raw_constraints in raw_sources:
+        if not isinstance(raw_constraints, list):
+            continue
+        for constraint in raw_constraints:
+            if hasattr(constraint, "model_dump"):
+                payload = constraint.model_dump()
+            elif isinstance(constraint, dict):
+                payload = dict(constraint)
+            else:
+                continue
+            key = _normalize_constraint_key(payload)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            collected.append(payload)
+
+    violation_to_rule = {
+        "ALTITUDE_AFTER_DIVE": "no_altitude_after_dive",
+    }
+    for topic in sorted(active_topics):
+        config = SPECIALIST_REGISTRY.get(topic)
+        if not config:
+            continue
+        for cross_domain in config.cross_domain_blocks:
+            if not active_topics.intersection(
+                {_norm_topic(target) for target in cross_domain.target_specialists}
+            ):
+                continue
+            canonical_rule = violation_to_rule.get(cross_domain.violation_code)
+            if not canonical_rule:
+                continue
+            key = _normalize_constraint_key({"rule": canonical_rule})
+            if key in seen:
+                continue
+            seen.add(key)
+            collected.append(
+                {
+                    "constraint_id": canonical_rule,
+                    "type": "temporal",
+                    "rule": canonical_rule,
+                    "severity": cross_domain.severity,
+                    "reason": cross_domain.reason,
+                    "buffer_hours": cross_domain.buffer_hours,
+                }
+            )
+
+    return collected
+
+
 def _inject_specialist_tiles_into_state(state: Dict[str, Any]) -> None:
     """Inject specialist content_added items as real tiles into state.
 
@@ -2221,10 +3148,73 @@ async def _post_build_enrich_placed_activities(
 
         # Build lookup of existing GP-enriched activity tiles to avoid re-searching
         existing_tiles = state.get("tiles", {}).get("activities", [])
-        _gp_by_title: dict[str, dict] = {}
+        _gp_title_candidates: dict[str, list[dict]] = defaultdict(list)
         for t in existing_tiles:
             if isinstance(t, dict) and t.get("google_place_id"):
-                _gp_by_title[_normalize_title_for_cache(t.get("title", ""))] = t
+                title_key = _normalize_title_for_cache(t.get("title", ""))
+                if title_key:
+                    _gp_title_candidates[title_key].append(t)
+
+        _gp_by_title: dict[str, dict] = {}
+        for title_key, candidates in _gp_title_candidates.items():
+            unique_ids = {
+                str(candidate.get("id") or candidate.get("google_place_id") or "").strip()
+                for candidate in candidates
+            }
+            unique_ids.discard("")
+            if len(unique_ids) > 1:
+                continue
+            _gp_by_title[title_key] = candidates[0]
+
+        def _apply_booked_tile_fallback(block: dict[str, Any]) -> bool:
+            booked_tile = block.get("booked_tile")
+            if not isinstance(booked_tile, dict):
+                return False
+
+            block_has_viator = "viator.com" in (block.get("deeplink") or "")
+            tile_coords = booked_tile.get("coordinates")
+            tile_geo = booked_tile.get("geo") or (booked_tile.get("meta") or {}).get("geo") or {}
+
+            if not block.get("coordinates"):
+                if isinstance(tile_coords, list) and len(tile_coords) >= 2:
+                    block["coordinates"] = {"lng": tile_coords[0], "lat": tile_coords[1]}
+                elif isinstance(tile_coords, dict) and {
+                    "lat",
+                    "lng",
+                }.issubset(tile_coords):
+                    block["coordinates"] = {"lat": tile_coords["lat"], "lng": tile_coords["lng"]}
+                elif (
+                    isinstance(tile_geo, dict)
+                    and tile_geo.get("lat") is not None
+                    and tile_geo.get("lng") is not None
+                ):
+                    block["coordinates"] = {"lat": tile_geo["lat"], "lng": tile_geo["lng"]}
+
+            if booked_tile.get("google_place_id") and not block.get("google_place_id"):
+                block["google_place_id"] = booked_tile["google_place_id"]
+
+            if not block_has_viator and not block.get("deeplink"):
+                deeplink = (
+                    booked_tile.get("deeplink")
+                    or booked_tile.get("deeplink_url")
+                    or booked_tile.get("maps_uri")
+                )
+                if deeplink:
+                    block["deeplink"] = deeplink
+
+            if not block_has_viator and not block.get("image_url") and booked_tile.get("image_url"):
+                block["image_url"] = booked_tile["image_url"]
+
+            if booked_tile.get("price_level") is not None and block.get("price_level") is None:
+                block["price_level"] = booked_tile["price_level"]
+
+            if booked_tile.get("rating") is not None and block.get("rating") is None:
+                block["rating"] = booked_tile["rating"]
+
+            if booked_tile.get("review_count") is not None and block.get("review_count") is None:
+                block["review_count"] = booked_tile["review_count"]
+
+            return bool(block.get("google_place_id") and block.get("coordinates"))
 
         # Collect non-buffer blocks missing google_place_id that have a summary
         proxies: list[Dict[str, Any]] = []
@@ -2239,13 +3229,33 @@ async def _post_build_enrich_placed_activities(
                 block_type = block.get("type", "")
                 if block_type in ("buffer", "travel", "flight", "hotel_checkin", "hotel_checkout"):
                     continue
+                if block.get("activity_type") == "free_day":
+                    continue
                 if block.get("google_place_id") and block.get("coordinates"):
                     continue
                 summary = block.get("summary", "")
+                if summary.strip().lower().startswith("free day"):
+                    continue
                 if not summary:
                     continue
-                # Check if an existing GP tile matches this block
-                existing = _gp_by_title.get(_normalize_title_for_cache(summary))
+                if _apply_booked_tile_fallback(block):
+                    _reused_count += 1
+                    continue
+
+                booked_tile = block.get("booked_tile")
+                title_candidates: list[str] = []
+                if isinstance(booked_tile, dict):
+                    booked_title = str(booked_tile.get("title") or "").strip()
+                    if booked_title:
+                        title_candidates.append(booked_title)
+                if summary and summary not in title_candidates:
+                    title_candidates.append(summary)
+
+                existing = None
+                for candidate in title_candidates:
+                    existing = _gp_by_title.get(_normalize_title_for_cache(candidate))
+                    if existing:
+                        break
                 if existing:
                     block_has_viator = "viator.com" in (block.get("deeplink") or "")
                     block["google_place_id"] = existing.get("google_place_id")
@@ -2265,17 +3275,26 @@ async def _post_build_enrich_placed_activities(
                                 block["image_url"] = signed_url
                         elif existing.get("image_url"):
                             block["image_url"] = existing["image_url"]
-                    # Rating propagation disabled — no real provider sources exist
                     if existing.get("price_level") is not None and block.get("price_level") is None:
                         block["price_level"] = existing["price_level"]
                     _reused_count += 1
                     continue
+                lookup_title = title_candidates[0] if title_candidates else summary
                 coords = block.get("coordinates")
+                proxy_coords = None
+                if isinstance(coords, list):
+                    proxy_coords = coords
+                elif (
+                    isinstance(coords, dict)
+                    and coords.get("lat") is not None
+                    and coords.get("lng") is not None
+                ):
+                    proxy_coords = [coords["lng"], coords["lat"]]
                 proxies.append(
                     {
                         "id": block.get("id", f"post_enrich_{day_idx}_{block_idx}"),
-                        "title": summary,
-                        "coordinates": coords if isinstance(coords, list) else None,
+                        "title": lookup_title,
+                        "coordinates": proxy_coords,
                         "photo_name": None,
                         "image_url": block.get("image_url"),
                         "meta": {},
@@ -2349,9 +3368,297 @@ async def _post_build_enrich_placed_activities(
         logger.warning("[coordinator] Post-build enrichment failed (graceful): %s", exc)
 
 
+def _normalize_step_events(
+    step_result: Any,
+) -> list[Dict[str, Any]]:
+    """Normalize step return values into a flat list of SSE events."""
+    if step_result is None:
+        return []
+    if isinstance(step_result, dict):
+        return [step_result]
+    if isinstance(step_result, list):
+        return [event for event in step_result if isinstance(event, dict)]
+    return []
+
+
 # ---------------------------------------------------------------------------
 # Tile search (Phase 2: minimal bridge)
 # ---------------------------------------------------------------------------
+
+
+def _preserved_specialist_tiles_for_turn(
+    state: Dict[str, Any],
+    classifier: ClassifierOutput,
+    existing_activity_tiles: Any,
+) -> List[Dict[str, Any]]:
+    """Collect prior specialist tiles that should survive the current refresh."""
+    if not isinstance(existing_activity_tiles, list):
+        return []
+
+    preserved_topics = {
+        _norm_topic(topic)
+        for topic in _compute_preserve_list(classifier, state)
+        if _norm_topic(topic) in TIER1_SPECIALIST_NAMES
+    }
+    if not preserved_topics:
+        return []
+
+    preserved_tiles: List[Dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for tile in existing_activity_tiles:
+        if not isinstance(tile, dict):
+            continue
+        tile_id = str(tile.get("id") or "")
+        if not tile_id or tile_id in seen_ids:
+            continue
+        meta = tile.get("meta", {})
+        if not isinstance(meta, dict):
+            meta = {}
+        specialist_type = _norm_topic(meta.get("specialist_type") or meta.get("category") or "")
+        if specialist_type not in preserved_topics:
+            continue
+        if (
+            tile.get("source_agent") != "vertical_specialist"
+            and tile.get("partner") != "vertical_specialist"
+            and not tile_id.startswith("spec_")
+        ):
+            continue
+        seen_ids.add(tile_id)
+        preserved_tiles.append(tile)
+
+    return preserved_tiles
+
+
+def _merge_activity_tiles(
+    refreshed_tiles: Any,
+    preserved_specialist_tiles: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Append preserved specialist tiles after fresh results without duplicate IDs."""
+    merged: List[Dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    if isinstance(refreshed_tiles, list):
+        for tile in refreshed_tiles:
+            if not isinstance(tile, dict):
+                continue
+            tile_id = str(tile.get("id") or "")
+            if tile_id:
+                seen_ids.add(tile_id)
+            merged.append(tile)
+
+    for tile in preserved_specialist_tiles:
+        tile_id = str(tile.get("id") or "")
+        if tile_id and tile_id in seen_ids:
+            continue
+        if tile_id:
+            seen_ids.add(tile_id)
+        merged.append(tile)
+
+    return merged
+
+
+def _partner_tile_priority(tile: Dict[str, Any]) -> int:
+    """Prefer stronger affiliate matches when multiple prior tiles could match."""
+    provider = str(tile.get("provider") or "").lower()
+    partner = str(tile.get("partner") or "").lower()
+    if provider == "viator" or partner == "viator":
+        return 3
+    if provider == "gyg" or partner in {"gyg", "getyourguide", "get_your_guide"}:
+        return 2
+    if partner:
+        return 1
+    return 0
+
+
+def _has_partner_enrichment(tile: Dict[str, Any]) -> bool:
+    """Return True when an activity tile already carries affiliate match data."""
+    if not isinstance(tile, dict):
+        return False
+
+    provider = str(tile.get("provider") or "").lower()
+    partner = str(tile.get("partner") or "").lower()
+    if provider in {"viator", "gyg"} or partner in {"viator", "gyg", "getyourguide"}:
+        return True
+
+    meta = tile.get("meta")
+    if not isinstance(meta, dict):
+        return False
+    return bool(meta.get("viator_product_code") or meta.get("gyg_tour_id"))
+
+
+def _copy_partner_enrichment_fields(
+    source_tile: Dict[str, Any],
+    target_tile: Dict[str, Any],
+) -> None:
+    """Copy affiliate fields from a previous matching tile onto a refreshed tile."""
+    if _has_partner_enrichment(target_tile):
+        return
+
+    for field in (
+        "price_estimate",
+        "live_price",
+        "currency",
+        "price_basis",
+        "is_estimate_only",
+        "image_url",
+        "rating",
+        "review_count",
+        "deeplink",
+        "deeplink_url",
+        "partner",
+        "partner_product_id",
+        "provider",
+    ):
+        value = source_tile.get(field)
+        if value is None or value == "":
+            continue
+        target_tile[field] = value
+
+    if not target_tile.get("geo") and source_tile.get("geo"):
+        target_tile["geo"] = source_tile["geo"]
+
+    source_meta = source_tile.get("meta")
+    if not isinstance(source_meta, dict):
+        return
+    target_meta = target_tile.get("meta")
+    if not isinstance(target_meta, dict):
+        target_meta = {}
+
+    for field in ("viator_product_code", "gyg_tour_id", "duration_hours"):
+        value = source_meta.get(field)
+        if value is None or value == "":
+            continue
+        target_meta[field] = value
+    if not target_meta.get("category") and source_meta.get("category"):
+        target_meta["category"] = source_meta["category"]
+    target_tile["meta"] = target_meta
+
+
+def _partner_tile_category_contexts(tile: Dict[str, Any]) -> set[str]:
+    """Collect normalized category context fields used for conservative reuse."""
+    values: set[str] = set()
+    meta = tile.get("meta")
+    meta_dict = meta if isinstance(meta, dict) else {}
+    for raw in (
+        tile.get("category"),
+        tile.get("browse_category"),
+        meta_dict.get("category"),
+    ):
+        if not isinstance(raw, str):
+            continue
+        normalized = re.sub(r"[^a-z0-9]+", "_", raw.strip().lower()).strip("_")
+        if normalized:
+            values.add(normalized)
+    return values
+
+
+def _partner_tile_context_compatible(
+    source_tile: Dict[str, Any],
+    target_tile: Dict[str, Any],
+) -> bool:
+    """Reject reuse when the prior and refreshed tiles clearly represent different categories."""
+    source_contexts = _partner_tile_category_contexts(source_tile)
+    target_contexts = _partner_tile_category_contexts(target_tile)
+    if not source_contexts or not target_contexts:
+        return True
+    return not source_contexts.isdisjoint(target_contexts)
+
+
+def _resolve_partner_rehydration_candidate(
+    candidates: list[Dict[str, Any]],
+    target_tile: Dict[str, Any],
+) -> Dict[str, Any] | None:
+    """Resolve one conservative carry-forward candidate or return None when ambiguous."""
+    compatible = [
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, dict) and _partner_tile_context_compatible(candidate, target_tile)
+    ]
+    if not compatible:
+        return None
+
+    unique_ids = {
+        str(
+            candidate.get("id")
+            or candidate.get("google_place_id")
+            or candidate.get("place_id")
+            or candidate.get("partner_product_id")
+            or ""
+        ).strip()
+        for candidate in compatible
+    }
+    unique_ids.discard("")
+    if len(unique_ids) > 1:
+        return None
+
+    return max(compatible, key=_partner_tile_priority)
+
+
+def _carry_forward_partner_enrichment(
+    refreshed_tiles: Any,
+    existing_tiles: Any,
+) -> List[Dict[str, Any]]:
+    """Rehydrate refreshed activity tiles from matching prior affiliate-enriched tiles."""
+    if not isinstance(refreshed_tiles, list):
+        return []
+    if not isinstance(existing_tiles, list):
+        return refreshed_tiles
+
+    prior_partner_tiles = [
+        tile for tile in existing_tiles if isinstance(tile, dict) and _has_partner_enrichment(tile)
+    ]
+    if not prior_partner_tiles:
+        return refreshed_tiles
+
+    tiles_by_id: dict[str, list[Dict[str, Any]]] = defaultdict(list)
+    tiles_by_place_id: dict[str, list[Dict[str, Any]]] = defaultdict(list)
+    title_candidates: dict[str, list[Dict[str, Any]]] = defaultdict(list)
+
+    for tile in prior_partner_tiles:
+        tile_id = str(tile.get("id") or "").strip()
+        if tile_id:
+            tiles_by_id[tile_id].append(tile)
+
+        for place_key in ("google_place_id", "place_id"):
+            place_id = str(tile.get(place_key) or "").strip()
+            if not place_id:
+                continue
+            tiles_by_place_id[place_id].append(tile)
+
+        title_key = _normalize_activity_exact_title_key(tile.get("title"))
+        if title_key:
+            title_candidates[title_key].append(tile)
+
+    for tile in refreshed_tiles:
+        if not isinstance(tile, dict) or _has_partner_enrichment(tile):
+            continue
+
+        match: Dict[str, Any] | None = None
+        tile_id = str(tile.get("id") or "").strip()
+        if tile_id:
+            match = _resolve_partner_rehydration_candidate(tiles_by_id.get(tile_id, []), tile)
+
+        if match is None:
+            for place_key in ("google_place_id", "place_id"):
+                place_id = str(tile.get(place_key) or "").strip()
+                if place_id:
+                    match = _resolve_partner_rehydration_candidate(
+                        tiles_by_place_id.get(place_id, []), tile
+                    )
+                if match is not None:
+                    break
+
+        if match is None:
+            title_key = _normalize_activity_exact_title_key(tile.get("title"))
+            if title_key:
+                match = _resolve_partner_rehydration_candidate(
+                    title_candidates.get(title_key, []), tile
+                )
+
+        if match is not None:
+            _copy_partner_enrichment_fields(match, tile)
+
+    return refreshed_tiles
 
 
 async def _search_tiles(
@@ -2367,12 +3674,24 @@ async def _search_tiles(
     trip_plan: Dict[str, Any] = state.get("trip_plan", {})
     trip_settings: Dict[str, Any] = state.get("trip_settings", {})
     requested_types = set(tile_types or ["flights", "hotels", "activities"])
+    allow_flight_auto_upgrade = _should_allow_flight_auto_upgrade(
+        classifier, state, requested_types
+    )
     existing_tiles = state.get("tiles", {})
+    existing_activity_tiles = (
+        existing_tiles.get("activities", []) if isinstance(existing_tiles, dict) else []
+    )
     merged_tiles = dict(existing_tiles) if isinstance(existing_tiles, dict) else {}
+    preserved_specialist_tiles = _preserved_specialist_tiles_for_turn(
+        state,
+        classifier,
+        existing_activity_tiles,
+    )
 
     # Limit fetched verticals by requested tile types.
     settings_for_search = dict(trip_settings) if isinstance(trip_settings, dict) else {}
     booking_types = dict(settings_for_search.get("booking_types", {}))
+    flights_explicitly_off = booking_types.get("flights") == "off" and not allow_flight_auto_upgrade
 
     # Always include activities when Tier 2 categories exist — plan_turn() may
     # exclude them for date_change (assuming specialists handle content), but
@@ -2387,13 +3706,19 @@ async def _search_tiles(
         if tier2_cats:
             requested_types.add("activities")
 
-    if "flights" not in requested_types:
+    if "flights" in requested_types and booking_types.get("flights") == "off":
+        # Keep internal flight refreshes available for safety/date recomputes
+        # without leaking a user-visible re-enable back into coordinator state.
+        booking_types["flights"] = "suggested"
+    elif "flights" not in requested_types:
         booking_types["flights"] = "off"
     if "activities" not in requested_types:
         booking_types["activities"] = "off"
     if "hotels" not in requested_types:
         booking_types["hotels"] = "off"
     settings_for_search["booking_types"] = booking_types
+    if flights_explicitly_off:
+        merged_tiles.pop("flights", None)
 
     strategy_sections = state.get("strategy_sections", [])
     executed_topics = [
@@ -2413,6 +3738,7 @@ async def _search_tiles(
         ]
     executed_topics = sorted({t for t in executed_topics if t})
 
+    has_origin = bool(trip_plan.get("origin"))
     graph_trip_plan = TripPlan(
         destination=trip_plan.get("destination"),
         origin=trip_plan.get("origin"),
@@ -2441,6 +3767,8 @@ async def _search_tiles(
                 "date_window_start": trip_plan.get("date_window_start"),
                 "date_window_end": trip_plan.get("date_window_end"),
             },
+            "requested_tile_types": sorted(requested_types),
+            "allow_flight_auto_upgrade": allow_flight_auto_upgrade,
             "executed_strategy_topics": executed_topics,
             "strategy_sections": strategy_sections,
             "planned_specialist_count": len(executed_topics),
@@ -2463,7 +3791,15 @@ async def _search_tiles(
     for tile_type in ("flights", "hotels", "activities"):
         if tile_type not in requested_types:
             continue
+        if tile_type == "flights" and flights_explicitly_off:
+            continue
         tile_list = refreshed_tiles.get(tile_type, [])
+        if tile_type == "activities":
+            carried_forward = _carry_forward_partner_enrichment(tile_list, existing_activity_tiles)
+            merged_tiles[tile_type] = _merge_activity_tiles(
+                carried_forward, preserved_specialist_tiles
+            )
+            continue
         merged_tiles[tile_type] = tile_list if isinstance(tile_list, list) else []
 
     turn_meta = dict(state.get("turn_meta", {}))
@@ -2481,7 +3817,17 @@ async def _search_tiles(
             coord_bt = state.setdefault("trip_settings", {}).setdefault("booking_types", {})
             for key in ("flights", "hotels"):
                 gs_val = gs_bt.get(key)
-                if gs_val and gs_val != "off" and coord_bt.get(key) in ("off", None, ""):
+                if not gs_val or gs_val == "off":
+                    continue
+                current_val = coord_bt.get(key)
+                if key == "flights":
+                    if has_origin and (
+                        current_val in (None, "")
+                        or (current_val == "off" and allow_flight_auto_upgrade)
+                    ):
+                        coord_bt[key] = gs_val
+                    continue
+                if current_val in ("off", None, ""):
                     coord_bt[key] = gs_val
     flight_status = graph_state.metadata.get("flight_search_status")
     if isinstance(flight_status, str) and flight_status:
@@ -2759,6 +4105,7 @@ async def _refresh_enrichment_states(state: Dict[str, Any], session_id: str) -> 
 
 async def _build_itinerary(
     state: Dict[str, Any],
+    session_id: str = "",
 ) -> Optional[List[Dict[str, Any]]]:
     """Build itinerary day cards from current state.
 
@@ -2783,20 +4130,6 @@ async def _build_itinerary(
     _inject_specialist_tiles_into_state(state)
     await _prepare_activity_tiles_for_build(state)
 
-    # Partner enrichment: real pricing, images, ratings, deeplinks (Viator + GYG)
-    # Early check avoids import/call overhead when both providers are disabled
-    has_viator = settings.viator_enabled and settings.viator_api_key
-    has_gyg = settings.get_your_guide_enabled and settings.get_your_guide_api_key
-    if has_viator or has_gyg:
-        activity_tiles = state.get("tiles", {}).get("activities", [])
-        if isinstance(activity_tiles, list) and activity_tiles:
-            destination = state.get("trip_plan", {}).get("destination", "")
-            currency = state.get("trip_plan", {}).get("currency") or "USD"
-            if destination:
-                from app.services.partner_enrichment import enrich_tiles_with_partners
-
-                await enrich_tiles_with_partners(activity_tiles, destination, currency)
-
     tiles: Dict[str, Any] = state.get("tiles", {})
     strategy_sections = state.get("strategy_sections", [])
 
@@ -2819,17 +4152,9 @@ async def _build_itinerary(
         tile_id_map = flatten_tiles_to_id_map(tiles)
 
         activity_settings = state.get("trip_settings", {}).get("activity_settings", {})
-        booking_types = state.get("trip_settings", {}).get("booking_types", {})
-        activities_off = (
-            isinstance(booking_types, dict) and booking_types.get("activities") == "off"
+        requested_categories, activity_categories, infeasible_requested, _ = (
+            _resolve_activity_category_filters(state)
         )
-        categories = (
-            activity_settings.get("categories", []) if isinstance(activity_settings, dict) else []
-        )
-        if activities_off:
-            activity_categories: list[str] | None = []
-        else:
-            activity_categories = categories or None
 
         activities_per_day = (
             activity_settings.get("activities_per_day")
@@ -2842,7 +4167,7 @@ async def _build_itinerary(
         pinned_tiles = state.get("metadata", {}).get("user_pinned_tiles", {})
         preferences = None
         if pinned_tiles:
-            active_cats = set(c.lower() for c in (categories or []))
+            active_cats = set(c.lower() for c in (activity_categories or []))
             day_map: dict[str, int] = {}
             priority_map: dict[str, str] = {}
             pref_activity_ids: list[str] = []
@@ -2895,6 +4220,7 @@ async def _build_itinerary(
             adults=trip_plan.get("adults", 1) or 1,
             children=trip_plan.get("children", 0) or 0,
             user_pinned_tiles=pinned_tiles or None,
+            canonical_constraints=_collect_canonical_builder_constraints(state),
             budget=trip_plan.get("budget"),
             currency=trip_plan.get("currency", "USD"),
         )
@@ -2911,22 +4237,27 @@ async def _build_itinerary(
                 0, result.total_activities_input - result.total_activities_placed
             ),
             "conflicts": [c.model_dump() for c in result.conflicts],
+            "resolutions": [r.model_dump() for r in result.resolutions],
             "warnings": result.warnings,
             "overview": result.overview.model_dump() if result.overview else None,
             "assumptions": result.assumptions.model_dump() if result.assumptions else None,
+            "requested_activity_categories": requested_categories,
+            "effective_activity_categories": activity_categories,
+            "infeasible_requested_categories": infeasible_requested,
         }
         state["turn_meta"] = turn_meta
 
         if result.day_cards:
             day_cards = [card.model_dump() for card in result.day_cards]
             state["day_cards"] = day_cards
-            await _post_build_enrich_placed_activities(state, day_cards)
+            _start_pending_itinerary_enrichment(state, session_id=session_id)
             logger.info("[coordinator] _build_itinerary: produced %d day_cards", len(day_cards))
             return day_cards
 
         # Explicitly clear stale itinerary when builder returns no cards.
         logger.info("[coordinator] _build_itinerary: builder returned no day_cards")
         state["day_cards"] = []
+        _start_pending_itinerary_enrichment(state, session_id=session_id)
         return []
 
     except Exception as exc:
@@ -2937,9 +4268,13 @@ async def _build_itinerary(
             "activities_placed": 0,
             "activities_dropped": 0,
             "conflicts": [],
+            "resolutions": [],
             "warnings": [str(exc)],
             "overview": None,
             "assumptions": None,
+            "requested_activity_categories": [],
+            "effective_activity_categories": None,
+            "infeasible_requested_categories": [],
         }
         state["turn_meta"] = turn_meta
         state["day_cards"] = []
@@ -3112,7 +4447,7 @@ def _build_envelope(
     # overrides (flights="off" when not in this refresh) must not leak
     # into the envelope when tiles actually exist.
     bt = dict(trip_inputs.get("booking_types", {}))
-    if tiles.get("flights") and bt.get("flights") in ("off", None, ""):
+    if tiles.get("flights") and bt.get("flights") in (None, ""):
         bt["flights"] = "suggested"
     if tiles.get("hotels") and bt.get("hotels") in ("off", None, ""):
         bt["hotels"] = "suggested"
@@ -3125,7 +4460,12 @@ def _build_envelope(
     if isinstance(settings_bt, dict):
         for btype in ("flights", "hotels", "activities"):
             settings_val = settings_bt.get(btype)
-            if settings_val in ("suggested", "on") and bt.get(btype) in ("off", None, ""):
+            current_val = bt.get(btype)
+            if btype == "flights":
+                if settings_val in ("suggested", "on") and current_val in (None, ""):
+                    bt[btype] = settings_val
+                continue
+            if settings_val in ("suggested", "on") and current_val in ("off", None, ""):
                 bt[btype] = settings_val
 
     trip_inputs["booking_types"] = bt
@@ -3258,6 +4598,11 @@ def _build_envelope(
     constraint_violations = (
         raw_constraint_violations if isinstance(raw_constraint_violations, list) else []
     )
+    if not constraint_violations and builder_ran:
+        constraint_violations = _builder_conflicts_to_constraint_violations(
+            builder_result.get("conflicts"),
+            builder_result.get("resolutions"),
+        )
     raw_fields_changed = turn_meta.get("fields_changed", [])
     fields_changed = raw_fields_changed if isinstance(raw_fields_changed, list) else []
     raw_turn_steps = turn_meta.get("turn_steps", [])
@@ -3314,8 +4659,14 @@ def _build_envelope(
 
     # Flatten tiles
     flattened_tiles: Dict[str, Any] = {}
+    booking_types = trip_settings.get("booking_types", {})
+    flights_visible = not (
+        isinstance(booking_types, dict) and booking_types.get("flights") == "off"
+    )
     for _category, tile_list in tiles.items():
         if not isinstance(tile_list, list):
+            continue
+        if _category == "flights" and not flights_visible:
             continue
         for tile in tile_list:
             if isinstance(tile, dict):
@@ -3437,6 +4788,7 @@ def _compute_coordinator_s3_state(
     conflict_count = len(conflicts) if isinstance(conflicts, list) else 0
 
     activities_placed = builder_result.get("activities_placed", -1)
+    infeasible_requested = builder_result.get("infeasible_requested_categories", [])
 
     if builder_success:
         if not day_cards:
@@ -3444,6 +4796,13 @@ def _compute_coordinator_s3_state(
         # If builder produced day_cards but placed 0 activities, add warning
         if activities_placed == 0:
             warnings = builder_result.get("warnings", [])
+            if infeasible_requested:
+                if not any("infeasible" in w.lower() for w in warnings):
+                    warnings.append(
+                        "Requested activities are infeasible for this destination. "
+                        "Change activities to continue."
+                    )
+                    builder_result["warnings"] = warnings
             if not any("no activities" in w.lower() for w in warnings):
                 warnings.append(
                     "No activities could be placed — trip may be too short. "
@@ -3466,10 +4825,10 @@ async def _execute_step(
     classifier: ClassifierOutput,
     user_message: str,
     session_id: str = "",
-) -> Optional[Dict[str, Any]]:
+) -> Optional[Dict[str, Any] | List[Dict[str, Any]]]:
     """Execute a single step from the execution plan.
 
-    Returns an SSE event dict to yield, or None if no event needed.
+    Returns one or more SSE events to yield, or None if no event needed.
     """
     step_type = step.step_type
 
@@ -3568,6 +4927,7 @@ async def _execute_step(
                 sections.append(section)
                 state["strategy_sections"] = sections
 
+        _refresh_preserved_specialist_section_metadata(state, preserves)
         state["specialist_plans"] = specialist_plans
         return {
             "type": "partial",
@@ -3618,7 +4978,16 @@ async def _execute_step(
             for t in cat
             if isinstance(t, dict)
         }
-        await _build_itinerary(state)
+        await _build_itinerary(state, session_id=session_id)
+        events: list[Dict[str, Any]] = []
+        day_cards = state.get("day_cards", [])
+        if isinstance(day_cards, list):
+            events.append(
+                {
+                    "type": "partial",
+                    "data": {"kind": "day_cards", "payload": day_cards},
+                }
+            )
         # Only emit tile partial if new tiles were injected (avoids duplicate
         # re-render — SEARCH_TILES already emitted the initial set)
         post_ids = {
@@ -3630,11 +4999,14 @@ async def _execute_step(
         }
         if post_ids - pre_ids:
             tiles = state.get("tiles", {})
-            return {
-                "type": "partial",
-                "data": {"kind": "tiles", "payload": _flatten_tiles_payload(tiles)},
-            }
-        return None
+            partial_data = {"kind": "tiles", "payload": _flatten_tiles_payload(tiles)}
+            turn_meta = state.get("turn_meta") or {}
+            if turn_meta.get("tiles_replaced"):
+                partial_data["tiles_replaced"] = True
+            events.append({"type": "partial", "data": partial_data})
+        if not events:
+            return None
+        return events[0] if len(events) == 1 else events
 
     if step_type == StepType.GENERATE_RESPONSE:
         # Response generation handled in execute_turn
@@ -3682,8 +5054,8 @@ async def _execute_parallel_group(
                 result,
                 exc_info=result,
             )
-        elif isinstance(result, dict):
-            partial_events.append(result)
+        else:
+            partial_events.extend(_normalize_step_events(result))
 
     if failures:
         logger.warning(
@@ -3747,6 +5119,7 @@ async def execute_turn(
 
     try:
         # Step 0: Reset turn_meta for this turn
+        _cancel_pending_itinerary_enrichment(state)
         state["turn_meta"] = {}
         # Carry forward patch-driven field changes (e.g. dates changed via
         # PATCH pill but not through chat). These bypass the classifier's
@@ -3893,6 +5266,29 @@ async def execute_turn(
             plan.estimated_llm_calls,
         )
 
+        continuity = _date_change_continuity_details(classifier, state, plan)
+        if continuity is not None:
+            logger.info(
+                "[coordinator] Date change continuity: "
+                "safe_tail_extension=%s same_month_bucket=%s same_activity_settings=%s "
+                "dispatch=%s preserve=%s",
+                str(continuity["safe_tail_extension"]).lower(),
+                str(continuity["same_month_bucket"]).lower(),
+                str(continuity["same_activity_settings"]).lower(),
+                continuity["dispatch"],
+                continuity["preserve"],
+            )
+
+        if (
+            classifier.intent == "PLANNING"
+            and classifier.change_type == ChangeType.DATE_CHANGE
+            and not any(s.step_type == StepType.DISPATCH_SPECIALISTS for s in plan.steps)
+        ):
+            _refresh_preserved_specialist_section_metadata(
+                state,
+                _compute_preserve_list(classifier, state),
+            )
+
         # Build infeasible sections when no DISPATCH_SPECIALISTS step will run
         # (all topics infeasible → dispatch_list is empty). When a dispatch step
         # DOES run, its _execute_step branch builds infeasible sections AFTER the
@@ -3979,8 +5375,8 @@ async def execute_turn(
                     user_message,
                     session_id=session_id,
                 )
-                if step_event is not None:
-                    yield step_event
+                for event in _normalize_step_events(step_event):
+                    yield event
 
                 if node_name:
                     yield _node_status(node_name, "completed", label, icon, duration)
@@ -4052,6 +5448,8 @@ async def execute_turn(
             if assistant_message:
                 yield {"type": "token", "data": assistant_message}
 
+        await _await_pending_itinerary_enrichment(state)
+
         # Append user + assistant messages to state messages
         state.setdefault("messages", []).append(HumanMessage(content=user_message))
         state["messages"].append(AIMessage(content=assistant_message))
@@ -4075,8 +5473,11 @@ async def execute_turn(
         yield {"type": "complete", "data": envelope}
 
     except Exception as exc:
+        _cancel_pending_itinerary_enrichment(state)
         logger.error("[coordinator] Turn failed: %s", exc, exc_info=True)
         yield {"type": "error", "message": str(exc)}
+    finally:
+        _cancel_pending_itinerary_enrichment(state)
 
 
 def _step_status_info(

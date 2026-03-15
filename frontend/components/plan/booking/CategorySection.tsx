@@ -127,14 +127,14 @@ export function CategorySection({
   if (!items || items.length === 0) return null;
 
   return (
-    <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl overflow-hidden shadow-card transition-all hover:shadow-soft">
+    <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-white/10 rounded-xl overflow-hidden shadow-card transition-all hover:shadow-soft">
       {/* Header */}
       <button
         type="button"
         onClick={() => setIsExpanded(!isExpanded)}
         className="w-full flex items-center justify-between p-4 bg-zinc-50/50 dark:bg-white/5 hover:bg-zinc-100 dark:hover:bg-white/[0.07] transition-colors"
       >
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <span className="text-2xl">{emoji}</span>
           <h3 className="font-semibold text-lg text-zinc-900 dark:text-white">{label}</h3>
           <span className="bg-zinc-100 dark:bg-white/10 px-2 py-0.5 rounded-full text-xs font-medium text-zinc-500 dark:text-zinc-400">
@@ -142,9 +142,9 @@ export function CategorySection({
           </span>
         </div>
         {isExpanded ? (
-          <ChevronUp className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />
+          <ChevronUp className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
         ) : (
-          <ChevronDown className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />
+          <ChevronDown className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
         )}
       </button>
 
@@ -159,7 +159,7 @@ export function CategorySection({
             return (
               <div
                 key={tile.id}
-                className="relative group rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-4 hover:border-emerald-500/50 hover:shadow-soft transition-all cursor-pointer"
+                className="relative group rounded-xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-zinc-900 p-4 hover:border-emerald-500/50 hover:shadow-soft transition-all cursor-pointer"
                 onClick={() => onTileClick?.(tile)}
               >
                 {/* Status badge - mode-aware */}
@@ -214,7 +214,7 @@ export function CategorySection({
                     onSaveTile?.(tile);
                   }}
                   className={cn(
-                    'mt-3 w-full py-2 rounded-lg text-sm font-medium transition-colors',
+                    'mt-4 w-full py-2 rounded-lg text-sm font-medium transition-colors',
                     isSaved
                       ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-400 dark:border-emerald-500/25'
                       : 'bg-zinc-100 dark:bg-white/5 hover:bg-zinc-200 dark:hover:bg-white/10 text-zinc-900 dark:text-white'

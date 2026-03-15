@@ -32,6 +32,9 @@ const READY_MESSAGE_ID_PREFIX = 'ready_';
 
 function getErrorMessage(error: Error): string {
   const message = error.message?.toLowerCase() ?? '';
+  if (message.includes('session_state exceeds 64kb limit') || message.includes('64kb limit')) {
+    return 'This trip got too large to send in one chat turn. Refresh the page to reload the saved plan, then try again.';
+  }
   if (message.includes('network') || message.includes('fetch') || message.includes('failed to fetch')) {
     return "Couldn't connect to the server. Please check your internet connection and try again.";
   }
@@ -211,7 +214,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
   }, []);
 
   const executeStream = useCallback(
-    (params: ExecuteStreamParams): Promise<void> => {
+    (params: ExecuteStreamParams): Promise<'complete' | 'error' | 'stale'> => {
       const {
         body,
         requestId,
@@ -224,7 +227,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
         actionLoader,
       } = params;
 
-      return new Promise<void>((resolve) => {
+      return new Promise<'complete' | 'error' | 'stale'>((resolve) => {
         const isStaleRequest = () => activeStreamRequestIdRef.current !== requestId;
 
         if (reconcileTimerRef.current) {
@@ -238,7 +241,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
 
         if (isStaleRequest()) {
           debugLog('[SSE] Skipping stream setup for stale request');
-          resolve();
+          resolve('stale');
           return;
         }
 
@@ -330,6 +333,8 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
                 store.mergeEnvelope({ tiles: p, ...(data.tiles_replaced ? { tiles_replaced: true } : {}) }, envelopeGeneration);
               } else if (data.kind === 'trip_inputs') {
                 store.mergeEnvelope({ trip_inputs: p }, envelopeGeneration);
+              } else if (data.kind === 'day_cards') {
+                store.mergeEnvelope({ day_cards: p }, envelopeGeneration);
               }
             } catch (partialError) {
               debugLog('[SSE] Partial merge failed (will reconcile on complete):', partialError);
@@ -348,7 +353,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
                 useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
                 sseSetRegenFlag = false;
               }
-              resolve();
+              resolve('stale');
               return;
             }
 
@@ -640,7 +645,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             isSendingRef.current = false;
             activeStreamRequestIdRef.current = null;
             queueCompletionScroll();
-            resolve();
+            resolve('complete');
           },
 
           onError: (error: Error) => {
@@ -650,7 +655,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
                 useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
                 sseSetRegenFlag = false;
               }
-              resolve();
+              resolve('stale');
               return;
             }
 
@@ -693,7 +698,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             isSendingRef.current = false;
             activeStreamRequestIdRef.current = null;
             queueCompletionScroll();
-            resolve();
+            resolve('error');
           },
         });
       });

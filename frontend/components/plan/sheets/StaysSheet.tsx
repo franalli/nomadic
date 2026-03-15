@@ -137,7 +137,7 @@ function StaysSheetInner({
       title="Stays"
       hint="Configure accommodation preferences"
       footer={
-        <div className="flex gap-3">
+        <div className="flex gap-2">
           <button
             type="button"
             onClick={() => onOpenChange(false)}
@@ -195,12 +195,12 @@ function StaysSheetInner({
         <div
           className={cn(
             'space-y-6 transition-opacity',
-            !localEnabled && 'opacity-50 pointer-events-none'
+            !localEnabled && 'opacity-50 cursor-not-allowed pointer-events-none'
           )}
         >
           {/* Star rating */}
           <div>
-            <h3 className={cn(DS.text.label, 'mb-3')}>
+            <h3 className={cn(DS.text.label, 'mb-2')}>
               Minimum stars
             </h3>
             <div className="flex gap-2">
@@ -237,7 +237,7 @@ function StaysSheetInner({
 
           {/* Amenities */}
           <div>
-            <h3 className={cn(DS.text.label, 'mb-3')}>
+            <h3 className={cn(DS.text.label, 'mb-2')}>
               Preferred amenities
             </h3>
             <div className="flex flex-wrap gap-2">

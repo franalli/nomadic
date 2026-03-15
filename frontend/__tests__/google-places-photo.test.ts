@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { API_BASE } from '@/lib/api';
 import {
   buildGooglePlacesPhotoProxyUrl,
   getSignedGooglePlacesPhotoProxyUrl,
@@ -14,10 +15,9 @@ describe('google places photo proxy helpers', () => {
       maxHeight: 240,
     });
 
-    expect(url).toContain('/api/media/google-places-photo?');
-    expect(url).toContain('name=places%2FChIJx%2Fphotos%2FAbCd_123');
-    expect(url).toContain('max_width=320');
-    expect(url).toContain('max_height=240');
+    expect(url).toBe(
+      `${API_BASE}/api/media/google-places-photo?name=places%2FChIJx%2Fphotos%2FAbCd_123&max_width=320&max_height=240`
+    );
   });
 
   it('rejects invalid photo names', () => {
@@ -55,7 +55,9 @@ describe('google places photo proxy helpers', () => {
       maxHeight: 240,
     });
 
-    expect(first).toContain('/api/media/google-places-photo?');
+    expect(first).toBe(
+      `${API_BASE}/api/media/google-places-photo?name=places%2FChIJx%2Fphotos%2FAbCd_123&max_width=320&max_height=240&exp=123&sig=testsig`
+    );
     expect(second).toBe(first);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(

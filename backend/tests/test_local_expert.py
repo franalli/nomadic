@@ -439,12 +439,22 @@ class TestEmptyKnowledgeFallback:
         call_kwargs = mocks["build_section"].call_args
 
         # Skeleton: empty must_dos/content_added (Phase B populates async)
-        # Constraint floor ensures at least 6 static fallback constraints
+        # Constraint floor remains internal; visible copy stays neutral when
+        # no destination-specific scaffold exists.
         assert call_kwargs.kwargs["must_dos"] == []
         assert call_kwargs.kwargs["content_added"] == []
         assert len(call_kwargs.kwargs["constraints_applied"]) >= 6
-        # one_liner uses destination name
-        assert "Timbuktu" in call_kwargs.kwargs["one_liner"]
+        assert call_kwargs.kwargs["bullets"] == []
+        assert call_kwargs.kwargs["principles"] == []
+        assert call_kwargs.kwargs["one_liner"] == "Your adventure in Timbuktu"
+        visible_copy = " ".join(
+            [
+                call_kwargs.kwargs["one_liner"],
+                *call_kwargs.kwargs["bullets"],
+                *call_kwargs.kwargs["principles"],
+            ]
+        )
+        assert "Check visa requirements before travel" not in visible_copy
 
     @pytest.mark.asyncio
     async def test_fallback_description_includes_destination(
@@ -583,3 +593,149 @@ class TestMultiSpecialistQueuePop:
 
         # pending_specialists unchanged (no pop)
         assert result.pending_specialists == ["diving"]
+
+
+class _DummyAsyncSession:
+    async def __aenter__(self) -> object:
+        return object()
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        return False
+
+
+class _FakeStructuredLlm:
+    def __init__(self, result: Any) -> None:
+        self.result = result
+
+    async def ainvoke(self, messages: list[Any]) -> Any:
+        return self.result
+
+
+class _FakeLlm:
+    def __init__(self, result: Any) -> None:
+        self.result = result
+        self.schema: Any = None
+        self.include_raw: bool | None = None
+        self.method: str | None = None
+
+    def with_structured_output(
+        self,
+        schema: Any,
+        *,
+        include_raw: bool,
+        method: str,
+    ) -> _FakeStructuredLlm:
+        self.schema = schema
+        self.include_raw = include_raw
+        self.method = method
+        return _FakeStructuredLlm(self.result)
+
+
+def _patch_enrichment_dependencies(
+    monkeypatch: pytest.MonkeyPatch, raw_result: Any
+) -> tuple[_FakeLlm, AsyncMock, AsyncMock, AsyncMock]:
+    cache_mod = importlib.import_module("app.services.specialist_cache")
+    db_mod = importlib.import_module("app.db")
+
+    fake_llm = _FakeLlm(raw_result)
+    persist = AsyncMock()
+    get_cached = AsyncMock(return_value=None)
+    set_cached = AsyncMock()
+
+    monkeypatch.setattr(_le_mod, "get_llm_by_model", lambda *args, **kwargs: fake_llm)
+    monkeypatch.setattr(_le_mod, "extract_token_usage", lambda *args, **kwargs: None)
+    monkeypatch.setattr(_le_mod, "_get_constraint_context", lambda _: "")
+    monkeypatch.setattr(_le_mod, "_persist_travel_intelligence", persist)
+    monkeypatch.setattr(
+        db_mod, "_get_async_session_factory", lambda: (lambda: _DummyAsyncSession())
+    )
+    monkeypatch.setattr(cache_mod, "get_cached_specialist_output", get_cached)
+    monkeypatch.setattr(cache_mod, "set_cached_specialist_output", set_cached)
+
+    return fake_llm, persist, get_cached, set_cached
+
+
+class TestBuildEnrichmentClosure:
+    @pytest.mark.asyncio
+    async def test_parse_none_marks_failed_without_crashing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_llm, persist, _, set_cached = _patch_enrichment_dependencies(
+            monkeypatch,
+            {"parsed": None, "raw": {}},
+        )
+
+        enrich = _le_mod.build_enrichment_closure(
+            destination="Paris",
+            start_date="2026-05-01",
+            end_date="2026-05-05",
+            adults=2,
+            children=0,
+            session_id="sess-parse-none",
+        )
+
+        await enrich()
+
+        persist.assert_awaited_once_with(
+            "sess-parse-none",
+            None,
+            enrichment_state="failed",
+            error_code="parse_error",
+        )
+        set_cached.assert_not_awaited()
+        assert fake_llm.schema == _le_mod._LOCAL_EXPERT_FLAT_SCHEMA
+        assert fake_llm.include_raw is True
+        assert fake_llm.method == "function_calling"
+
+    @pytest.mark.asyncio
+    async def test_dict_payload_rehydrates_and_persists_ready(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_llm, persist, _, set_cached = _patch_enrichment_dependencies(
+            monkeypatch,
+            {
+                "parsed": {
+                    "destination_overview": {"tagline": "Paris with a plan"},
+                    "constraints": [
+                        {
+                            "type": "booking_window",
+                            "description": "Reserve the Louvre entry window in advance",
+                            "severity": "warning",
+                        }
+                    ],
+                    "recommendations": [
+                        {
+                            "title": "Buy a metro carnet",
+                            "description": "It is cheaper than single tickets for repeated rides",
+                            "category": "logistics",
+                            "logic_hook": "Cuts transport costs for short stays",
+                        }
+                    ],
+                    "quick_tips": ["Keep museum bookings together on the same day"],
+                },
+                "raw": {},
+            },
+        )
+
+        enrich = _le_mod.build_enrichment_closure(
+            destination="Paris",
+            start_date="2026-05-01",
+            end_date="2026-05-05",
+            adults=2,
+            children=0,
+            session_id="sess-ready",
+        )
+
+        await enrich()
+
+        persist.assert_awaited_once()
+        persisted_response = persist.await_args.args[1]
+        assert isinstance(persisted_response, _le_mod.LocalExpertOutput)
+        assert persisted_response.destination_overview.tagline == "Paris with a plan"
+        assert persist.await_args.kwargs == {"enrichment_state": "ready"}
+        set_cached.assert_awaited_once()
+        assert (
+            set_cached.await_args.kwargs["output"]["destination_overview"]["tagline"]
+            == "Paris with a plan"
+        )
+        assert fake_llm.schema == _le_mod._LOCAL_EXPERT_FLAT_SCHEMA

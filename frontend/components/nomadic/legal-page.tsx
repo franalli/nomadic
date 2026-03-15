@@ -40,14 +40,14 @@ export function LegalPage({ title, description, updated, sections, cta }: LegalP
             {sections.map((section, index) => (
               <motion.section
                 key={section.title}
-                className="space-y-3 rounded-2xl bg-card/90 p-6 shadow-sm ring-1 ring-border"
+                className="space-y-4 rounded-2xl bg-card/90 p-6 shadow-sm ring-1 ring-border"
                 initial={{ opacity: 0, y: 28 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.45, ease: 'easeOut', delay: index * 0.08 }}
                 viewport={{ once: true, amount: 0.35 }}
               >
                 <h2 className="text-xl font-semibold text-foreground">{section.title}</h2>
-                <div className="space-y-3 leading-relaxed text-text-soft">{section.body}</div>
+                <div className="space-y-4 leading-relaxed text-text-soft">{section.body}</div>
               </motion.section>
             ))}
           </div>

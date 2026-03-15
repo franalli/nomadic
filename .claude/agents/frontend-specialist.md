@@ -8,7 +8,8 @@ description: >
   ghost timeline, content policy guard, loader states, fill-day flow,
   preference auto-regen, stream parser, browse activities, booking drawer,
   message pipeline, header actions, local-expert polling,
-  undo stack, drag-and-drop, travel intelligence, destination intel, panel toggles, consent/legal, booking summary,
+  undo stack, drag-and-drop, travel intelligence, destination intel, panel toggles,
+  render surfaces, shared trip api, consent/legal, booking summary,
   shared trip, auth callback, oauth, user menu, user store, avatar, theme mode constants,
   or any file under frontend/.
 tools: Read, Write, Edit, Bash, Glob, Grep
@@ -50,57 +51,95 @@ frontend/
                      summary/page.tsx, sitemap/page.tsx, cookies/page.tsx,
                      credits/page.tsx, terms/page.tsx
   components/
-    animations/    → Typewriter
-    chat/          → ChatPanel, ChatBootstrapHero, ChatSkeleton, SmartLoader,
+    chat/          → ChatPanel, ChatPanelContent, ChatPanel.types.ts, useChatPanelController,
+                     ChatBootstrapHero, ChatSkeleton, SmartLoader,
                      MobileChatInput,
                      ChatInputBar, ChatInputHandler, ChatMessageList,
-                     ChatMessageRenderer, ChatModuleSheets,
+                     ChatMessageRenderer,
+                     ChatModuleSheets,
                      ChatStatusHeader,
                      ChatSuggestionBar, ChatSuggestionChips,
-                     chatMessageProcessing.ts, suggestion-actions.ts
-    plan/          → StrategyStageRenderer, BookingSection, TimelineThread,
-                     PlanHeader, NextStepBar, planStateHelpers,
-                     UnifiedChipRow, TripSummaryPills, tripSummaryUtils,
+                     chatMessageProcessing.ts, chatMessageMarkdown.tsx,
+                     suggestion-actions.ts
+    plan/          → StrategyStageRenderer, strategyStagePoi.ts,
+                     BookingSection, BookingSection.helpers.ts, BookingSectionBookingView,
+                     TimelineThread, useTimelineThreadBrowseSheet, useTimelineThreadMapSync,
+                     PlanHeader, NextStepBar, nextStepBarUtils.ts, planStateHelpers,
+                     UnifiedChipRow,
+                     TripSummaryPills, TripSummaryPills.helpers.ts, TripSummaryPillsSegment,
+                     useTripSummaryFade, tripSummaryUtils,
                      BookingPlanningView, BookingSummary,
-                     ChipGroup, ChipScrollContainer,
+                     ChipGroup, ChipGroup.helpers.ts, ChipScrollContainer, ModuleChip, SetupCoreChip,
                      FullDensityTimeline, PdfExportButton, ShareTripButton,
-                     TimelineBlockList,
+                     TimelineBlockList, TimelineBlockList.helpers.ts,
+                     TimelineBlockListAddActivityButton, TimelineBlockListFreeDay, TimelineBlockListLegacyBlock,
                      TimelineDayCard, useTimelineBufferLogic,
                      ItineraryProgressIndicator, OriginPromptCard,
-                     PlanDensityViews, PlanFullDensityView, PlanTimelineSection,
-                     BrowseActivitiesSheet, useBookingDrawerState, useStrategyStageOrchestration
-      pdf/        → TripPdfDocument
-      booking/     → BookingDrawer, CategorySection, CheckoutSidebar
-      modals/      → AlternativesModal
-      stages/      → StrategyHero, S2AgentCard, S2AgentCardExpanded, S2LocalIntelSection,
+                     PlanDensityViews, PlanFullDensityView, PlanFullDensityView.types.ts,
+                     PlanFullDensityDesktopMap, PlanFullDensityMobileSummary,
+                     PlanFullDensityTilesSection, PlanFullDensityTravelAdvice,
+                     usePlanFullDensityData, useStickyHeaderOffset,
+                     PlanTimelineSection,
+                     BrowseActivitiesSheet,
+                     useBookingDrawerState, useStrategyStageOrchestration
+      pdf/        → TripPdfDocument, TripPdfSections, TripPdfStyles
+      booking/     → BookingDrawer, CategorySection, CategorySectionTile, CheckoutSidebar
+      modals/      → AlternativesModal, AlternativesModal.helpers.ts,
+                     AlternativesModalContent, AlternativesModalOptionCard, AlternativesModalThumbnail
+      stages/      → StrategyHero, StrategyHeroCompact, useStrategyHeroEnrichment,
+                     S2AgentCard, S2AgentCardExpanded, S2LocalIntelSection,
                      S2TopicConfig,
                      StrategyHeroAccordion, StrategyHeroCompactSheet, StrategyHeroHeroSheet,
                      StrategyHeroContent, StrategyHeroTISectionsA, StrategyHeroTISectionsB,
                      StrategyHeroTravelIntelligence, StrategyHeroUtils
-      sheets/      → BaseSheet, DestinationSheet, OriginSheet, DatesSheet,
-                     TravelersSheet, BudgetSheet, FlightsSheet, StaysSheet,
-                     ActivitiesSheet, ActivitiesSheetContent, TripSettingsSheet, GatingBlocker
+      sheets/      → BaseSheet, BaseSheet.shared.tsx, BaseSheetDesktopDialog, BaseSheetMobileSheet,
+                     DestinationSheet, OriginSheet,
+                     DatesSheet, DatesSheet.utils.ts, DatesSheetDialog,
+                     TravelersSheet, TravelersSheetControls,
+                     BudgetSheet, BudgetSheetControls,
+                     FlightsSheet, FlightsSheetControls,
+                     StaysSheet, StaysSheetFields,
+                     ActivitiesSheet, ActivitiesSheet.helpers.ts, ActivitiesSheetContent,
+                     ActivitiesSheetFooter,
+                     LocationSheetParts, SheetFooterActions,
+                     TripSettingsSheet, GatingBlocker
       timeline/    → InlineDatePrompt, TimelineSkeleton,
                      DragPreviewCard, DraggableBlock, DroppableDay, FreeDayDropSlot,
-                     ItineraryDndWrapper, RichBlockRenderer, useTimelineFillDay
-        blocks/    → ActivityMiniCard, ActivityCardActions, ActivityCardMeta,
-                     ActivityCardPhoto, LogisticsBlock, SafetyBlock, GhostSlot,
-                     FreeDayCard, HoldToDeleteButton, PreferenceAttributionBadge, types.ts
-      tiles/       → SuggestionCard, SuggestionCardContent
-    tiles/         → TileCard, MiniCard, TileDetailsModal, TaxesFeesTooltip
-                     MiniCardContent, TileCardContent, TileDetailsInfo
-    shared/        → SharedTripView, ReadOnlyTimeline
+                     ItineraryDndWrapper, RichBlockRenderer, RichBlockRenderer.helpers.ts,
+                     useTimelineFillDay
+        blocks/    → ActivityMiniCard, ActivityCardActions, ActivityCardActionParts,
+                     ActivityCardMeta, ActivityCardMeta.helpers.ts, activityMiniCardTheme.ts,
+                     ActivityCardPhoto, LogisticsBlock, LogisticsBlockParts,
+                     SafetyBlock, GhostSlot,
+                     FreeDayCard, FreeDayCardSections,
+                     HoldToDeleteButton, PreferenceAttributionBadge, types.ts
+      tiles/       → SuggestionCard, SuggestionCardContent, suggestionCardSections
+    tiles/         → TileCard, TileCardActions, TileCardContent, TileCardMedia,
+                     MiniCard, MiniCardContent, MiniCardQuickFacts,
+                     MiniCardSummary, MiniCardSummaryPricing, MiniCardSummaryThumbnail,
+                     TileDetailsModal, TileDetailsSupportingSections,
+                     TileDetailsInfo, TileDetailsFooter,
+                     TaxesFeesTooltip, tileHelpers.ts, tileSections.tsx
+    shared/        → SharedTripView, SharedTripSections, ReadOnlyTimeline
     ui/            → Shared UI primitives, UserAvatar
-    layout/        → SplitLayoutView, NomadicLanding, LandingHeaderContent,
-                     LandingHelpers, LandingSheets, FloatingBuildButton,
-                     MobileSwipeLayout, MobileModeHeader, MobileHeaderMenu,
+    layout/        → SplitLayoutView, SplitLayoutSections, NomadicLanding, NomadicLandingContent,
+                     LandingHeaderContent, LandingHeaderUserMenu,
+                     LandingHelpers, LandingSheets, LandingPrimarySheets, LandingPreferenceSheets,
+                     FloatingBuildButton, headerMenuParts,
+                     MobileSwipeLayout, MobileModeHeader, MobileModeHeaderSections,
+                     MobileHeaderMenu,
                      hooks/ (useSessionHydration, useBranchManager, useBranchState,
-                             useItineraryGeneration, useLandingDerived, useLandingEffects,
+                             useItineraryGeneration, useItineraryGenerationController,
+                             useNomadicLandingController,
+                             useLandingControllerStores, useLandingPlanState,
+                             useLandingRenderSurfaces, useLandingStoreSnapshot,
+                             useLandingDerived, useLandingEffects,
                              useLandingHandlers, useTileSelection, useTripInputsEditor,
                              useLocalBookingSettings)
-    map/           → InteractiveMap, MapMarkerItem, MapErrorBoundary, MapboxErrorSuppressor,
-                     mapbox-error-handler.ts
-    nomadic/       → consent-manager, legal-page (legal/consent UI)
+    map/           → InteractiveMap, InteractiveMapHelpers, MapMarkerItem, map-marker-config,
+                     MapErrorBoundary, MapboxErrorSuppressor, mapbox-error-handler.ts
+    nomadic/       → consent-manager, ConsentManagerSections, consent-manager-storage.ts,
+                     legal-page (legal/consent UI)
     providers/     → Providers (context wrappers) via `components/providers/Providers.tsx`
   state/           → documentStore.ts, chatStore.ts, panelToggleStore.ts, uiStore.ts,
                      mobileNavStore.ts, userStore.ts
@@ -116,13 +155,13 @@ frontend/
                      tileSelectors.ts, tileUtils.ts, specialist-utils.ts,
                      specialist-colors.ts, specialists.ts, utils.ts,
                      contentPolicyGuard.ts, ghost-timeline-adapter.ts, fillDayGuards.ts,
-                     destination-intel-cache.ts, config.ts, country-flags.ts,
+                     destination-intel-cache.ts, config.ts,
                      date-utils.ts, format-utils.ts, placeholders.ts, renderStarRating.ts,
                      specialistLinkParser.ts, dayIntensity.ts, statusCopyMap.ts,
                      pdfData.ts, summary.ts, debug.ts, loaderConfig.ts, loaderCopyConfig.ts,
                      theme.ts,
                      categoryNormalization.ts, popular-places.ts, showMutationToast.ts,
-                     googlePlacesPhoto.ts, travelIntel.ts,
+                     googlePlacesPhoto.ts, sharedTripApi.ts, travelIntel.ts,
                      use-sync-external-store-shim.js
   next.config.mjs, next-env.d.ts
                   → Next.js runtime config + generated route typing bridge

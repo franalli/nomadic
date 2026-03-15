@@ -13,7 +13,7 @@ export function TimelineSkeleton() {
   return (
     <div className="pl-4 pr-2 py-6 space-y-10 relative">
       {/* Thread Line - dotted while loading */}
-      <div className="absolute left-[31px] top-6 bottom-6 w-0.5 border-l-2 border-dotted border-zinc-300 dark:border-zinc-700" />
+      <div className="absolute left-[31px] top-6 bottom-6 w-0.5 border-l-2 border-dotted border-zinc-300 dark:border-white/10" />
 
       {[1, 2, 3].map((i) => (
         <div
@@ -38,12 +38,12 @@ export function TimelineSkeleton() {
           </div>
 
           {/* Content Card with shimmer stripes */}
-          <div className="relative h-32 w-full rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 overflow-hidden bg-zinc-100/50 dark:bg-zinc-800/30">
+          <div className="relative h-32 w-full rounded-xl border border-dashed border-zinc-300 dark:border-white/10 overflow-hidden bg-zinc-100/50 dark:bg-zinc-800/30">
             {/* Shimmer overlay */}
             <div className="absolute inset-0 -translate-x-full animate-[shimmer_2s_infinite] bg-gradient-to-r from-transparent via-white/20 dark:via-white/5 to-transparent" />
 
             {/* Skeleton content */}
-            <div className="p-4 space-y-3">
+            <div className="p-4 space-y-2">
               <div className={cn('h-4 w-3/4 rounded', shimmerClasses)} />
               <div className={cn('h-3 w-1/2 rounded [animation-delay:150ms]', shimmerClasses)} />
               <div className={cn('h-3 w-2/3 rounded [animation-delay:300ms]', shimmerClasses)} />

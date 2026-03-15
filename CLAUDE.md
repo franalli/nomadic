@@ -2,10 +2,10 @@
 
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
-- **Focus:** [describe focus]
-- **Secondary:** [secondary priority or "none"]
+- **Focus:** UX polish, cost optimization, and shipping speed
+- **Secondary:** post-demo delivery hardening across frontend/backend planner interactions
 - **Active work:** UX and interaction polish, cost-aware recommendation optimizations, and SSoT doc alignment in `docs/*`
-- **Active files:** `backend/app/{main.py,streaming.py,lifespan.py,debug_utils.py}`, `backend/app/planner/{nodes/vertical_specialist.py,services/admin_utils.py}`, `backend/app/services/{activity_browser.py,experience_generator.py,spend_guard.py}`, `frontend/components/{chat/ChatSuggestionChips.tsx,plan/*,shared/SharedTripView.tsx}`, `frontend/hooks/useHeaderActions.tsx`, `docs/{data-contracts.md,plan_graph_analysis.md,repo_structure.md,ux_unified_architecture.md}`
+- **Active files:** `docs/{data-contracts.md,design-system.md,plan_graph_analysis.md,repo_structure.md,ux_unified_architecture.md}`, `.claude/agents/{backend-specialist.md,frontend-specialist.md}`, `CLAUDE.md`, `backend/app/{analytics_routes.py,config.py,crud_document.py,db_models.py,graph_plan_utils.py,lifespan.py,main.py,request_dedup.py,streaming.py}`, `backend/app/planner/{chip_generator.py,coordinator.py,nodes/{expert_constraints.py,local_expert.py,logistics_node.py,vertical_specialist.py},services/{itinerary_adapter.py,state_serde.py},specialist_registry.py}`, `backend/app/prompts/specialists/local_expert.txt`, `backend/app/services/{activity_category_conflicts.py,aviasales_provider.py,experience_generator.py,itinerary_builder.py,partner_enrichment.py,specialist_cache.py,spend_guard.py,unsplash_queries.py,viator_provider.py,gyg_provider.py}`, `backend/app/tile_service/google_places_provider.py`, `backend/migrations/versions/{9f6a2e4b7c1d_drop_suggestion_clicks_table.py,c4b7e1a29d3f_add_runtime_state_table.py}`, `frontend/{components,hooks,lib,state/{documentStore.ts,userStore.ts}}`
 - **Known broken:** none explicitly tracked in current diff
 - **DO NOT touch this sprint:** `llm_factory.py` provider/model-routing contract; API/schema compatibility surfaces
 
@@ -117,7 +117,7 @@ These four docs override your assumptions. Read before generating code.
 ### Stack
 
 - **Frontend:** Next.js 16, React 19, TypeScript, Tailwind, Zustand, Framer Motion, Mapbox GL
-- **Backend:** Python 3.12, FastAPI, SQLAlchemy, Alembic, LangGraph, LangChain (OpenAI + Gemini)
+- **Backend:** Python 3.12, FastAPI, SQLAlchemy, Alembic, LangChain (OpenAI + Gemini)
 - **LLM Providers:** OpenAI + Google Gemini via `llm_factory.py`; models configured via `settings.*_model` env vars
 - **Testing:** Vitest (frontend), pytest (backend)
 - **Linting:** ESLint + Prettier (frontend), Ruff (backend)
@@ -142,7 +142,7 @@ rm -f backend/test_plan_document_pytest.db*
 
 # Environment
 frontend/.env.local → NEXT_PUBLIC_API_URL, NEXT_PUBLIC_MAPBOX_TOKEN, NEXT_PUBLIC_DEBUG_LOGS
-backend/.env → DATABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY, ROUTER_MODEL, EXTRACTION_MODEL, SPECIALIST_MODEL, LOCAL_EXPERT_MODEL, GUARD_MODEL, SYNTHESIZER_PLANNING_MODEL, SYNTHESIZER_EXPLORATION_MODEL, EXPERIENCE_MODEL, IATA_RESOLVER_MODEL, IATA_CACHE_TTL_HOURS, UNSPLASH_ACCESS_KEY, GOOGLE_MAPS_API_KEY, GOOGLE_MAPS_API_SECRET, VIATOR_API_KEY, VIATOR_ENABLED, VIATOR_CACHE_TTL_HOURS, VIATOR_API_URL, GET_YOUR_GUIDE_API_KEY, GET_YOUR_GUIDE_ENABLED, GET_YOUR_GUIDE_CACHE_TTL_HOURS, GET_YOUR_GUIDE_API_URL, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, ADMIN_API_KEY, MEDIA_PROXY_SIGNING_KEY, FRONTEND_ORIGIN, COOKIE_DOMAIN, GOOGLE_PLACES_PHOTOS_ENABLED, MAX_SESSIONS_PER_IP_HOUR, DEBUG, DEBUG_PLAN_MESSAGES, CLEAR_L2_ON_RESET
+backend/.env → DATABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY, ROUTER_MODEL, SPECIALIST_MODEL, SPECIALIST_FALLBACK_MODEL, LOCAL_EXPERT_MODEL, GUARD_MODEL, SYNTHESIZER_PLANNING_MODEL, EXPERIENCE_MODEL, IATA_RESOLVER_MODEL, IATA_CACHE_TTL_HOURS, UNSPLASH_ACCESS_KEY, GOOGLE_MAPS_API_KEY, GOOGLE_MAPS_API_SECRET, VIATOR_API_KEY, VIATOR_ENABLED, VIATOR_CACHE_TTL_HOURS, VIATOR_API_URL, GET_YOUR_GUIDE_API_KEY, GET_YOUR_GUIDE_ENABLED, GET_YOUR_GUIDE_CACHE_TTL_HOURS, GET_YOUR_GUIDE_API_URL, AVIASALES_API_TOKEN, AVIASALES_MARKER, AVIASALES_ENABLED, AVIASALES_CACHE_TTL_HOURS, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, ADMIN_API_KEY, MEDIA_PROXY_SIGNING_KEY, FRONTEND_ORIGIN, COOKIE_DOMAIN, GOOGLE_PLACES_PHOTOS_ENABLED, MAX_SESSIONS_PER_IP_HOUR, DEBUG, DEBUG_PLAN_MESSAGES, CLEAR_L2_ON_RESET
 cd backend && alembic upgrade head      # DB migrations
 docker compose up db --build            # Docker DB
 ```

@@ -6,6 +6,8 @@ The serialization tests are pure unit tests (no API keys needed).
 
 from __future__ import annotations
 
+import json
+
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -17,6 +19,7 @@ from app.planner.services.state_serde import (
     restore_agent_state,
     serialize_agent_state,
 )
+from tests.analyze_flow_logs import FlowReport, check_day_fill_rate
 
 # ===========================================================================
 # Unit tests -- serialization roundtrip (no API keys needed)
@@ -365,6 +368,457 @@ class TestRestoreAgentState:
         assert browse_tile["is_estimate_only"] is False
         assert "discard_me" not in browse_tile
 
+    def test_large_itinerary_is_trimmed_under_session_state_limit(self):
+        """Oversized long-trip state should be trimmed below the request validator limit."""
+
+        def build_tile(idx: int, *, tile_type: str = "activity") -> dict:
+            return {
+                "id": f"{tile_type}_{idx}",
+                "type": tile_type,
+                "title": f"Rome item {idx}",
+                "partner": "viator" if tile_type == "activity" else "google_places_hotel",
+                "provider": "viator" if tile_type == "activity" else "google_places",
+                "partner_product_id": f"P-{idx}",
+                "source": "live",
+                "source_agent": "logistics_node",
+                "category": "cultural",
+                "price_estimate": 49.0 + idx,
+                "live_price": 49.0 + idx,
+                "currency": "USD",
+                "price_basis": "per_person",
+                "is_estimate_only": False,
+                "deeplink": f"https://example.com/items/{idx}",
+                "image_url": f"https://images.example.com/{idx}.jpg",
+                "geo": {"lat": 41.9 + idx / 1000, "lng": 12.4 + idx / 1000},
+                "rating": 4.7,
+                "review_count": 100 + idx,
+                "tags": ["activity", "rome"],
+                "availability_status": "unknown",
+                "meta": {
+                    "duration_hours": 2.5,
+                    "viator_product_code": f"V-{idx}",
+                    "category": "cultural",
+                },
+            }
+
+        activity_tiles = [build_tile(idx) for idx in range(40)]
+        hotel_tiles = [build_tile(idx, tile_type="hotel") for idx in range(12)]
+        day_cards = []
+        for day_number in range(1, 29):
+            blocks = [
+                {
+                    "id": f"block_{day_number}_am",
+                    "period": "morning",
+                    "activity_type": "experience",
+                    "specialist_type": None,
+                    "is_buffer": False,
+                    "buffer_type": None,
+                    "summary": f"Morning plan {day_number}",
+                    "booked_tile": activity_tiles[(day_number - 1) % len(activity_tiles)],
+                },
+                {
+                    "id": f"block_{day_number}_pm",
+                    "period": "afternoon",
+                    "activity_type": "experience",
+                    "specialist_type": None,
+                    "is_buffer": False,
+                    "buffer_type": None,
+                    "summary": f"Afternoon plan {day_number}",
+                    "booked_tile": activity_tiles[day_number % len(activity_tiles)],
+                },
+                {
+                    "id": f"block_{day_number}_eve",
+                    "period": "evening",
+                    "activity_type": "experience",
+                    "specialist_type": None,
+                    "is_buffer": False,
+                    "buffer_type": None,
+                    "summary": f"Evening plan {day_number}",
+                    "booked_tile": activity_tiles[(day_number + 1) % len(activity_tiles)],
+                },
+            ]
+            day_cards.append(
+                {
+                    "day_number": day_number,
+                    "date": f"2030-03-{day_number:02d}",
+                    "label": f"Day {day_number}",
+                    "blocks": blocks,
+                }
+            )
+
+        original = {
+            "messages": [
+                HumanMessage(content="Plan Rome"),
+                AIMessage(content="Here is a plan"),
+                HumanMessage(content="Extend it"),
+                AIMessage(content="Extended"),
+            ],
+            "trip_plan": {
+                "destination": "Rome",
+                "start_date": "2030-03-01",
+                "end_date": "2030-03-18",
+            },
+            "tiles": {"activities": activity_tiles, "hotels": hotel_tiles},
+            "strategy_sections": [
+                {
+                    "id": "strategy_local_expert",
+                    "specialist_type": "local_expert",
+                    "title": "Rome Trip Overview",
+                    "destination_gallery": [
+                        {"label": f"gallery-{idx}", "image_url": f"https://gallery/{idx}.jpg"}
+                        for idx in range(6)
+                    ],
+                    "vibe_trio": [
+                        {"label": f"vibe-{idx}", "image_url": f"https://vibes/{idx}.jpg"}
+                        for idx in range(3)
+                    ],
+                    "local_expert_enrichment": {"state": "pending"},
+                }
+            ],
+            "day_cards": day_cards,
+            "persistent_meta": {
+                "plan_view_state": "S3_ITINERARY_READY",
+                "browseable_activities": [build_tile(idx) for idx in range(30)],
+            },
+        }
+
+        serialized = serialize_agent_state(original)
+        raw_size = len(json.dumps(serialized, default=str))
+        restored = restore_agent_state(serialized)
+        from app.planner.coordinator import _build_envelope
+
+        assert raw_size < 51200
+        assert len(serialized["persistent_meta"]["browseable_activities"]) == 30
+        assert len(restored["persistent_meta"]["browseable_activities"]) == 30
+        assert "destination_gallery" not in serialized["strategy_sections"][0]
+        assert serialized["day_cards"] == []
+        assert len(serialized["tiles"]["activities"]) == len(activity_tiles)
+        assert len(restored["tiles"]["activities"]) == len(activity_tiles)
+        restored_tile = restored["tiles"]["activities"][0]
+        assert restored_tile["image_url"].startswith("https://images.example.com/")
+        assert restored_tile["geo"]["lat"] >= 41.9
+        assert restored_tile["rating"] == 4.7
+        restored["trip_plan"]["country_code"] = "IT"
+        envelope = _build_envelope(restored, "What else should we do?", "test-session")
+        assert len(envelope["document"]["browseable_activities"]) == 30
+
+    def test_massive_tile_catalog_round_trips_via_compressed_session_state(self):
+        """Huge tile catalogs should stay under 64KB without capping restored tiles."""
+
+        def build_tile(idx: int, *, tile_type: str = "activity") -> dict:
+            return {
+                "id": f"{tile_type}_{idx}",
+                "type": tile_type,
+                "title": f"Rome item {idx}",
+                "partner": "viator" if tile_type == "activity" else "google_places_hotel",
+                "provider": "viator" if tile_type == "activity" else "google_places",
+                "partner_product_id": f"P-{idx}",
+                "source": "live",
+                "source_agent": "logistics_node",
+                "category": "cultural",
+                "price_estimate": 49.0 + idx,
+                "live_price": 49.0 + idx,
+                "currency": "USD",
+                "price_basis": "per_person",
+                "is_estimate_only": False,
+                "deeplink": f"https://example.com/items/{idx}",
+                "image_url": f"https://images.example.com/{idx}.jpg",
+                "geo": {"lat": 41.9 + idx / 1000, "lng": 12.4 + idx / 1000},
+                "rating": 4.7,
+                "review_count": 100 + idx,
+                "tags": ["activity", "rome"],
+                "availability_status": "unknown",
+                "meta": {
+                    "duration_hours": 2.5,
+                    "viator_product_code": f"V-{idx}",
+                    "category": "cultural",
+                },
+            }
+
+        state = {
+            "messages": [
+                HumanMessage(content="Plan Rome"),
+                AIMessage(content="Here is a plan"),
+            ],
+            "trip_plan": {
+                "destination": "Rome",
+                "start_date": "2030-03-01",
+                "end_date": "2030-03-18",
+            },
+            "tiles": {
+                "activities": [build_tile(idx) for idx in range(160)],
+                "hotels": [build_tile(idx, tile_type="hotel") for idx in range(40)],
+            },
+            "strategy_sections": [{"id": "strategy_local_expert", "title": "Rome Trip Overview"}],
+            "day_cards": [],
+            "persistent_meta": {"plan_view_state": "S3_ITINERARY_READY"},
+        }
+
+        serialized = serialize_agent_state(state)
+        restored = restore_agent_state(serialized)
+
+        assert len(json.dumps(serialized, default=str)) < 65536
+        assert serialized["tiles"] == {}
+        assert isinstance(serialized["_compressed_tiles"], str)
+        assert len(restored["tiles"]["activities"]) == 160
+        restored_tile = restored["tiles"]["activities"][0]
+        assert restored_tile["image_url"].startswith("https://images.example.com/")
+        assert restored_tile["partner_product_id"] == "P-0"
+        assert restored_tile["source_agent"] == "logistics_node"
+        assert restored_tile["rating"] == 4.7
+
+    def test_retained_day_cards_keep_booked_tile_restore_contract(self):
+        """If day_cards survive budget trimming, booked tiles must keep restore-safe fields."""
+
+        def build_tile(idx: int) -> dict:
+            return {
+                "id": f"activity_{idx}",
+                "type": "activity",
+                "title": f"Rome item {idx}",
+                "partner": "viator",
+                "provider": "viator",
+                "partner_product_id": f"P-{idx}",
+                "source": "live",
+                "source_agent": "logistics_node",
+                "category": "cultural",
+                "price_estimate": 49.0 + idx,
+                "live_price": 49.0 + idx,
+                "currency": "USD",
+                "price_basis": "per_person",
+                "is_estimate_only": False,
+                "deeplink": f"https://example.com/items/{idx}",
+                "image_url": f"https://images.example.com/{idx}.jpg",
+                "geo": {"lat": 41.9 + idx / 1000, "lng": 12.4 + idx / 1000},
+                "rating": 4.7,
+                "review_count": 100 + idx,
+                "tags": ["activity", "rome"],
+                "availability_status": "unknown",
+                "meta": {
+                    "duration_hours": 2.5,
+                    "viator_product_code": f"V-{idx}",
+                    "category": "cultural",
+                },
+            }
+
+        long_blob = "x" * 1500
+        activity_tiles = [build_tile(idx) for idx in range(25)]
+        day_cards = []
+        for day_number in range(1, 25):
+            day_cards.append(
+                {
+                    "day_number": day_number,
+                    "date": f"2030-03-{day_number:02d}",
+                    "label": f"Day {day_number}",
+                    "narrative": long_blob,
+                    "blocks": [
+                        {
+                            "id": f"block_{day_number}_am",
+                            "period": "morning",
+                            "activity_type": "experience",
+                            "specialist_type": None,
+                            "is_buffer": False,
+                            "buffer_type": None,
+                            "summary": long_blob,
+                            "notes": long_blob,
+                            "booked_tile": activity_tiles[day_number % len(activity_tiles)],
+                        },
+                        {
+                            "id": f"block_{day_number}_pm",
+                            "period": "afternoon",
+                            "activity_type": "experience",
+                            "specialist_type": None,
+                            "is_buffer": False,
+                            "buffer_type": None,
+                            "summary": long_blob,
+                            "notes": long_blob,
+                            "booked_tile": activity_tiles[(day_number + 1) % len(activity_tiles)],
+                        },
+                    ],
+                }
+            )
+
+        serialized = serialize_agent_state(
+            {
+                "messages": [
+                    HumanMessage(content="Plan Rome"),
+                    AIMessage(content="Here is a plan"),
+                ],
+                "trip_plan": {
+                    "destination": "Rome",
+                    "start_date": "2030-03-01",
+                    "end_date": "2030-03-24",
+                },
+                "tiles": {"activities": activity_tiles},
+                "strategy_sections": [
+                    {"id": "strategy_local_expert", "title": "Rome Trip Overview"}
+                ],
+                "day_cards": day_cards,
+                "persistent_meta": {
+                    "plan_view_state": "S3_ITINERARY_READY",
+                    "browseable_activities": [build_tile(idx) for idx in range(5)],
+                },
+            }
+        )
+
+        assert len(json.dumps(serialized, default=str)) < 65536
+        assert len(serialized["day_cards"]) == 24
+        first_block = serialized["day_cards"][0]["blocks"][0]
+        assert "summary" not in first_block
+        booked_tile = first_block["booked_tile"]
+        for key in (
+            "partner",
+            "partner_product_id",
+            "source",
+            "source_agent",
+            "provider",
+            "live_price",
+            "price_basis",
+            "is_estimate_only",
+            "rating",
+            "review_count",
+        ):
+            assert key in booked_tile
+
+    def test_high_entropy_tile_catalog_uses_compacted_compressed_snapshot(self):
+        """High-entropy tiles should trim below the soft budget and still restore."""
+
+        def uniq(idx: int, prefix: str) -> str:
+            return f"{prefix}-{idx:06d}-" + "".join(
+                chr(33 + ((idx * 19 + shift) % 90)) for shift in range(400)
+            )
+
+        def build_tile(idx: int, *, tile_type: str = "activity") -> dict:
+            return {
+                "id": f"{tile_type}_{idx}",
+                "type": tile_type,
+                "title": uniq(idx, "title"),
+                "partner": "viator" if tile_type == "activity" else "google_places_hotel",
+                "provider": "viator" if tile_type == "activity" else "google_places",
+                "partner_product_id": uniq(idx, "product"),
+                "source": uniq(idx, "source"),
+                "source_agent": uniq(idx, "agent"),
+                "category": uniq(idx, "category"),
+                "price_estimate": 49.0 + idx,
+                "live_price": 49.0 + idx,
+                "currency": "USD",
+                "price_basis": uniq(idx, "basis"),
+                "is_estimate_only": False,
+                "deeplink": f"https://example.com/items/{idx}/" + uniq(idx, "deep"),
+                "image_url": f"https://images.example.com/{idx}/" + uniq(idx, "img"),
+                "geo": {"lat": 41.9 + idx / 1000, "lng": 12.4 + idx / 1000},
+                "rating": 4.7,
+                "review_count": 100 + idx,
+                "tags": [uniq(idx, "tag1"), uniq(idx, "tag2"), uniq(idx, "tag3")],
+                "availability_status": uniq(idx, "avail"),
+                "meta": {
+                    "duration_hours": 2.5,
+                    "viator_product_code": uniq(idx, "vp"),
+                    "category": uniq(idx, "meta-category"),
+                    "is_backfill": False,
+                    "notes": uniq(idx, "notes"),
+                    "more": uniq(idx, "more"),
+                },
+            }
+
+        serialized = serialize_agent_state(
+            {
+                "messages": [
+                    HumanMessage(content="Plan Rome"),
+                    AIMessage(content="Here is a plan"),
+                ],
+                "trip_plan": {"destination": "Rome"},
+                "tiles": {
+                    "activities": [build_tile(idx) for idx in range(400)],
+                    "hotels": [build_tile(idx, tile_type="hotel") for idx in range(100)],
+                },
+                "strategy_sections": [
+                    {"id": "strategy_local_expert", "title": "Rome Trip Overview"}
+                ],
+                "day_cards": [],
+                "persistent_meta": {"plan_view_state": "S3_ITINERARY_READY"},
+            }
+        )
+        restored = restore_agent_state(serialized)
+
+        assert len(json.dumps(serialized, default=str)) < 51200
+        assert isinstance(serialized["_compressed_tiles"], str)
+        assert serialized["tiles"] == {}
+        assert len(restored["tiles"]["activities"]) == 400
+        restored_tile = restored["tiles"]["activities"][0]
+        assert restored_tile["partner_product_id"].startswith("product-")
+        assert "image_url" not in restored_tile
+        assert "geo" not in restored_tile
+        assert "tags" not in restored_tile
+        assert "availability_status" not in restored_tile
+
+    def test_soft_budget_compresses_tiles_below_threshold_and_restores(self):
+        """Soft-budget states should serialize below 51.2KB and round-trip their tiles."""
+
+        def build_tile(idx: int, *, tile_type: str = "activity") -> dict:
+            return {
+                "id": f"{tile_type}_{idx}",
+                "type": tile_type,
+                "title": f"Rome item {idx}",
+                "partner": "viator" if tile_type == "activity" else "google_places_hotel",
+                "provider": "viator" if tile_type == "activity" else "google_places",
+                "partner_product_id": f"P-{idx}",
+                "source": "live",
+                "source_agent": "logistics_node",
+                "category": "cultural",
+                "price_estimate": 49.0 + idx,
+                "live_price": 49.0 + idx,
+                "currency": "USD",
+                "price_basis": "per_person",
+                "is_estimate_only": False,
+                "deeplink": f"https://example.com/items/{idx}",
+                "image_url": f"https://images.example.com/{idx}.jpg",
+                "geo": {"lat": 41.9 + idx / 1000, "lng": 12.4 + idx / 1000},
+                "rating": 4.7,
+                "review_count": 100 + idx,
+                "tags": ["activity", "rome"],
+                "availability_status": "unknown",
+                "meta": {
+                    "duration_hours": 2.5,
+                    "viator_product_code": f"V-{idx}",
+                    "category": "cultural",
+                },
+            }
+
+        state = {
+            "messages": [
+                HumanMessage(content="Plan Rome"),
+                AIMessage(content="Here is a plan"),
+            ],
+            "trip_plan": {
+                "destination": "Rome",
+                "start_date": "2030-03-01",
+                "end_date": "2030-03-18",
+            },
+            "tiles": {
+                "activities": [build_tile(idx) for idx in range(160)],
+                "hotels": [build_tile(idx, tile_type="hotel") for idx in range(40)],
+            },
+            "strategy_sections": [{"id": "strategy_local_expert", "title": "Rome Trip Overview"}],
+            "day_cards": [],
+            "persistent_meta": {"plan_view_state": "S3_ITINERARY_READY"},
+        }
+
+        serialized = serialize_agent_state(state)
+        restored = restore_agent_state(serialized)
+
+        assert len(json.dumps(serialized, default=str)) < 51200
+        assert serialized["tiles"] == {}
+        assert isinstance(serialized["_compressed_tiles"], str)
+        assert len(restored["tiles"]["activities"]) == 160
+        assert len(restored["tiles"]["hotels"]) == 40
+        restored_tile = restored["tiles"]["activities"][0]
+        assert restored_tile["partner"] == "viator"
+        assert restored_tile["partner_product_id"] == "P-0"
+        assert restored_tile["source_agent"] == "logistics_node"
+        assert restored_tile["price_basis"] == "per_person"
+        assert restored_tile["live_price"] == 49.0
+        assert restored_tile["rating"] == 4.7
+
     def test_specialist_plans_roundtrip(self):
         """specialist_plans round-trips through serialize -> restore."""
         diving_plan = {
@@ -536,3 +990,49 @@ def test_selective_redispatch_preserves_unaffected_plans() -> None:
     assert preserve == ["hiking"]
     # Hiking plan survives untouched
     assert restored["specialist_plans"]["hiking"]["day_plans"] == [{"day_number": 5}]
+
+
+def test_flow_23_infeasible_only_analysis_skips_day_fill_rate_failure() -> None:
+    """Flow 23 should bypass day-fill-rate errors even with empty interior days."""
+
+    sse_data = "data: " + json.dumps(
+        {
+            "type": "complete",
+            "data": {
+                "document": {
+                    "day_cards": [
+                        {
+                            "day_number": 1,
+                            "blocks": [{"booking_category": "arrival", "activity_type": "arrival"}],
+                        },
+                        {
+                            "day_number": 2,
+                            "blocks": [{"booking_category": "meal", "activity_type": "meal"}],
+                        },
+                        {
+                            "day_number": 3,
+                            "blocks": [{"booking_category": "meal", "activity_type": "meal"}],
+                        },
+                        {
+                            "day_number": 4,
+                            "blocks": [
+                                {"booking_category": "departure", "activity_type": "departure"}
+                            ],
+                        },
+                    ]
+                },
+                "session_state": {},
+            },
+        }
+    )
+
+    control = FlowReport(14, "control")
+    check_day_fill_rate(sse_data, 14, control)
+    assert control.errors
+    assert "Day fill rate 0%" in control.errors[0]
+
+    report = FlowReport(23, "Infeasible Activity - Skiing in Bali")
+    check_day_fill_rate(sse_data, 23, report)
+
+    assert report.errors == []
+    assert "day_fill_rate" not in report.metrics

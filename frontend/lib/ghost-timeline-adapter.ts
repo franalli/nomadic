@@ -167,6 +167,7 @@ const _POI_TYPE_ALIASES: Record<string, string> = {
   ...CATEGORY_ALIAS,
   // Identity entries for canonical keys that the alias map doesn't cover
   cultural: 'cultural',
+  temples: 'temples',
   food: 'food',
   nature: 'nature',
   shopping: 'shopping',
@@ -179,8 +180,8 @@ function _canonicalPoiType(value: unknown): string | null {
   if (!key) return null;
   let mapped = _POI_TYPE_ALIASES[key] ?? key;
   if (!_CANONICAL_POI_TYPES.has(mapped)) {
-    if (/(museum|landmark|historic|monument|plaza|fountain)/.test(key)) mapped = 'cultural';
-    else if (/(temple|church|worship|mosque|synagogue)/.test(key)) mapped = 'temples';
+    if (/(temple|church|worship|mosque|synagogue)/.test(key)) mapped = 'temples';
+    else if (/(museum|landmark|historic|monument|plaza|fountain)/.test(key)) mapped = 'cultural';
     else if (/(restaurant|cafe|bar|bakery|food|meal)/.test(key)) mapped = 'food';
     else if (/(park|garden|nature|zoo|camp)/.test(key)) mapped = 'nature';
     else if (/(shop|store|market|mall)/.test(key)) mapped = 'shopping';

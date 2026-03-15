@@ -160,14 +160,6 @@ def get_google_places_usage_counters() -> dict[str, dict[str, int]]:
         return {path: dict(values) for path, values in _places_usage_counters.items()}
 
 
-def clear_google_places_usage_counters() -> None:
-    """Reset Places usage counters."""
-    with _places_usage_lock:
-        for path in _places_usage_counters:
-            for field in _places_usage_counters[path]:
-                _places_usage_counters[path][field] = 0
-
-
 # Circuit breaker state per usage path.
 _places_circuit_lock = Lock()
 _places_circuit_state: dict[str, dict[str, float | int]] = {
@@ -541,20 +533,21 @@ def get_geocache_stats() -> dict[str, int]:
 
 
 def clear_geocode_caches() -> dict[str, int]:
-    """Clear geocode + country_code caches and return counts of evicted entries.
-
-    Also drains the enrichment inflight dedup dict to prevent stale futures
-    from being returned after an admin cache reset.
-    """
+    """Clear geocode + country_code caches and return counts of evicted entries."""
     with _geocode_thread_lock:
         geo_count = len(_geocode_cache)
         cc_count = len(_country_code_cache)
         _geocode_cache.clear()
         _country_code_cache.clear()
-    # Inflight dict is async-lock-guarded elsewhere, but .clear() on a plain
-    # dict is atomic in CPython and safe here for an admin drain operation.
-    _enrich_inflight.clear()
     return {"geocode_cache": geo_count, "country_code_cache": cc_count}
+
+
+async def clear_google_places_runtime_caches() -> dict[str, int]:
+    """Clear geocode caches and drain enrichment singleflight state under its lock."""
+    counts = clear_geocode_caches()
+    async with _enrich_inflight_lock:
+        _enrich_inflight.clear()
+    return counts
 
 
 async def _geocode_destination_async(dest: str) -> tuple[float, float] | None:
@@ -943,25 +936,6 @@ def _call_places_api(
             elapsed,
         )
         return []
-
-
-def _parse_price_level(price_level: Any) -> Optional[int]:
-    """Normalize Google Places priceLevel (string enum or int) to an int 0-4.
-
-    Returns None when the upstream field is absent/unknown.
-    """
-    price_level_map = {
-        "PRICE_LEVEL_FREE": 0,
-        "PRICE_LEVEL_INEXPENSIVE": 1,
-        "PRICE_LEVEL_MODERATE": 2,
-        "PRICE_LEVEL_EXPENSIVE": 3,
-        "PRICE_LEVEL_VERY_EXPENSIVE": 4,
-    }
-    if isinstance(price_level, str):
-        return price_level_map.get(price_level)
-    if isinstance(price_level, int):
-        return price_level if 0 <= price_level <= 4 else None
-    return None
 
 
 def _hotel_query(dest: str, hotel_settings: Any) -> str:
@@ -1821,6 +1795,45 @@ async def enrich_activities_with_places(
     """
     api_key = settings.google_maps_api_key
     if not api_key or not activities:
+        return activities
+
+    def _has_enrichment_image(activity: dict[str, Any]) -> bool:
+        meta = activity.get("meta")
+        meta_dict = meta if isinstance(meta, dict) else {}
+        return bool(
+            activity.get("image_url") or activity.get("photo_name") or meta_dict.get("photo_name")
+        )
+
+    def _has_enrichment_deeplink(activity: dict[str, Any]) -> bool:
+        return bool(
+            activity.get("deeplink") or activity.get("deeplink_url") or activity.get("maps_uri")
+        )
+
+    def _has_usable_coordinates(activity: dict[str, Any]) -> bool:
+        coords = activity.get("coordinates")
+        if isinstance(coords, dict):
+            lat = coords.get("lat")
+            lng = coords.get("lng")
+            return isinstance(lat, (int, float)) and isinstance(lng, (int, float))
+        if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+            lng, lat = coords[0], coords[1]
+            return isinstance(lat, (int, float)) and isinstance(lng, (int, float))
+
+        geo = activity.get("geo")
+        if isinstance(geo, dict):
+            lat = geo.get("lat")
+            lng = geo.get("lng")
+            return isinstance(lat, (int, float)) and isinstance(lng, (int, float))
+        return False
+
+    if all(
+        isinstance(activity, dict)
+        and bool(activity.get("google_place_id") or activity.get("place_id"))
+        and _has_usable_coordinates(activity)
+        and _has_enrichment_image(activity)
+        and _has_enrichment_deeplink(activity)
+        for activity in activities
+    ):
         return activities
 
     path = _normalize_places_path(path_label)

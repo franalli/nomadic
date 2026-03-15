@@ -20,11 +20,11 @@ export function RecommendationList({
   headingLabel: string;
 }) {
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <h4 className={DS.text.label}>{headingLabel}</h4>
-      <div className="space-y-3">
+      <div className="space-y-2">
         {items.map((item, i) => (
-          <div key={i} className={cn('rounded-xl border p-3 flex gap-3', 'bg-white border-zinc-200 dark:bg-zinc-900 dark:border-zinc-700')}>
+          <div key={i} className={cn('rounded-xl border p-3 flex gap-2', 'bg-white border-zinc-200 dark:bg-zinc-900 dark:border-zinc-700')}>
             {item.image_url && (
               <div className="relative w-16 h-16 rounded-lg overflow-hidden shrink-0 bg-zinc-100 dark:bg-zinc-800">
                 <Image src={item.image_url} alt={item.title} fill className="object-cover" sizes="64px" />
@@ -70,7 +70,7 @@ export function CompactSheetContent({ section, constraints }: CompactSheetConten
           </div>
         )}
         {section.vibe_trio && section.vibe_trio.filter(v => v.image_url).length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-4">
             <h4 className={DS.text.label}>Trip Vibe</h4>
             <div className="grid grid-cols-2 gap-2 aspect-[16/9] rounded-2xl overflow-hidden">
               {section.vibe_trio[0]?.image_url && (
@@ -95,7 +95,7 @@ export function CompactSheetContent({ section, constraints }: CompactSheetConten
           </div>
         )}
         {(!section.vibe_trio || section.vibe_trio.length === 0) && section.content_added && section.content_added.filter(c => c.image_url).length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-4">
             <h4 className={DS.text.label}>Destination Vibe</h4>
             <div className="grid grid-cols-2 gap-2">
               {section.content_added.filter(item => item.image_url).slice(0, 4).map((item, i) => (
@@ -114,7 +114,7 @@ export function CompactSheetContent({ section, constraints }: CompactSheetConten
           </div>
         )}
         {section.principles && section.principles.length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-4">
             <h4 className={DS.text.label}>Trip Highlights</h4>
             <ul className="space-y-2">
               {section.principles.map((p, i) => (
@@ -134,7 +134,7 @@ export function CompactSheetContent({ section, constraints }: CompactSheetConten
       <>
         <div className="space-y-2">
           <h4 className={DS.text.label}>Destination Preview</h4>
-          <div className="flex gap-3 overflow-x-auto pb-2 snap-x no-scrollbar -mx-4 px-4">
+          <div className="flex gap-2 overflow-x-auto pb-2 snap-x no-scrollbar -mx-4 px-4">
             {section.destination_gallery.filter(img => img.image_url).map((img, idx) => (
               <div key={idx} className="shrink-0 snap-center relative w-56 h-36 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-200 dark:border-zinc-700/50">
                 <Image src={img.image_url} alt={img.label || 'Destination image'} fill className="object-cover" sizes="224px" />
@@ -144,7 +144,7 @@ export function CompactSheetContent({ section, constraints }: CompactSheetConten
         </div>
         {section.one_liner && <div className="space-y-2"><h4 className={DS.text.label}>Local Insight</h4><p className={DS.text.body}>{section.one_liner}</p></div>}
         {section.principles && section.principles.length > 0 && (
-          <div className="space-y-3"><h4 className={DS.text.label}>Key Principles</h4>
+          <div className="space-y-4"><h4 className={DS.text.label}>Key Principles</h4>
             <ul className="space-y-2">{section.principles.map((p, i) => (
               <li key={i} className="flex gap-2 items-start text-sm text-zinc-600 dark:text-zinc-300"><CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />{p}</li>
             ))}</ul>
@@ -174,14 +174,14 @@ export function CompactSheetContent({ section, constraints }: CompactSheetConten
       )}
       {section.one_liner && <div className="space-y-2"><h4 className={DS.text.label}>Strategy Logic</h4><p className={DS.text.body}>{section.one_liner}</p></div>}
       {constraints.length > 0 && (
-        <div className="space-y-3"><h4 className={DS.text.label}>Applied Constraints</h4>
+        <div className="space-y-4"><h4 className={DS.text.label}>Applied Constraints</h4>
           <div className="grid gap-2">{constraints.map((c, i) => (
-            <div key={i} className={DS.infoBox.container}><div className="flex gap-3">{getConstraintIcon(c.type)}<div className="flex-1 min-w-0"><p className="font-medium text-sm text-zinc-900 dark:text-zinc-100">{formatConstraintRule(c.rule)}</p>{c.reason && <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{c.reason}</p>}</div></div></div>
+            <div key={i} className={DS.infoBox.container}><div className="flex gap-2">{getConstraintIcon(c.type)}<div className="flex-1 min-w-0"><p className="font-medium text-sm text-zinc-900 dark:text-zinc-100">{formatConstraintRule(c.rule)}</p>{c.reason && <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{c.reason}</p>}</div></div></div>
           ))}</div>
         </div>
       )}
       {section.principles && section.principles.length > 0 && (
-        <div className="space-y-3"><h4 className={DS.text.label}>Key Principles</h4>
+        <div className="space-y-4"><h4 className={DS.text.label}>Key Principles</h4>
           <ul className="space-y-2">{section.principles.map((p, i) => (
             <li key={i} className="flex gap-2 items-start text-sm text-zinc-600 dark:text-zinc-300"><CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />{p}</li>
           ))}</ul>
@@ -189,7 +189,7 @@ export function CompactSheetContent({ section, constraints }: CompactSheetConten
       )}
       {section.content_added && section.content_added.length > 0 && <RecommendationList items={section.content_added} headingLabel="Expert Recommendations" />}
       {section.logistics_notes && section.logistics_notes.length > 0 && (
-        <div className="space-y-3"><h4 className={DS.text.label}>Logistics Notes</h4>
+        <div className="space-y-4"><h4 className={DS.text.label}>Logistics Notes</h4>
           <ul className="space-y-1.5">{section.logistics_notes.map((note, i) => (
             <li key={i} className="text-xs text-zinc-600 dark:text-zinc-400 flex items-start gap-2"><span className="text-zinc-400 mt-0.5">•</span>{note}</li>
           ))}</ul>

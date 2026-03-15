@@ -23,6 +23,7 @@ _ENRICH_MAX_PARALLEL = "app.tile_service.google_places_provider._enrich_max_para
 _RETRY_ATTEMPTS = "app.tile_service.google_places_provider._enrich_retry_attempts"
 _BACKOFF_SECONDS = "app.tile_service.google_places_provider._enrich_backoff_seconds"
 _ASYNCIO_SLEEP = "app.tile_service.google_places_provider.asyncio.sleep"
+_RESERVE_SPEND = "app.tile_service.google_places_provider.reserve_places_spend_or_raise"
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +32,7 @@ def _clear_enrich_state():
 
     provider._enrich_mem.clear()
     provider._enrich_inflight.clear()
+    provider.clear_geocode_caches()
     # Reset shared httpx client so tests using httpx.AsyncClient mock get a fresh client
     provider._places_http_client = None
     # Reset circuit breaker state from previous tests
@@ -38,7 +40,20 @@ def _clear_enrich_state():
     yield
     provider._enrich_mem.clear()
     provider._enrich_inflight.clear()
+    provider.clear_geocode_caches()
     provider._places_http_client = None
+
+
+class _TrackingAsyncLock:
+    def __init__(self) -> None:
+        self.enter_count = 0
+
+    async def __aenter__(self) -> "_TrackingAsyncLock":
+        self.enter_count += 1
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:  # noqa: ANN001
+        return False
 
 
 class _FakeResponse:
@@ -113,6 +128,23 @@ def test_apply_place_to_activity_sets_photo_name_for_proxying():
 
 
 @pytest.mark.asyncio
+async def test_clear_google_places_runtime_caches_drains_inflight_under_lock():
+    from app.tile_service import google_places_provider as provider
+
+    provider._geocode_cache["bali"] = (-8.67, 115.21)
+    provider._country_code_cache["bali"] = "ID"
+    provider._enrich_inflight["bali::reef"] = asyncio.get_running_loop().create_future()
+    tracking_lock = _TrackingAsyncLock()
+
+    with patch.object(provider, "_enrich_inflight_lock", tracking_lock):
+        cleared = await provider.clear_google_places_runtime_caches()
+
+    assert cleared == {"geocode_cache": 1, "country_code_cache": 1}
+    assert provider._enrich_inflight == {}
+    assert tracking_lock.enter_count == 1
+
+
+@pytest.mark.asyncio
 async def test_enrich_single_activity_retries_on_transient_5xx():
     from app.tile_service.google_places_provider import _enrich_single_activity
 
@@ -135,6 +167,7 @@ async def test_enrich_single_activity_retries_on_transient_5xx():
         patch(_RETRY_ATTEMPTS, return_value=2),
         patch(_BACKOFF_SECONDS, return_value=0.0),
         patch(_ASYNCIO_SLEEP, new=sleep_mock),
+        patch(_RESERVE_SPEND, return_value=None),
     ):
         mock_get_cache.return_value = None
         enriched = await _enrich_single_activity(
@@ -178,6 +211,7 @@ async def test_enrich_single_activity_uses_retry_after_on_429():
         patch(_RETRY_ATTEMPTS, return_value=2),
         patch(_BACKOFF_SECONDS, return_value=0.0),
         patch(_ASYNCIO_SLEEP, new=sleep_mock),
+        patch(_RESERVE_SPEND, return_value=None),
     ):
         mock_get_cache.return_value = None
         enriched = await _enrich_single_activity(
@@ -217,6 +251,7 @@ async def test_enrich_single_activity_retries_invalid_json_response():
         patch(_RETRY_ATTEMPTS, return_value=2),
         patch(_BACKOFF_SECONDS, return_value=0.0),
         patch(_ASYNCIO_SLEEP, new=sleep_mock),
+        patch(_RESERVE_SPEND, return_value=None),
     ):
         mock_get_cache.return_value = None
         enriched = await _enrich_single_activity(
@@ -234,14 +269,94 @@ async def test_enrich_single_activity_retries_invalid_json_response():
 
 
 @pytest.mark.asyncio
+async def test_enrich_activities_short_circuits_when_all_places_are_already_present():
+    from app.tile_service import google_places_provider as provider
+
+    activities = [
+        {
+            "title": "Surf Lesson",
+            "google_place_id": "gp_surf",
+            "coordinates": {"lat": -8.67, "lng": 115.21},
+            "image_url": "https://maps.example/surf.jpg",
+            "deeplink": "https://www.google.com/maps/place/?q=place_id:gp_surf",
+        },
+        {
+            "title": "Temple Visit",
+            "place_id": "gp_temple",
+            "geo": {"lat": -8.50, "lng": 115.15},
+            "image_url": "https://maps.example/temple.jpg",
+            "deeplink_url": "https://www.google.com/maps/place/?q=place_id:gp_temple",
+        },
+    ]
+
+    with (
+        patch.object(provider.settings, "google_maps_api_key", "fake-key"),
+        patch(_ENRICH_SINGLE, new_callable=AsyncMock) as mock_single,
+    ):
+        enriched = await provider.enrich_activities_with_places(
+            activities=activities,
+            destination="Bali",
+            path_label="tier2_enrich",
+        )
+
+    assert enriched == activities
+    mock_single.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_enrich_activities_does_not_short_circuit_without_image_and_link():
+    from app.tile_service import google_places_provider as provider
+
+    activities = [
+        {
+            "title": "Surf Lesson",
+            "google_place_id": "gp_surf",
+            "coordinates": {"lat": -8.67, "lng": 115.21},
+        }
+    ]
+
+    with (
+        patch.object(provider.settings, "google_maps_api_key", "fake-key"),
+        patch.object(provider.settings, "google_places_enrichment_cap", len(activities)),
+        patch(
+            _ENRICH_SINGLE,
+            new=AsyncMock(
+                return_value={
+                    **activities[0],
+                    "image_url": "https://maps.example/surf.jpg",
+                    "deeplink": "https://www.google.com/maps/place/?q=place_id:gp_surf",
+                }
+            ),
+        ) as mock_single,
+    ):
+        enriched = await provider.enrich_activities_with_places(
+            activities=activities,
+            destination="Bali",
+            path_label="tier2_enrich",
+        )
+
+    mock_single.assert_awaited_once()
+    assert enriched[0]["image_url"] == "https://maps.example/surf.jpg"
+    assert enriched[0]["deeplink"] == "https://www.google.com/maps/place/?q=place_id:gp_surf"
+
+
+@pytest.mark.asyncio
 async def test_enrich_activities_respects_concurrency_limit():
     from app.tile_service import google_places_provider as provider
 
     in_flight = 0
     peak_in_flight = 0
 
-    async def _slow_enrich(client, activity, destination, api_key, path_label):  # noqa: ANN001
+    async def _slow_enrich(  # noqa: ANN001
+        client,
+        activity,
+        destination,
+        api_key,
+        path_label,
+        travelers=1,
+    ):
         nonlocal in_flight, peak_in_flight
+        assert travelers == 1
         in_flight += 1
         peak_in_flight = max(peak_in_flight, in_flight)
         await asyncio.sleep(0.02)
@@ -312,6 +427,7 @@ async def test_enrich_activities_http_retry_and_semaphore_integration():
         patch(_ENRICH_MAX_PARALLEL, return_value=2),
         patch(_RETRY_ATTEMPTS, return_value=2),
         patch(_BACKOFF_SECONDS, return_value=0.0),
+        patch(_RESERVE_SPEND, return_value=None),
         patch.object(provider.settings, "google_maps_api_key", "fake-key"),
         patch.object(provider.settings, "google_places_enrichment_cap", len(activities)),
     ):

@@ -158,7 +158,7 @@ function TravelersSheetInner({
       title="Travelers"
       hint="How many people are traveling?"
       footer={
-        <div className="flex gap-3">
+        <div className="flex gap-2">
           <button
             type="button"
             onClick={() => onOpenChange(false)}
@@ -188,7 +188,7 @@ function TravelersSheetInner({
       <div className="space-y-4">
         {/* Quick presets */}
         <div>
-          <h3 className={cn(DS.text.label, 'mb-3')}>
+          <h3 className={cn(DS.text.label, 'mb-2')}>
             Quick select
           </h3>
           <div className="flex flex-wrap gap-2">

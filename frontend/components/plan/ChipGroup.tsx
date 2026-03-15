@@ -1,26 +1,5 @@
 'use client';
 
-/**
- * ChipGroup
- *
- * Presentational chip components and state-computation helpers
- * for the UnifiedChipRow "cockpit" layout.
- *
- * Exports:
- * - SetupCoreChip  — Row A compact pill (destination, origin, dates, etc.)
- * - ModuleChip     — Row B toggle pill (flights, stays, activities)
- * - Chip-state helpers (isFlightCustom, getFlightChipSummary, etc.)
- * - Category-inference helpers (inferCategoriesFromDayCards, etc.)
- */
-
-import {
-  Check,
-  type LucideIcon,
-} from 'lucide-react';
-import { memo } from 'react';
-
-import { DS } from '@/lib/design-system';
-import { cn } from '@/lib/utils';
 import type {
   ActivitySettings,
   FlightSettings,
@@ -30,9 +9,9 @@ import type { DayCard } from '@/types/plan-envelope';
 
 import { inferConstraintCategories, resolveBlockCategory } from './tripSummaryUtils';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Chip Defaults (for detecting "custom" state)
-// ─────────────────────────────────────────────────────────────────────────────
+export type { ModuleState } from './ModuleChip';
+export { ModuleChip } from './ModuleChip';
+export { SetupCoreChip } from './SetupCoreChip';
 
 export const isFlightCustom = (settings?: FlightSettings): boolean => {
   if (!settings) return false;
@@ -56,25 +35,22 @@ export const isActivityCustom = (
   fallbackCategories: string[] = []
 ): boolean => {
   if (!settings) return fallbackCategories.length > 0;
-  const categories = settings.categories && settings.categories.length > 0 ? settings.categories : fallbackCategories;
+  const categories =
+    settings.categories && settings.categories.length > 0
+      ? settings.categories
+      : fallbackCategories;
   return categories.length > 0;
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Chip Summary Helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 export function getFlightChipSummary(settings?: FlightSettings): string | null {
   if (!settings) return null;
 
   const tokens: string[] = [];
 
-  // Stops: only if constrained
   if (settings.direct_only) {
     tokens.push('Nonstop');
   }
 
-  // Cabin: only if not economy
   if (settings.cabin_class && settings.cabin_class !== 'economy') {
     const cabinLabels: Record<string, string> = {
       premium_economy: 'Premium',
@@ -84,7 +60,6 @@ export function getFlightChipSummary(settings?: FlightSettings): string | null {
     tokens.push(cabinLabels[settings.cabin_class] || settings.cabin_class);
   }
 
-  // One-way: only if one-way
   if (settings.round_trip === false) {
     tokens.push('One-way');
   }
@@ -101,7 +76,6 @@ export function getHotelChipSummary(settings?: HotelSettings): string | null {
     tokens.push(`${settings.min_stars}★+`);
   }
 
-  // Include amenity filters
   if (settings.amenities && settings.amenities.length > 0) {
     const amenityLabels: Record<string, string> = {
       wifi: 'WiFi',
@@ -113,8 +87,10 @@ export function getHotelChipSummary(settings?: HotelSettings): string | null {
       pet_friendly: 'Pets OK',
       beachfront: 'Beachfront',
     };
-    for (const a of settings.amenities) {
-      tokens.push(amenityLabels[a] || a.charAt(0).toUpperCase() + a.slice(1));
+    for (const amenity of settings.amenities) {
+      tokens.push(
+        amenityLabels[amenity] || amenity.charAt(0).toUpperCase() + amenity.slice(1)
+      );
     }
   }
 
@@ -123,10 +99,6 @@ export function getHotelChipSummary(settings?: HotelSettings): string | null {
   return `${tokens.slice(0, 2).join(' · ')} +${tokens.length - 2}`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Category Inference from Day Cards
-// ─────────────────────────────────────────────────────────────────────────────
-
 export function inferCategoriesFromDayCards(dayCards: DayCard[] | undefined): string[] {
   if (!dayCards || dayCards.length === 0) return [];
   const inferred = new Set<string>();
@@ -134,225 +106,8 @@ export function inferCategoriesFromDayCards(dayCards: DayCard[] | undefined): st
     card.blocks?.forEach((block) => {
       const category = resolveBlockCategory(block);
       if (category) inferred.add(category);
-      inferConstraintCategories(block).forEach((c) => inferred.add(c));
+      inferConstraintCategories(block).forEach((candidate) => inferred.add(candidate));
     });
   });
   return Array.from(inferred);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SetupCoreChip (Row A) — compact trip-param pills
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface SetupCoreChipProps {
-  icon: LucideIcon;
-  label: string;
-  value?: string | null;
-  onClick?: () => void;
-  isOptional?: boolean;
-  /** If true, treat as "default value" - don't highlight even if has value */
-  isDefault?: boolean;
-  /** Mobile mode - larger touch targets */
-  isMobile?: boolean;
-  /** Disabled state (e.g., in BOOKING mode) */
-  disabled?: boolean;
-}
-
-export const SetupCoreChip = memo(function SetupCoreChip({
-  icon: Icon,
-  label,
-  value,
-  onClick,
-  isOptional,
-  isDefault = false,
-  isMobile = false,
-  disabled = false,
-}: SetupCoreChipProps) {
-  const hasValue = !!value;
-  // Only highlight if has user-set value (not default)
-  const isSet = hasValue && !isDefault;
-
-  return (
-    <button
-      type="button"
-      onClick={disabled ? undefined : onClick}
-      disabled={disabled}
-      className={cn(
-        // Mobile: h-10 (40px) for better touch, Desktop: h-8 (32px) compact for narrow panels
-        'inline-flex items-center gap-1.5 rounded-lg flex-shrink-0 cursor-pointer',
-        isMobile ? 'h-10 px-4' : 'h-8 px-3',
-        'transition-all duration-200 ease-out active:scale-[0.98]',
-        // Hover: Scale 1.02 + snap-to-black/white (DS Tactile Rule)
-        'hover:scale-[1.02] hover:border-zinc-900',
-        // Dark hover: emerald accent per DS "Bioluminescent" aesthetic
-        'dark:hover:border-emerald-500/50',
-
-        // --- STATE: SET (has user value) --- DS Tactile Rule: border-2, solid fill
-        isSet && [
-          'bg-zinc-50',
-          'border-2 border-zinc-900/30',
-          'text-zinc-900 font-semibold',
-          'dark:bg-white/10 dark:text-white dark:border-emerald-500/30',
-          'dark:hover:bg-white/15',
-        ],
-
-        // --- STATE: OPTIONAL (unset) --- DS Tactile Rule: border-2 dashed
-        !isSet && isOptional && [
-          'bg-white',
-          'border-2 border-dashed border-zinc-200',
-          'text-zinc-400',
-          'dark:bg-white/5 dark:border-white/15 dark:text-zinc-500',
-          'dark:hover:border-white/30 dark:hover:text-zinc-300',
-        ],
-
-        // --- STATE: UNSET REQUIRED --- DS Tactile Rule: border-2 solid
-        !isSet && !isOptional && [
-          'bg-white',
-          'border-2 border-zinc-200',
-          'text-zinc-400',
-          'dark:bg-white/5 dark:text-zinc-500 dark:border-white/15',
-          'dark:hover:border-white/30 dark:hover:text-white',
-        ],
-
-        // Focus ring - zinc light / emerald dark per DS
-        'focus-visible:outline-none focus-visible:ring-2',
-        'focus-visible:ring-zinc-900/20 dark:focus-visible:ring-emerald-500/20',
-
-        // --- STATE: DISABLED (BOOKING mode) ---
-        disabled && [
-          'opacity-50 cursor-not-allowed pointer-events-none',
-          'hover:scale-100 hover:border-current', // Disable hover effects
-        ]
-      )}
-    >
-      <Icon
-        className={cn(
-          'h-4 w-4 flex-shrink-0',
-          // Icon color based on state - DS accent colors (zinc/emerald, not blue)
-          isSet
-            ? 'text-zinc-900 dark:text-emerald-400'
-            : 'text-zinc-400 dark:text-zinc-500',
-          disabled && 'opacity-50'
-        )}
-      />
-      <span className="text-xs font-semibold uppercase tracking-wide whitespace-nowrap">
-        {value || label}
-        {!value && isOptional && (
-          <span className={`${DS.textSize.micro} opacity-50 ml-1 normal-case tracking-normal`}>(opt)</span>
-        )}
-      </span>
-    </button>
-  );
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ModuleChip (Row B) — 3-state toggle: off -> on-default -> on-custom
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type ModuleState = 'off' | 'on-default' | 'on-custom';
-
-export interface ModuleChipProps {
-  icon: LucideIcon;
-  label: string;
-  state: ModuleState;
-  summary?: string | null;
-  onClick?: () => void;
-  /** Mobile mode - larger touch targets */
-  isMobile?: boolean;
-  /** Disabled state (e.g., in BOOKING mode) */
-  disabled?: boolean;
-  /** Notification badge count — renders a small circle at top-right when > 0 */
-  badge?: number;
-  /** If false, keep icon even when chip is on (used for suggested/default landing toggles). */
-  showCompletionCheckWhenOn?: boolean;
-}
-
-export const ModuleChip = memo(function ModuleChip({
-  icon: Icon,
-  label,
-  state,
-  summary,
-  onClick,
-  isMobile = false,
-  disabled = false,
-  badge,
-  showCompletionCheckWhenOn = true,
-}: ModuleChipProps) {
-  const isOff = state === 'off';
-  const isOnDefault = state === 'on-default';
-  const isOnCustom = state === 'on-custom';
-  const isOn = isOnDefault || isOnCustom;
-  const showCompletionCheck = isOn && showCompletionCheckWhenOn;
-
-  return (
-    <button
-      type="button"
-      onClick={disabled ? undefined : onClick}
-      disabled={disabled}
-      className={cn(
-        // Mobile: h-11 (44px) for Apple's minimum, Desktop: h-9 (36px) compact for narrow panels
-        'relative inline-flex items-center gap-1.5 rounded-full flex-shrink-0',
-        isMobile ? 'h-11 px-5' : 'h-9 px-4',
-        'transition-all duration-200 ease-out active:scale-[0.95]',
-
-        // --- STATE: OFF (inactive) --- DS Tactile Rule: border-2, snap-to-black hover
-        isOff && [
-          'bg-white',
-          'border-2 border-zinc-200',
-          'text-zinc-400',
-          'hover:border-zinc-900 hover:text-zinc-600',
-          'dark:bg-white/5 dark:border-white/15 dark:text-zinc-500',
-          'dark:hover:border-white/30 dark:hover:text-zinc-300',
-        ],
-
-        // --- STATE: ON (active) --- DS Tactile Rule: solid fill, maximum contrast
-        isOn && [
-          'bg-zinc-900 text-white',
-          'border-2 border-transparent',
-          'font-medium',
-          'hover:bg-zinc-800',
-          'dark:bg-white dark:text-black dark:border-transparent',
-          'dark:hover:bg-zinc-100',
-        ],
-
-        // Focus ring - zinc light / emerald dark per DS
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/20 dark:focus-visible:ring-emerald-500/30',
-
-        // --- STATE: DISABLED (BOOKING mode) ---
-        disabled && 'opacity-50 cursor-not-allowed pointer-events-none'
-      )}
-    >
-      {/* Completion check only for explicitly-enabled/configured states. */}
-      {showCompletionCheck ? (
-        <Check className="h-4 w-4 flex-shrink-0 text-current" strokeWidth={2.5} />
-      ) : (
-        <Icon
-          className={cn(
-            'h-5 w-5 flex-shrink-0',
-            isOn ? 'text-current' : 'text-zinc-400 dark:text-zinc-500'
-          )}
-        />
-      )}
-      <span className="text-sm">
-        {label}
-        {isOn && summary && (
-          <span className="ml-1.5 text-xs opacity-75">· {summary}</span>
-        )}
-      </span>
-      {badge != null && badge > 0 && (
-        <span
-          className={cn(
-            'absolute -top-1.5 -right-1.5',
-            'min-w-[18px] h-[18px] px-1 rounded-full',
-            'bg-emerald-500 text-white',
-            `${DS.textSize.micro} font-bold`,
-            'flex items-center justify-center',
-            'shadow-sm'
-          )}
-        >
-          {badge}
-        </span>
-      )}
-    </button>
-  );
-});

@@ -1,22 +1,15 @@
 'use client';
 
-import { Check, Clock, ExternalLink, MapPin, Moon, Sun, Sunset } from 'lucide-react';
+import { Check, Clock, MapPin, Moon, Sun, Sunset } from 'lucide-react';
 import type { MouseEvent } from 'react';
 
 import { TaxesFeesTooltip } from '@/components/tiles/TaxesFeesTooltip';
-import { Button } from '@/components/ui/button';
 import { CardBody } from '@/components/ui/card';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
 import { DS } from '@/lib/design-system';
 import { renderStarRating } from '@/lib/renderStarRating';
-import { getDeepLinkParams } from '@/lib/tileUtils';
-import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
+
+import { TileCardActions } from './tileSections';
 
 export interface TileCardContentProps {
   tile: Tile;
@@ -104,7 +97,7 @@ export function TileCardContent({
           )}
           {amenityIcons.length > 0 && (
             <>
-              {tile.location_label && <span className="text-zinc-500">&middot;</span>}
+              {tile.location_label && <span className="text-zinc-500 dark:text-zinc-400">&middot;</span>}
               <span className="flex gap-0.5">
                 {amenityIcons.map(({ icon, label }) => (
                   <span key={label} title={label} >{icon}</span>
@@ -134,7 +127,7 @@ export function TileCardContent({
         {features.map((feature) => (
           <span
             key={feature}
-            className="bg-zinc-100 dark:bg-zinc-800/50 text-zinc-500 dark:text-zinc-400 inline-flex items-center rounded-md px-2.5 py-1 text-xs font-medium"
+            className="bg-zinc-100 dark:bg-zinc-800/50 text-zinc-500 dark:text-zinc-400 inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium"
           >
             {feature}
           </span>
@@ -167,61 +160,7 @@ export function TileCardContent({
             currency={tile.currency}
           />
         </div>
-        <div className="flex flex-col items-end gap-2">
-          <div className="flex items-center gap-2">
-            <TooltipProvider delayDuration={400}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
-                    onClick={onViewDetailsClick}
-                  >
-                    Details
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent
-                  side="top"
-                  className="max-w-xs bg-zinc-900 text-zinc-100 text-xs font-mono p-3 rounded-lg shadow-lg"
-                >
-                  <div className={`text-zinc-400 ${DS.textSize.micro} uppercase tracking-wider mb-1.5`}>
-                    API Params
-                  </div>
-                  <pre className="whitespace-pre-wrap break-all">
-                    {JSON.stringify(getDeepLinkParams(tile), null, 2)}
-                  </pre>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            {tile.deeplink_url && tile.deeplink_url !== '#' && (() => {
-              const isViator = tile.deeplink_url.includes('viator.com');
-              const isGYG = tile.deeplink_url.includes('getyourguide.com');
-              const isPartner = isViator || isGYG;
-              return (
-                <a
-                  href={tile.deeplink_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e: MouseEvent) => e.stopPropagation()}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full',
-                    'text-xs font-bold uppercase tracking-wide',
-                    'transition-all duration-150 active:scale-95',
-                    'bg-emerald-50 border border-emerald-500/30 text-emerald-700',
-                    'hover:bg-emerald-100 hover:border-emerald-500/60',
-                    'dark:bg-emerald-950/40 dark:border-emerald-500/25 dark:text-emerald-400',
-                    'dark:hover:bg-emerald-900/50 dark:hover:border-emerald-400/50',
-                    'dark:hover:shadow-[0_0_16px_-3px_rgba(16,185,129,0.35)]',
-                  )}
-                >
-                  {isPartner ? <ExternalLink className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />}
-                  {isPartner ? 'Book' : 'Map'}
-                </a>
-              );
-            })()}
-          </div>
-        </div>
+        <TileCardActions tile={tile} onViewDetailsClick={onViewDetailsClick} />
       </div>
     </CardBody>
   );

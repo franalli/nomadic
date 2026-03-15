@@ -209,3 +209,101 @@ class TestEnrichTilesWithPartners:
 
         mock_match.assert_not_awaited()
         assert "partner" not in tiles[0]
+
+    async def test_skips_tiles_with_persisted_partner_product_id(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from app.services.partner_enrichment import enrich_tiles_with_partners
+
+        _enable_all_partners(monkeypatch)
+
+        tiles = [
+            {
+                "title": "Blue Hole Dive",
+                "type": "activity",
+                "partner_product_id": "V-1",
+                "live_price": 120.0,
+                "is_estimate_only": False,
+                "deeplink": "https://www.viator.com/tours/Bali/blue-hole",
+                "meta": {"category": "diving"},
+            }
+        ]
+
+        with patch(
+            "app.services.partner_enrichment.match_activity_to_best_partner",
+            new=AsyncMock(return_value=VIATOR_TILE),
+        ) as mock_match:
+            await enrich_tiles_with_partners(tiles, "Bali")
+
+        mock_match.assert_not_awaited()
+        assert tiles[0]["partner_product_id"] == "V-1"
+        assert tiles[0]["live_price"] == 120.0
+
+    async def test_skips_non_activity_or_hotel_tagged_tiles(self, monkeypatch: pytest.MonkeyPatch):
+        from app.services.partner_enrichment import enrich_tiles_with_partners
+
+        _enable_all_partners(monkeypatch)
+
+        tiles = [
+            {
+                "title": "Rome Cavalieri, A Waldorf Astoria Hotel",
+                "type": "hotel",
+                "provider": "google_places",
+                "meta": {"category": "luxury"},
+            },
+            {
+                "title": "Blue Hole Dive",
+                "type": "activity",
+                "meta": {"category": "diving"},
+            },
+            {
+                "title": "Rome Cavalieri, A Waldorf Astoria Hotel",
+                "type": "activity",
+                "tags": ["hotel"],
+                "meta": {"category": "shopping"},
+            },
+        ]
+
+        with patch(
+            "app.services.partner_enrichment.match_activity_to_best_partner",
+            new=AsyncMock(return_value=VIATOR_TILE),
+        ) as mock_match:
+            await enrich_tiles_with_partners(tiles, "Rome")
+
+        mock_match.assert_awaited_once()
+        assert mock_match.await_args.args == ("Blue Hole Dive", "Rome", "USD")
+        assert "partner" not in tiles[0]
+        assert tiles[1]["partner"] == "viator"
+        assert "partner" not in tiles[2]
+
+    async def test_rejects_geo_mismatched_partner_matches(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        from app.services.partner_enrichment import enrich_tiles_with_partners
+
+        _enable_all_partners(monkeypatch)
+
+        tiles = [
+            {
+                "title": "Mercato Centrale",
+                "type": "activity",
+                "meta": {"category": "food"},
+                "geo": {"lat": 41.9028, "lng": 12.4964},  # Rome
+            }
+        ]
+        far_match = {
+            **VIATOR_TILE,
+            "partner_product_id": "NAPLES-1",
+            "geo": {"lat": 40.8518, "lng": 14.2681},  # Naples
+        }
+
+        with patch(
+            "app.services.partner_enrichment.match_activity_to_best_partner",
+            new=AsyncMock(return_value=far_match),
+        ):
+            await enrich_tiles_with_partners(tiles, "Rome")
+
+        assert "partner" not in tiles[0]
+        assert tiles[0]["geo"] == {"lat": 41.9028, "lng": 12.4964}

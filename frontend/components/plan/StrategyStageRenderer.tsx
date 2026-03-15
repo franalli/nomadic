@@ -153,7 +153,7 @@ export function StrategyStageRenderer({
         <div className="flex flex-col h-full">
           <div ref={o.scrollContainerRef} className={cn('flex-1 overflow-y-auto', o.nextAction && 'pb-32')}>
             <div className="relative min-h-full">
-              <div className="pointer-events-none absolute inset-0 z-[1] bg-background/70 dark:bg-background/20" />
+              <div className="pointer-events-none absolute inset-0 z-[1] bg-white/70 dark:bg-zinc-950/20" />
               <div className="relative z-[2]">{planContent}</div>
             </div>
           </div>
@@ -182,7 +182,7 @@ export function StrategyStageRenderer({
               o.nextAction && o.effectiveMode === 'planning' && 'pb-32'
             )}>
               <div className="relative">
-                <div className="pointer-events-none absolute inset-0 z-[1] bg-background/70 dark:bg-background/20" />
+                <div className="pointer-events-none absolute inset-0 z-[1] bg-white/70 dark:bg-zinc-950/20" />
                 <div className="relative z-[2]">{planContent}</div>
               </div>
             </div>

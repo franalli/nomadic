@@ -14,6 +14,7 @@ import { useActionLoader } from '@/hooks/useActionLoader';
 import { type ChatSseRefs, useChatSse } from '@/hooks/useChatSse';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { type SSEFeasibilityWarningEvent, type streamGraphPlan } from '@/lib/api';
+import { parseISODateLocal } from '@/lib/date-utils';
 import { debugLog } from '@/lib/debug';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { nextEnvelopeBufferGeneration, useDocumentStore } from '@/state/documentStore';
@@ -26,6 +27,7 @@ import type {
   SuggestionChipMeta,
 } from '@/types/document';
 import type { TriggerContext } from '@/types/loader';
+import type { DayCard } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
 function buildSendRequestId(now: number): string {
@@ -49,6 +51,112 @@ function buildMessageSignature(
     c: tripInputs?.children ?? null,
     o: tripInputs?.origin ?? null,
     bg: tripInputs?.budget ?? null,
+  });
+}
+
+const EXTEND_BY_DAYS_PATTERN = /^(?:please\s+)?extend(?:\s+by)?\s+(\d+)\s+days?$/i;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function formatISODateLocal(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateExtensionDays(message: string): number | null {
+  const match = message.trim().match(EXTEND_BY_DAYS_PATTERN);
+  if (!match) return null;
+  const parsed = Number.parseInt(match[1] ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function computeInclusiveTripDays(startDate: Date, endDate: Date): number {
+  const startUtc = Date.UTC(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  const endUtc = Date.UTC(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+  return Math.floor((endUtc - startUtc) / MS_PER_DAY) + 1;
+}
+
+function buildOptimisticExtensionPreview(
+  message: string,
+  tripInputs: DocumentTripInputs | null | undefined,
+  dayCards: DayCard[] | undefined
+): { tripInputs: DocumentTripInputs; dayCards: DayCard[] } | null {
+  const extensionDays = parseDateExtensionDays(message);
+  if (!extensionDays || !tripInputs?.start_date || !tripInputs.end_date || !dayCards?.length) {
+    return null;
+  }
+
+  const startDate = parseISODateLocal(tripInputs.start_date);
+  const currentEndDate = parseISODateLocal(tripInputs.end_date);
+  if (!startDate || !currentEndDate) {
+    return null;
+  }
+
+  const nextEndDate = new Date(currentEndDate.getTime());
+  nextEndDate.setDate(nextEndDate.getDate() + extensionDays);
+
+  const totalDays = computeInclusiveTripDays(startDate, nextEndDate);
+  if (totalDays <= dayCards.length) {
+    return null;
+  }
+
+  const optimisticDayCards = structuredClone(dayCards) as DayCard[];
+  for (let dayNumber = optimisticDayCards.length + 1; dayNumber <= totalDays; dayNumber += 1) {
+    const dayDate = new Date(startDate.getTime());
+    dayDate.setDate(startDate.getDate() + dayNumber - 1);
+    optimisticDayCards.push({
+      day_number: dayNumber,
+      date: formatISODateLocal(dayDate),
+      label: 'Planning in progress',
+      blocks: [
+        {
+          period: 'morning',
+          activity_type: 'planning_placeholder',
+          summary: `Planning Day ${dayNumber}...`,
+          is_skeleton: true,
+        },
+      ],
+    });
+  }
+
+  return {
+    tripInputs: {
+      ...tripInputs,
+      end_date: formatISODateLocal(nextEndDate),
+      trip_duration: totalDays,
+    },
+    dayCards: optimisticDayCards,
+  };
+}
+
+function waitForPendingMutationsToSettle(timeoutMs = 5_000): Promise<boolean> {
+  if (!useDocumentStore.getState().hasPendingMutations()) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    let unsubscribe: (() => void) | null = null;
+
+    const settle = (ready: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      unsubscribe?.();
+      resolve(ready);
+    };
+
+    const timeout = setTimeout(() => settle(false), timeoutMs);
+    unsubscribe = useDocumentStore.subscribe((state, prev) => {
+      if (state._pendingMutations !== prev._pendingMutations && !state.hasPendingMutations()) {
+        settle(true);
+      }
+    });
+
+    if (!useDocumentStore.getState().hasPendingMutations()) {
+      settle(true);
+    }
   });
 }
 
@@ -184,6 +292,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
   const activeStreamRequestIdRef = useRef<string | null>(null);
   const autoExpandTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const focusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingOptimisticRollbackRef = useRef<(() => void) | null>(null);
   const prevSpecialistTypesRef = useRef<Set<string>>(new Set());
   const prevTileTypesRef = useRef<Set<string>>(new Set());
   const prevTripInputsRef = useRef<{
@@ -239,6 +348,10 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
 
   // Stop streaming when user clicks the stop button
   const handleStopStreaming = useCallback(() => {
+    const rollbackOptimisticExtension = pendingOptimisticRollbackRef.current;
+    pendingOptimisticRollbackRef.current = null;
+    rollbackOptimisticExtension?.();
+
     if (abortStreamRef.current) {
       abortStreamRef.current();
       abortStreamRef.current = null;
@@ -277,8 +390,18 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
   }, [updateMessage, delayedLoader, actionLoader]);
 
   const sendMessageCore = useCallback(
-    async (messageText: string, options?: { suggestionClicked?: string }) => {
+    async (
+      messageText: string,
+      options?: { suggestionClicked?: string; restoreInputOnBlock?: boolean }
+    ) => {
       const trimmed = messageText.trim();
+      const restoreDraftIfBlocked = () => {
+        if (!options?.restoreInputOnBlock) return;
+        setInput((current) => (current.length > 0 ? current : trimmed));
+        requestAnimationFrame(() => {
+          inputRef.current?.focus();
+        });
+      };
       if (!trimmed) {
         debugLog('[ChatPanel] Skipping - empty message');
         return;
@@ -287,12 +410,16 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
       // SYNC GUARD: Prevent duplicate sends (React StrictMode safe)
       if (isSendingRef.current) {
         debugLog('[ChatPanel] Skipping - already sending (ref guard)');
+        restoreDraftIfBlocked();
         return;
       }
 
       // Abort any previous in-flight stream before starting a new one.
       // Prevents ghost duplicate requests from consuming LLM tokens.
       if (abortStreamRef.current) {
+        const rollbackOptimisticExtension = pendingOptimisticRollbackRef.current;
+        pendingOptimisticRollbackRef.current = null;
+        rollbackOptimisticExtension?.();
         abortStreamRef.current();
         abortStreamRef.current = null;
         // Clean up orphaned partial assistant message from the aborted stream
@@ -300,26 +427,6 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
           filterMessages((m) => m.id !== streamingMessageIdRef.current);
           setStreamingMessageId(null);
         }
-      }
-
-      // MUTATION GATE: Wait for in-flight mutations (fill-day, drag-drop) to settle.
-      if (useDocumentStore.getState().hasPendingMutations()) {
-        await new Promise<void>((resolve) => {
-          let settled = false;
-          const settle = () => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timeout);
-            unsub();
-            resolve();
-          };
-          const timeout = setTimeout(settle, 5_000);
-          const unsub = useDocumentStore.subscribe((state, prev) => {
-            if (state._pendingMutations !== prev._pendingMutations && !state.hasPendingMutations()) settle();
-          });
-          // Close race window between outer check and subscribe
-          if (!useDocumentStore.getState().hasPendingMutations()) settle();
-        });
       }
 
       const isGenerateTrigger = trimmed === GENERATE_PLAN_TRIGGER || trimmed.toLowerCase() === 'build plan';
@@ -342,6 +449,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         lastGenerateClickedAt: lastGenerateClickedAtRef.current,
       });
       if (guardReason) {
+        restoreDraftIfBlocked();
         if (guardReason !== 'loading') {
           toast(guardReason);
         } else {
@@ -349,13 +457,43 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         }
         return;
       }
-      if (isGenerateTrigger) {
-        lastGenerateClickedAtRef.current = now;
-      } else {
-        lastMessageSentAtRef.current = now;
-      }
 
-      const tripInputsSnapshot = useDocumentStore.getState().document?.trip_inputs;
+      const documentSnapshot = useDocumentStore.getState().document;
+      const tripInputsSnapshot = documentSnapshot?.trip_inputs;
+      const optimisticExtension = buildOptimisticExtensionPreview(
+        trimmed,
+        tripInputsSnapshot,
+        documentSnapshot?.day_cards
+      );
+      const optimisticRollbackDayCards =
+        optimisticExtension && documentSnapshot?.day_cards
+          ? (structuredClone(documentSnapshot.day_cards) as DayCard[])
+          : null;
+      const optimisticRollbackIsRegenerating = useDocumentStore.getState().isRegenerating;
+      const rollbackOptimisticExtension = () => {
+        pendingOptimisticRollbackRef.current = null;
+        if (!optimisticExtension || !tripInputsSnapshot || !optimisticRollbackDayCards) {
+          return;
+        }
+        const currentDoc = useDocumentStore.getState().document;
+        if (!currentDoc?.trip_inputs) {
+          return;
+        }
+        useDocumentStore.getState().mergeEnvelope(
+          {
+            trip_inputs: {
+              ...currentDoc.trip_inputs,
+              end_date: tripInputsSnapshot.end_date ?? null,
+              trip_duration: tripInputsSnapshot.trip_duration ?? null,
+            },
+            day_cards: structuredClone(optimisticRollbackDayCards),
+          },
+          envelopeGenerationRef.current
+        );
+        useDocumentStore.getState().setRegenerationState({
+          isRegenerating: optimisticRollbackIsRegenerating,
+        });
+      };
       const signature = buildMessageSignature(
         trimmed,
         selectedBranchId,
@@ -373,9 +511,33 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
           signature,
           ageMs: now - lastSignature.ts,
         });
+        restoreDraftIfBlocked();
         return;
       }
-      recentSendSignatureRef.current = { signature, ts: now };
+
+      // Lock the send cycle before waiting on document mutations so a blocked send
+      // cannot be followed by a second submit that later gets overwritten.
+      setIsLoading(true);
+      isSendingRef.current = true;
+
+      // MUTATION GATE: Wait for in-flight mutations (fill-day, drag-drop) to settle.
+      if (useDocumentStore.getState().hasPendingMutations()) {
+        const mutationsSettled = await waitForPendingMutationsToSettle();
+        if (!mutationsSettled) {
+          setIsLoading(false);
+          isSendingRef.current = false;
+          restoreDraftIfBlocked();
+          toast('Please wait for itinerary changes to finish, then try again.');
+          return;
+        }
+      }
+      const sendStartedAt = Date.now();
+      if (isGenerateTrigger) {
+        lastGenerateClickedAtRef.current = sendStartedAt;
+      } else {
+        lastMessageSentAtRef.current = sendStartedAt;
+      }
+      recentSendSignatureRef.current = { signature, ts: sendStartedAt };
 
       // Reset Smart Loader for new message
       setActiveStatus(null);
@@ -412,8 +574,6 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
       setSuggestedResponseMeta([]);
       setSuggestionChips([]);
       setLastUserMessage(trimmed);
-      setIsLoading(true);
-      isSendingRef.current = true;
       activeStreamRequestIdRef.current = requestId;
 
       const streamingMsgId = `a_stream_${Date.now()}`;
@@ -425,12 +585,25 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
 
       let streamStarted = false;
       try {
+        envelopeGenerationRef.current = nextEnvelopeBufferGeneration();
+        if (optimisticExtension) {
+          useDocumentStore.getState().mergeEnvelope(
+            {
+              trip_inputs: optimisticExtension.tripInputs,
+              day_cards: optimisticExtension.dayCards,
+            },
+            envelopeGenerationRef.current
+          );
+          pendingOptimisticRollbackRef.current = rollbackOptimisticExtension;
+        }
+
         await useDocumentStore.getState().ensureSettingsFlushed({
           requestId,
           sendCycleId: requestId,
         });
 
         if (activeStreamRequestIdRef.current !== requestId || !isSendingRef.current) {
+          rollbackOptimisticExtension();
           debugLog('[ChatPanel] Skipping stream start - send was cancelled before stream init', {
             request_id: requestId,
           });
@@ -438,14 +611,24 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         }
 
         const currentTripInputs = useDocumentStore.getState().document?.trip_inputs;
-        const normalizedTripInputs = (() => {
+        const requestTripInputs = (() => {
           if (!currentTripInputs) return currentTripInputs;
-          const categories = currentTripInputs.activity_settings?.categories ?? [];
-          if (categories.length > 0) return currentTripInputs;
+          if (!optimisticExtension || !tripInputsSnapshot) return currentTripInputs;
           return {
             ...currentTripInputs,
+            end_date: tripInputsSnapshot.end_date ?? null,
+            trip_duration: tripInputsSnapshot.trip_duration ?? null,
+          };
+        })();
+
+        const normalizedTripInputs = (() => {
+          if (!requestTripInputs) return requestTripInputs;
+          const categories = requestTripInputs.activity_settings?.categories ?? [];
+          if (categories.length > 0) return requestTripInputs;
+          return {
+            ...requestTripInputs,
             activity_settings: {
-              ...(currentTripInputs.activity_settings ?? {}),
+              ...(requestTripInputs.activity_settings ?? {}),
               categories: [],
               day_preferences: {},
             },
@@ -476,11 +659,10 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
             hasTripInputs: !!body.trip_inputs,
           });
         }
-        envelopeGenerationRef.current = nextEnvelopeBufferGeneration();
         useDocumentStore.getState().bumpMessageSendNonce();
 
         streamStarted = true;
-        await executeStream({
+        const streamResult = await executeStream({
           body,
           requestId,
           streamingMsgId,
@@ -491,8 +673,17 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
           delayedLoader,
           actionLoader,
         });
+        if (streamResult === 'complete') {
+          pendingOptimisticRollbackRef.current = null;
+        }
+        if (streamResult === 'error') {
+          rollbackOptimisticExtension();
+        }
       } catch (error) {
         console.error('Failed to initialize chat stream:', error);
+        if (!streamStarted) {
+          rollbackOptimisticExtension();
+        }
         if (!isSilentPlanGeneration) {
           updateMessage(streamingMsgId, {
             content: 'Could not start this request. Please try again.',
@@ -524,6 +715,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
       onUserMessageSubmit,
       toast,
       executeStream,
+      inputRef,
       setActiveStatus,
       setGenerateTriggered,
       updateMessage,
@@ -553,7 +745,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
       inputRef.current.style.height = 'auto';
     }
     focusTimeoutRef.current = setTimeout(() => inputRef.current?.focus(), 0);
-    await sendMessageCore(trimmed);
+    await sendMessageCore(trimmed, { restoreInputOnBlock: true });
   }, [input, isLoading, inputRef, sendMessageCore]);
 
   return useMemo(() => ({

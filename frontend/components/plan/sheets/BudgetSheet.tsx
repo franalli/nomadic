@@ -137,7 +137,7 @@ function BudgetSheetInner({
       title="Budget"
       hint="Set your trip budget (optional)"
       footer={
-        <div className="flex gap-3">
+        <div className="flex gap-2">
           <button
             type="button"
             onClick={() => onOpenChange(false)}
@@ -168,7 +168,7 @@ function BudgetSheetInner({
       <div className="space-y-6">
         {/* Currency selector */}
         <div>
-          <h3 className={cn(DS.text.label, 'mb-3')}>
+          <h3 className={cn(DS.text.label, 'mb-2')}>
             Currency
           </h3>
           <div className="flex flex-wrap gap-2">
@@ -203,7 +203,7 @@ function BudgetSheetInner({
 
         {/* Amount input - THE BIG NUMBER */}
         <div>
-          <h3 className={cn(DS.text.label, 'mb-3')}>
+          <h3 className={cn(DS.text.label, 'mb-2')}>
             Amount
           </h3>
           <div className="relative flex justify-center py-8">
@@ -265,7 +265,7 @@ function BudgetSheetInner({
 
         {/* Budget type selector */}
         <div>
-          <h3 className={cn(DS.text.label, 'mb-3')}>
+          <h3 className={cn(DS.text.label, 'mb-2')}>
             Budget basis
           </h3>
           <div className="flex gap-2">

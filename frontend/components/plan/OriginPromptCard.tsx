@@ -39,7 +39,7 @@ export function OriginPromptCard({ onSetOrigin }: OriginPromptCardProps) {
         'dark:bg-white/[0.03] dark:border-white/10'
       )}
     >
-      <div className="flex items-center gap-3 mb-3">
+      <div className="flex items-center gap-2 mb-4">
         <div className="p-2 rounded-lg bg-zinc-100 dark:bg-white/5">
           <Plane className="h-4 w-4 text-zinc-500 dark:text-zinc-400" />
         </div>
@@ -67,7 +67,7 @@ export function OriginPromptCard({ onSetOrigin }: OriginPromptCardProps) {
           className={cn(
             'flex-1 px-3 py-2 rounded-lg text-sm',
             'bg-zinc-50 dark:bg-black/40',
-            'border border-zinc-200 dark:border-white/5',
+            'border border-zinc-200 dark:border-white/10',
             'focus:outline-none focus:border-zinc-900 dark:focus:border-emerald-500/50',
             'text-zinc-900 dark:text-white',
             'placeholder:text-zinc-400 dark:placeholder:text-zinc-600'

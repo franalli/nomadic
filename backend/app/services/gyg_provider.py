@@ -17,9 +17,16 @@ import httpx
 from rapidfuzz import fuzz
 
 from app.config import settings
+from app.services.activity_category_conflicts import (
+    has_category_conflict as _has_category_conflict,
+)
 from app.services.cache_core import MemoryCache
 from app.services.circuit_breaker import CircuitBreaker
-from app.services.viator_provider import _infer_category_from_title
+from app.services.viator_provider import (
+    _infer_category_from_title,
+    _normalize_match_cache_category,
+    _normalize_match_cache_title,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,26 +69,6 @@ _NO_MATCH: object = object()  # sentinel for negative match cache entries
 _gyg_cache_ttl = settings.get_your_guide_cache_ttl_hours * 3600
 _match_cache = MemoryCache(maxsize=512, ttl=_gyg_cache_ttl)  # title->tour matches
 _browse_gyg_cache = MemoryCache(maxsize=256, ttl=_gyg_cache_ttl)  # browse results
-
-# Known activity categories that must not cross-match
-_CATEGORY_CONFLICTS: dict[str, set[str]] = {
-    "diving": {"snorkel", "snorkeling", "snorkelling"},
-    "snorkeling": {"scuba", "scuba diving", "deep dive"},
-    "hiking": {"walking tour", "city walk", "food tour"},
-    "cycling": {"motorbike", "scooter", "atv"},
-    "surfing": {"bodyboard", "paddleboard", "kayak"},
-    "sailing": {"cruise", "ferry"},
-}
-
-
-def _has_category_conflict(specialist_category: str | None, product_title: str) -> bool:
-    """Return True if the product title contains a conflicting category term."""
-    if not specialist_category:
-        return False
-    conflicts = _CATEGORY_CONFLICTS.get(specialist_category.lower(), set())
-    product_lower = product_title.lower()
-    return any(conflict in product_lower for conflict in conflicts)
-
 
 # -- Concurrency limiter -----------------------------------------------------
 _sem = asyncio.Semaphore(5)
@@ -262,7 +249,9 @@ async def match_activity_to_gyg(
     category: str | None = None,
 ) -> dict | None:
     """Match an activity title to a GYG tour. Returns tile dict or None."""
-    cache_key = f"gyg_match:{destination.lower()}:{activity_title.lower()}"
+    cache_title = _normalize_match_cache_title(activity_title)
+    category_key = _normalize_match_cache_category(category)
+    cache_key = f"gyg_match:{destination.lower()}:{category_key}:{cache_title.lower()}"
     cached = _match_cache.get(cache_key)
     if cached is not None:
         return cached if cached is not _NO_MATCH else None

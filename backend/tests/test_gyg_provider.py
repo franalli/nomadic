@@ -47,6 +47,12 @@ MULTI_DAY_TOUR = {
     "durations": [{"duration": 2, "unit": "day"}],
 }
 
+DIVING_TOUR = {
+    "tour_id": "55555",
+    "title": "Bali Scuba Diving Experience",
+    "durations": [{"duration": 3, "unit": "hour"}],
+}
+
 
 class TestGygTourToTile:
     def test_basic_conversion(self):
@@ -93,7 +99,7 @@ class TestMatchActivityToGyg:
     async def test_no_match_negative_caches_empty_results(self):
         import app.services.gyg_provider as gyg
 
-        cache_key = "gyg_match:santorini:unknown tour"
+        cache_key = "gyg_match:santorini:uncategorized:unknown tour"
 
         with patch(
             "app.services.gyg_provider.search_tours",
@@ -106,6 +112,101 @@ class TestMatchActivityToGyg:
         assert second is None
         assert gyg._match_cache.get(cache_key) is _NO_MATCH
         assert mock_search.await_count == 1
+
+    async def test_session_variant_reuses_positive_cache_entry(self):
+        import app.services.gyg_provider as gyg
+
+        cache_key = "gyg_match:santorini:uncategorized:sunset sailing cruise"
+
+        with (
+            patch(
+                "app.services.gyg_provider.search_tours",
+                new=AsyncMock(return_value=[SAMPLE_TOUR]),
+            ) as mock_search,
+            patch(
+                "app.services.gyg_provider.fuzz.token_sort_ratio",
+                return_value=90,
+            ),
+        ):
+            variant_tile = await match_activity_to_gyg(
+                "Santorini: Sunset Sailing Cruise (Session 2)",
+                "Santorini",
+            )
+            base_tile = await match_activity_to_gyg("Sunset Sailing Cruise", "Santorini")
+
+        assert variant_tile is not None
+        assert base_tile is not None
+        assert variant_tile["id"] == base_tile["id"] == "gyg_12345"
+        assert gyg._match_cache.get(cache_key) == variant_tile
+        assert mock_search.await_count == 1
+
+    async def test_cached_positive_match_does_not_bleed_across_categories(self):
+        import app.services.gyg_provider as gyg
+
+        diving_cache_key = "gyg_match:bali:diving:bali scuba diving experience"
+        snorkeling_cache_key = "gyg_match:bali:snorkeling:bali scuba diving experience"
+
+        with (
+            patch(
+                "app.services.gyg_provider.search_tours",
+                new=AsyncMock(return_value=[DIVING_TOUR]),
+            ) as mock_search,
+            patch(
+                "app.services.gyg_provider.fuzz.token_sort_ratio",
+                return_value=90,
+            ),
+        ):
+            diving_tile = await match_activity_to_gyg(
+                "Bali Scuba Diving Experience",
+                "Bali",
+                category="diving",
+            )
+            snorkeling_tile = await match_activity_to_gyg(
+                "Bali Scuba Diving Experience",
+                "Bali",
+                category="snorkeling",
+            )
+
+        assert diving_tile is not None
+        assert diving_tile["id"] == "gyg_55555"
+        assert snorkeling_tile is None
+        assert gyg._match_cache.get(diving_cache_key) == diving_tile
+        assert gyg._match_cache.get(snorkeling_cache_key) is _NO_MATCH
+        assert mock_search.await_count == 2
+
+    async def test_cached_negative_match_does_not_bleed_across_categories(self):
+        import app.services.gyg_provider as gyg
+
+        snorkeling_cache_key = "gyg_match:bali:snorkeling:bali scuba diving experience"
+        diving_cache_key = "gyg_match:bali:diving:bali scuba diving experience"
+
+        with (
+            patch(
+                "app.services.gyg_provider.search_tours",
+                new=AsyncMock(return_value=[DIVING_TOUR]),
+            ) as mock_search,
+            patch(
+                "app.services.gyg_provider.fuzz.token_sort_ratio",
+                return_value=90,
+            ),
+        ):
+            snorkeling_tile = await match_activity_to_gyg(
+                "Bali Scuba Diving Experience",
+                "Bali",
+                category="snorkeling",
+            )
+            diving_tile = await match_activity_to_gyg(
+                "Bali Scuba Diving Experience",
+                "Bali",
+                category="diving",
+            )
+
+        assert snorkeling_tile is None
+        assert diving_tile is not None
+        assert diving_tile["id"] == "gyg_55555"
+        assert gyg._match_cache.get(snorkeling_cache_key) is _NO_MATCH
+        assert gyg._match_cache.get(diving_cache_key) == diving_tile
+        assert mock_search.await_count == 2
 
     async def test_conflicting_best_match_falls_back_to_non_conflicting_tour(self):
         conflicting = {

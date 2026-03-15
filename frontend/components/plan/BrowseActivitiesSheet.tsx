@@ -163,16 +163,16 @@ export function BrowseActivitiesSheet({
 
       {/* Loading skeletons */}
       {loading && (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {[1, 2, 3].map((i) => (
             <div
               key={i}
-              className="flex gap-3 p-3 rounded-xl bg-zinc-100 dark:bg-zinc-800/50 animate-pulse"
+              className="flex gap-4 p-3 rounded-xl bg-zinc-100 dark:bg-zinc-800/50 animate-pulse"
             >
-              <div className="w-16 h-16 rounded-lg bg-zinc-200 dark:bg-zinc-700 shrink-0" />
+              <div className="w-16 h-16 rounded-lg bg-zinc-200/50 dark:bg-zinc-700/50 shrink-0" />
               <div className="flex-1 space-y-2 py-1">
-                <div className="h-3 bg-zinc-200 dark:bg-zinc-700 rounded w-3/4" />
-                <div className="h-3 bg-zinc-200 dark:bg-zinc-700 rounded w-1/2" />
+                <div className="h-3 bg-zinc-200/50 dark:bg-zinc-700/50 rounded w-3/4" />
+                <div className="h-3 bg-zinc-200/50 dark:bg-zinc-700/50 rounded w-1/2" />
               </div>
             </div>
           ))}
@@ -186,7 +186,7 @@ export function BrowseActivitiesSheet({
           <button
             type="button"
             onClick={fetchTiles}
-            className="mt-3 text-sm font-medium text-emerald-600 dark:text-emerald-400"
+            className="mt-4 text-sm font-medium text-emerald-600 dark:text-emerald-400"
           >
             Try again
           </button>
@@ -202,7 +202,7 @@ export function BrowseActivitiesSheet({
 
       {/* Activity tiles */}
       {!loading && !error && filteredTiles.length > 0 && (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {filteredTiles.map((tile) => {
             const imageSrc = signedImageByTileId[tile.id] || tile.image_url;
             return (
@@ -217,7 +217,7 @@ export function BrowseActivitiesSheet({
                   'hover:border-zinc-300 dark:hover:border-white/20 active:scale-[0.99]'
               )}
             >
-              <div className="flex gap-3">
+              <div className="flex gap-4">
                 {imageSrc ? (
                   <div className="relative w-16 h-16 rounded-lg overflow-hidden shrink-0">
                     <Image
@@ -265,7 +265,7 @@ export function BrowseActivitiesSheet({
                       </span>
                     )}
                     {tile.location_label && (
-                      <span className="text-xs text-zinc-400 dark:text-zinc-500 min-w-0 truncate flex-1">
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400 min-w-0 truncate flex-1">
                         {tile.location_label}
                       </span>
                     )}

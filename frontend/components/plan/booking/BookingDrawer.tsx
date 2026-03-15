@@ -126,9 +126,9 @@ export function BookingDrawer({
           {/* Empty state */}
           {categoryTiles.length === 0 && (
             <div className="text-center py-12 text-zinc-500 dark:text-zinc-400">
-              <Package className="w-12 h-12 mx-auto mb-3 opacity-50" />
+              <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p className="font-medium">No {category === 'activity' ? 'activities' : `${category}s`} available</p>
-              <p className="text-sm mt-1 text-zinc-400 dark:text-zinc-500">
+              <p className="text-sm mt-1 text-zinc-500 dark:text-zinc-400">
                 {category === 'activity'
                   ? 'Activities will appear once specialists have generated recommendations.'
                   : 'Try adjusting your dates or destination.'}

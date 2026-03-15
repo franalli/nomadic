@@ -170,7 +170,7 @@ export function TimelineDayCard({
             <p className="text-sm text-zinc-500 dark:text-zinc-400 truncate">{card.label}</p>
           )}
           {card.subtitle && (
-            <p className="text-xs text-zinc-400 dark:text-zinc-500 truncate">{card.subtitle}</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">{card.subtitle}</p>
           )}
         </div>
       </button>

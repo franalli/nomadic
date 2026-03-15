@@ -107,9 +107,9 @@ export function AgentCard({ section, isExpanded, onToggle, status, hasDates = tr
           <div className="mt-2 w-full">
             {oneLiner && <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2"><RichText>{oneLiner}</RichText></p>}
             {principles.length > 0 && (
-              <div className="mt-3 space-y-2">
+              <div className="mt-4 space-y-2">
                 {principles.slice(0, 4).map((p, i) => (
-                  <div key={i} className={cn('flex items-start gap-3 p-2 rounded-lg transition-colors', 'hover:bg-zinc-50', 'dark:hover:bg-zinc-800/30')}>
+                  <div key={i} className={cn('flex items-start gap-2 p-2 rounded-lg transition-colors', 'hover:bg-zinc-50', 'dark:hover:bg-zinc-800/30')}>
                     <Lightbulb className="w-3.5 h-3.5 mt-0.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                     <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400 font-medium">{p}</p>
                   </div>

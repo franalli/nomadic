@@ -2,7 +2,7 @@
 from datetime import UTC, datetime, timedelta
 from typing import Dict, List, Literal, Optional
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import (
     Mapped,
     mapped_column,
@@ -136,22 +136,6 @@ class TileClick(Base, TimestampMixin):
     request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
 
-class SuggestionClick(Base, TimestampMixin):
-    """
-    Track suggestion pill clicks for analytics.
-    Helps measure quality and engagement with LLM-generated suggestions.
-    """
-
-    __tablename__ = "suggestion_clicks"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-
-    suggestion_text: Mapped[str] = mapped_column(String(128), nullable=False)
-    suggestion_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-
-
 class ChatMessage(Base, TimestampMixin):
     __tablename__ = "chat_messages"
 
@@ -225,6 +209,23 @@ class SharedTrip(Base, TimestampMixin):
 
     session: Mapped[Optional[Session]] = relationship("Session", back_populates="shared_trips")
     user: Mapped[Optional[User]] = relationship("User", back_populates="shared_trips")
+
+
+class RuntimeState(Base, TimestampMixin):
+    """Shared runtime rows for short-lived leases and daily spend counters."""
+
+    __tablename__ = "runtime_state"
+
+    state_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    state_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    provider: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    day_key: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, index=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    value_micro_usd: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
 
 
 class UnsplashImageCache(Base):

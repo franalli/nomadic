@@ -23,12 +23,24 @@ import {
 import { useDocumentStore } from '@/state/documentStore';
 import { useUIStore } from '@/state/uiStore';
 import type { DocumentTripInputs } from '@/types/document';
-import { normalizePlanViewState, type PlanViewModel, type PlanViewState, type ViewMode } from '@/types/plan-envelope';
+import {
+  type DayCard,
+  normalizePlanViewState,
+  type PlanViewModel,
+  type PlanViewState,
+  type ViewMode,
+} from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
 import { type ProgressStage } from './ItineraryProgressIndicator';
 import { type GenerationState, getNextAction, isEditing, isGenerating, isItineraryReady, isMultiSpecialistTrip, isStrategyReady } from './planStateHelpers';
 import { getTopicLabel } from './stages/StrategyHeroUtils';
+import {
+  buildDayCardsFingerprint,
+  POI_PROMOTION_STABILIZE_MS,
+  selectPoiDayCardSnapshot,
+  shouldDelayPoiSnapshotPromotion,
+} from './strategyStagePoi';
 import { useBookingDrawerState } from './useBookingDrawerState';
 
 export type DataDensity = 'empty' | 'ghost' | 'bridge' | 'full';
@@ -88,11 +100,10 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
     (a, b) => a.size === b.size && [...a].every((id) => b.has(id))
   );
 
-  const dayCardsFingerprint = useMemo(() => {
-    const cards = storeDayCardsRaw;
-    if (!cards || cards.length === 0) return null;
-    return `${cards.length}:${cards.map(c => `${c.day_number}:${(c.blocks ?? []).length}:${(c.blocks ?? []).map(b => b.id ?? '').join(',')}`).join('|')}`;
-  }, [storeDayCardsRaw]);
+  const dayCardsFingerprint = useMemo(
+    () => buildDayCardsFingerprint(storeDayCardsRaw),
+    [storeDayCardsRaw]
+  );
   const effectiveTiles = storeTiles ?? tiles;
 
   const stableDayCardsRef = useRef(storeDayCardsRaw);
@@ -102,6 +113,8 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
     stableDayCardsRef.current = storeDayCardsRaw;
   }
   const effectiveDayCards = stableDayCardsRef.current ?? viewModel.day_cards;
+  const poiStableDayCardsRef = useRef<DayCard[] | null | undefined>(storeDayCardsRaw);
+  const poiStableFingerprintRef = useRef<string | null>(dayCardsFingerprint);
 
   const isAnyRegenerating = isRegenerating || isRegenUpdating;
   const hasSectionData = (viewModel.strategy_sections?.length ?? 0) > 0;
@@ -198,6 +211,55 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
   const isStreaming = generating || isCommitting || isExpandingItinerary;
   const activeMode: ViewMode = useDocumentStore(useShallow((s) => (s.activeView ?? 'planning') as ViewMode));
   const effectiveMode: ViewMode = explicitMode ?? activeMode;
+  const poiSnapshot = selectPoiDayCardSnapshot({
+    currentDayCards: storeDayCardsRaw,
+    currentFingerprint: dayCardsFingerprint,
+    fallbackDayCards: viewModel.day_cards,
+    stableDayCards: poiStableDayCardsRef.current,
+    stableFingerprint: poiStableFingerprintRef.current,
+    isStreaming,
+  });
+  poiStableDayCardsRef.current = poiSnapshot.nextStableDayCards;
+  poiStableFingerprintRef.current = poiSnapshot.nextStableFingerprint;
+  const [settledPoiSnapshot, setSettledPoiSnapshot] = useState(() => ({
+    dayCards: poiSnapshot.dayCards,
+    fingerprint: poiSnapshot.fingerprint,
+  }));
+
+  useEffect(() => {
+    const nextSnapshot = {
+      dayCards: poiSnapshot.dayCards,
+      fingerprint: poiSnapshot.fingerprint,
+    };
+    const snapshotAlreadySettled =
+      settledPoiSnapshot.dayCards === nextSnapshot.dayCards &&
+      settledPoiSnapshot.fingerprint === nextSnapshot.fingerprint;
+    if (
+      !shouldDelayPoiSnapshotPromotion({
+        settledDayCards: settledPoiSnapshot.dayCards,
+        settledFingerprint: settledPoiSnapshot.fingerprint,
+        nextFingerprint: poiSnapshot.fingerprint,
+        isStreaming,
+      })
+    ) {
+      if (!snapshotAlreadySettled) {
+        setSettledPoiSnapshot(nextSnapshot);
+      }
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setSettledPoiSnapshot(nextSnapshot);
+    }, POI_PROMOTION_STABILIZE_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    isStreaming,
+    poiSnapshot.dayCards,
+    poiSnapshot.fingerprint,
+    settledPoiSnapshot.dayCards,
+    settledPoiSnapshot.fingerprint,
+  ]);
 
   const displayLogic = useMemo(() => {
     const hasDatesLocal = hasDates;
@@ -237,14 +299,20 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
   }, [effectiveTiles]);
 
   const fullModePOIs = useMemo(() => {
-    if (!dayCardsFingerprint) return [];
+    if (!settledPoiSnapshot.fingerprint) return [];
     const destination = effectiveTripInputs?.destination ?? destinationTitle;
-    return extractPOIsFromDayCards(effectiveDayCards, specialistData.fullModeSections, destination, dayCardsFingerprint, destinationCoords);
+    return extractPOIsFromDayCards(
+      settledPoiSnapshot.dayCards ?? undefined,
+      specialistData.fullModeSections,
+      destination,
+      settledPoiSnapshot.fingerprint,
+      destinationCoords
+    );
   }, [
-    dayCardsFingerprint,
+    settledPoiSnapshot.dayCards,
+    settledPoiSnapshot.fingerprint,
     effectiveTripInputs?.destination,
     destinationTitle,
-    effectiveDayCards,
     specialistData,
     destinationCoords,
   ]);

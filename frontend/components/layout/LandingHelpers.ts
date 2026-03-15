@@ -7,14 +7,14 @@ export interface ChangeReceiptData {
   canUndo: boolean;
 }
 
-// Topic keywords for detecting specialist topics from user messages
-// Matches backend orchestrator.py TOPIC_KEYWORDS
+// Topic keywords for detecting specialist topics from user messages.
+// Keys must stay aligned with backend canonical specialist topic names.
 export const TOPIC_KEYWORDS: Record<string, string[]> = {
   diving: ['dive', 'diving', 'scuba', 'snorkel', 'reef'],
   hiking: ['hike', 'hiking', 'trek', 'trail', 'mountain'],
   skiing: ['ski', 'skiing', 'snowboard', 'piste'],
   cycling: ['bike', 'cycling', 'bicycle'],
-  boating: ['sail', 'boat', 'yacht', 'kayak'],
+  sailing: ['sail', 'boat', 'yacht', 'kayak'],
 };
 
 export const RESET_BUTTON_COOLDOWN_MS = 2500;

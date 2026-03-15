@@ -101,7 +101,7 @@ function DestinationSheetInner({
       title="Destination"
       hint="Where do you want to go?"
       footer={
-        <div className="flex gap-3">
+        <div className="flex gap-2">
           <button
             type="button"
             onClick={() => onOpenChange(false)}
@@ -163,7 +163,7 @@ function DestinationSheetInner({
         {/* Recent destinations */}
         {recentDestinations.length > 0 && (
           <div>
-            <h3 className={cn(DS.text.label, 'mb-3')}>
+            <h3 className={cn(DS.text.label, 'mb-2')}>
               Recent
             </h3>
             <div className="flex flex-wrap gap-2">
@@ -195,9 +195,9 @@ function DestinationSheetInner({
 
         {/* Popular destinations */}
         <div>
-          <h3 className={cn(DS.text.label, 'mb-3')}>
+          <h3 className={cn(DS.text.label, 'mb-2')}>
             Popular
-          </h3>
+            </h3>
           <div className="flex flex-wrap gap-2">
             {POPULAR_DESTINATIONS.map((dest) => (
               <button

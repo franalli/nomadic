@@ -42,13 +42,20 @@ from app.schemas import (
 # =============================================================================
 
 
+async def get_document_by_session_id(
+    db: AsyncSession, *, session_id: int
+) -> Optional[models.PlanDocument]:
+    """Fetch the plan document for a session id (async)."""
+    stmt = select(models.PlanDocument).filter(models.PlanDocument.session_id == session_id)
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 async def get_document(
     db: AsyncSession, *, session: models.Session
 ) -> Optional[models.PlanDocument]:
     """Fetch the plan document for a session (async)."""
-    stmt = select(models.PlanDocument).filter(models.PlanDocument.session_id == session.id)
-    result = await db.execute(stmt)
-    return result.scalar_one_or_none()
+    return await get_document_by_session_id(db, session_id=session.id)
 
 
 async def get_or_create_document(

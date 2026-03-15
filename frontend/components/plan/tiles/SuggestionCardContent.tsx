@@ -1,9 +1,14 @@
 'use client';
 
-import { ChevronDown, ChevronUp, ExternalLink, Heart, MapPin, RefreshCw, Sparkles, Star } from 'lucide-react';
+import { ExternalLink, Heart, MapPin, Sparkles, Star } from 'lucide-react';
 import Image from 'next/image';
 import { useCallback, useState } from 'react';
 
+import {
+  getAmenityIconsWithLabels,
+  getTileDeeplinkPillLabel,
+  isPartnerDeeplinkUrl,
+} from '@/components/tiles/tileHelpers';
 import { trackDeeplinkClick } from '@/lib/api';
 import { DS } from '@/lib/design-system';
 import { formatTilePrice } from '@/lib/format-utils';
@@ -12,84 +17,19 @@ import { renderStarRating } from '@/lib/renderStarRating';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
+import { SuggestionActionRow, SuggestionReasoning } from './suggestionCardSections';
+
 export { renderStarRating } from '@/lib/renderStarRating';
-
-// =============================================================================
-// Helpers (shared with SuggestionCard)
-// =============================================================================
-
-const AMENITY_ICONS: Record<string, string> = {
-  pool: '🏊',
-  'swimming pool': '🏊',
-  breakfast: '🍳',
-  'breakfast included': '🍳',
-  wifi: '📶',
-  'free wifi': '📶',
-  parking: '🅿️',
-  'free parking': '🅿️',
-  spa: '💆',
-  gym: '🏋️',
-  fitness: '🏋️',
-  'fitness center': '🏋️',
-  restaurant: '🍽️',
-  bar: '🍸',
-  'air conditioning': '❄️',
-  'pet friendly': '🐕',
-  beach: '🏖️',
-  yoga: '🧘',
-  dive_center: '🤿',
-  dive_center_nearby: '🤿',
-  ski_room: '🎿',
-  rooftop_bar: '🍸',
-  garden: '🌿',
-  valley_view: '🏞️',
-  lake_view: '🏞️',
-  horseback: '🐴',
-  guided_hikes: '🥾',
-};
-
-export function getAmenityIconsWithLabels(tile: Tile): Array<{ icon: string; label: string }> {
-  const meta = tile.meta as Record<string, unknown> | undefined;
-  const amenities = (meta?.amenities as string[]) || [];
-  const result: Array<{ icon: string; label: string }> = [];
-  const seenIcons = new Set<string>();
-
-  for (const amenity of amenities) {
-    const key = amenity.toLowerCase();
-    const icon = AMENITY_ICONS[key];
-    if (icon && !seenIcons.has(icon)) {
-      seenIcons.add(icon);
-      const label = amenity.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
-      result.push({ icon, label });
-      if (result.length >= 3) break;
-    }
-  }
-
-  return result;
-}
-
-// =============================================================================
-// Types
-// =============================================================================
 
 export interface SuggestionCardContentProps {
   tile: Tile;
-  /** AI reasoning for why this tile was suggested */
   reasoning?: string;
-  /** Whether tile is saved to trip */
   isSaved?: boolean;
-  /** Callback when user saves/unsaves */
   onSave?: (tile: Tile) => void;
-  /** Callback to view alternatives */
   onViewAlternatives?: () => void;
-  /** Callback for tile details */
   onDetailsClick?: (tile: Tile) => void;
   className?: string;
 }
-
-// =============================================================================
-// Component — Expanded variant card body
-// =============================================================================
 
 export function SuggestionCardContent({
   tile,
@@ -125,7 +65,6 @@ export function SuggestionCardContent({
         className
       )}
     >
-      {/* Header with image */}
       <div className="relative h-32">
         <Image
           src={imageUrl}
@@ -136,8 +75,6 @@ export function SuggestionCardContent({
           onError={handleImageError}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
-
-        {/* Suggested badge */}
         <div className="absolute top-3 left-3">
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/20 backdrop-blur-sm border border-emerald-500/30">
             <Sparkles className="w-3 h-3 text-emerald-400" />
@@ -146,8 +83,6 @@ export function SuggestionCardContent({
             </span>
           </div>
         </div>
-
-        {/* Top-right action buttons */}
         <div className="absolute top-3 right-3 flex items-center gap-1.5">
           <button
             onClick={() => onSave?.(tile)}
@@ -156,27 +91,18 @@ export function SuggestionCardContent({
               'p-2 rounded-full backdrop-blur-sm transition-colors',
               isSaved
                 ? 'text-emerald-400 bg-emerald-400/20'
-                : 'text-white/70 bg-black/30 hover:text-emerald-400'
+                : 'text-white/70 bg-black/40 hover:text-emerald-400'
             )}
           >
             <Heart className={cn('w-5 h-5', isSaved && 'fill-current')} />
           </button>
         </div>
-
-        {/* Title overlay */}
         <div className="absolute bottom-0 left-0 right-0 p-3">
-          <h3 className="text-lg font-semibold text-white drop-shadow-md">
-            {tile.title}
-          </h3>
-          {tile.subtitle && (
-            <p className="text-sm text-white/80">{tile.subtitle}</p>
-          )}
+          <h3 className="text-lg font-semibold text-white drop-shadow-md">{tile.title}</h3>
+          {tile.subtitle && <p className="text-sm text-white/80">{tile.subtitle}</p>}
         </div>
       </div>
-
-      {/* Body */}
-      <div className="p-4 space-y-3">
-        {/* Rating and price row */}
+      <div className="p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             {tile.rating && (
@@ -191,54 +117,28 @@ export function SuggestionCardContent({
                 )}
               </div>
             )}
-            {tile.location_label && (
-              <span className="text-sm text-zinc-500 dark:text-zinc-400">{tile.location_label}</span>
-            )}
+            {tile.location_label && <span className="text-sm text-zinc-500 dark:text-zinc-400">{tile.location_label}</span>}
             {amenityIcons.length > 0 && (
               <span className="flex gap-0.5 text-sm">
                 {amenityIcons.map(({ icon, label }) => (
-                  <span key={label} title={label} >{icon}</span>
+                  <span key={label} title={label}>
+                    {icon}
+                  </span>
                 ))}
               </span>
             )}
           </div>
-          {priceDisplay && (
-            <span className="text-sm text-zinc-900 dark:text-zinc-100 font-semibold">
-              {priceDisplay}
-            </span>
-          )}
+          {priceDisplay && <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{priceDisplay}</span>}
         </div>
-
-        {/* Why this suggestion? - Expandable */}
         {reasoning && (
-          <div className="rounded-lg bg-zinc-50 dark:bg-white/[0.03] border border-zinc-200 dark:border-white/5">
-            <button
-              onClick={() => setIsReasoningExpanded(!isReasoningExpanded)}
-              className="w-full flex items-center justify-between p-3 text-left"
-            >
-              <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />
-                <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Why this suggestion?</span>
-              </div>
-              {isReasoningExpanded ? (
-                <ChevronUp className="w-4 h-4 text-zinc-400" />
-              ) : (
-                <ChevronDown className="w-4 h-4 text-zinc-400" />
-              )}
-            </button>
-            {isReasoningExpanded && (
-              <div className="px-3 pb-3">
-                <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">{reasoning}</p>
-              </div>
-            )}
-          </div>
+          <SuggestionReasoning
+            reasoning={reasoning}
+            isExpanded={isReasoningExpanded}
+            onToggle={() => setIsReasoningExpanded(!isReasoningExpanded)}
+          />
         )}
-
-        {/* Deeplink pill */}
         {tile.deeplink_url && tile.deeplink_url !== '' && tile.deeplink_url !== '#' && (() => {
-          const isViator = tile.deeplink_url.includes('viator.com');
-          const isGYG = tile.deeplink_url.includes('getyourguide.com');
-          const isPartner = isViator || isGYG;
+          const isPartner = isPartnerDeeplinkUrl(tile.deeplink_url);
           return (
             <a
               href={tile.deeplink_url}
@@ -260,38 +160,17 @@ export function SuggestionCardContent({
               )}
             >
               {isPartner ? <ExternalLink className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />}
-              {isPartner ? 'Book' : 'Map'}
+              {getTileDeeplinkPillLabel(tile)}
             </a>
           );
         })()}
-
-        {/* Action buttons */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onViewAlternatives}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-700/50 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Change
-          </button>
-          <button
-            onClick={() => onDetailsClick?.(tile)}
-            className="flex-1 px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-700/50 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors text-center"
-          >
-            View Details
-          </button>
-          <button
-            onClick={() => onSave?.(tile)}
-            className={cn(
-              'px-4 py-2 rounded-lg text-sm font-medium transition-colors',
-              isSaved
-                ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                : DS.actions.primary
-            )}
-          >
-            {isSaved ? 'Saved' : 'Save to Trip'}
-          </button>
-        </div>
+        <SuggestionActionRow
+          tile={tile}
+          isSaved={isSaved}
+          onSave={onSave}
+          onViewAlternatives={onViewAlternatives}
+          onDetailsClick={onDetailsClick}
+        />
       </div>
     </div>
   );

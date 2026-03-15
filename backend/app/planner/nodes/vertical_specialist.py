@@ -64,6 +64,8 @@ from app.planner.state import (
 )
 from app.services.task_tracker import track as _track_task
 
+SPECIALIST_LLM_TIMEOUT_SECONDS = 10.0
+
 # =============================================================================
 # LLM Specialist Output Schema (for structured output)
 # =============================================================================
@@ -625,11 +627,14 @@ async def generate_specialist_output_llm(
                 dict(_SPECIALIST_FLAT_SCHEMA), include_raw=True, method="function_calling"
             )
 
-            raw_result = await structured_llm.ainvoke(
-                [
-                    SystemMessage(content=system_prompt),
-                    HumanMessage(content=user_prompt),
-                ]
+            raw_result = await asyncio.wait_for(
+                structured_llm.ainvoke(
+                    [
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content=user_prompt),
+                    ]
+                ),
+                timeout=SPECIALIST_LLM_TIMEOUT_SECONDS,
             )
 
             parsed_dict = raw_result.get("parsed") if isinstance(raw_result, dict) else None
@@ -754,6 +759,24 @@ async def generate_specialist_output_llm(
                     _debug_log(f"[LLM_SPECIALIST] Cache write failed (non-fatal): {cache_err}")
 
             return output
+        except asyncio.TimeoutError:
+            last_error = TimeoutError(
+                f"Specialist LLM timed out after {SPECIALIST_LLM_TIMEOUT_SECONDS:.1f}s for {topic}"
+            )
+            attempt_elapsed = time.time() - attempt_start
+            if not is_fallback_attempt and fallback_model:
+                _debug_log(
+                    f"[LLM_SPECIALIST] ❌ Primary model '{model_name}' failed for {topic} "
+                    f"after {attempt_elapsed:.1f}s | type=TimeoutError | "
+                    f"msg={str(last_error)[:220]} | trying fallback='{fallback_model}'"
+                )
+                continue
+
+            label = "fallback" if is_fallback_attempt else "primary"
+            _debug_log(
+                f"[LLM_SPECIALIST] ❌ {label.title()} model '{model_name}' failed for {topic} "
+                f"after {attempt_elapsed:.1f}s | type=TimeoutError | msg={str(last_error)[:220]}"
+            )
         except Exception as e:
             last_error = e
             attempt_elapsed = time.time() - attempt_start
@@ -788,7 +811,7 @@ async def generate_specialist_output_llm(
                     start_date=trip_plan.start_date,
                     end_date=trip_plan.end_date,
                     skill_level=skill_level,
-                    day_pref=target_activities,
+                    day_pref=_effective_cache_day_pref,
                     error=str(last_error)[:200],
                 )
             except Exception:

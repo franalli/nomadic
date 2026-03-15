@@ -81,7 +81,7 @@ export function PdfExportButton({ tripInputs, dayCards, tiles }: PdfExportButton
       className={cn(
         DS.textSize.micro,
         'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 font-bold uppercase tracking-widest',
-        'text-muted-foreground hover:bg-accent hover:text-foreground',
+        'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/10 dark:hover:text-white',
         'disabled:pointer-events-none disabled:opacity-50',
         state === 'loading' && 'cursor-wait',
       )}

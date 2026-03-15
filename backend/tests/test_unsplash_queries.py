@@ -5,11 +5,8 @@ Pure function tests for unsplash_queries.py — query generation, no side effect
 
 import pytest
 
-from app.services.unsplash_queries import (
-    ACTIVITY_QUERIES,
-    DESTINATION_QUERIES,
-    get_query_for_destination,
-)
+import app.services.unsplash_queries as unsplash_queries
+from app.services.unsplash_queries import ACTIVITY_QUERIES, get_query_for_destination
 
 
 class TestGetQueryForDestination:
@@ -17,20 +14,23 @@ class TestGetQueryForDestination:
 
     # ── Destination-only queries ─────────────────────────────────────────
 
-    def test_known_destination(self) -> None:
+    def test_destination_query_is_generic(self) -> None:
         result = get_query_for_destination("Bali")
-        assert result == DESTINATION_QUERIES["bali"]
+        assert result == "Bali travel destination landscape cityscape"
 
     def test_case_insensitive(self) -> None:
         assert get_query_for_destination("PARIS") == get_query_for_destination("paris")
 
-    def test_unknown_destination_fallback(self) -> None:
-        result = get_query_for_destination("Atlantis")
-        assert result == "Atlantis travel landmark"
-
     def test_whitespace_stripped(self) -> None:
         result = get_query_for_destination("  bali  ")
-        assert result == DESTINATION_QUERIES["bali"]
+        assert result == "Bali travel destination landscape cityscape"
+
+    def test_blank_destination_uses_generic_fallback(self) -> None:
+        result = get_query_for_destination("   ")
+        assert result == "travel destination landscape cityscape"
+
+    def test_destination_lookup_table_removed(self) -> None:
+        assert not hasattr(unsplash_queries, "DESTINATION_QUERIES")
 
     # ── Activity-specific queries ────────────────────────────────────────
 
@@ -45,6 +45,7 @@ class TestGetQueryForDestination:
         result = get_query_for_destination("Bali", activities=["hiking"])
         assert "Bali" in result
         assert "hiking" in result
+        assert "travel destination landscape cityscape" in result
 
     def test_skiing_includes_destination(self) -> None:
         result = get_query_for_destination("Chamonix", activities=["skiing"])
@@ -61,10 +62,11 @@ class TestGetQueryForDestination:
         result = get_query_for_destination("Bali", activities=["bungee_jumping"])
         assert "Bali" in result
         assert "bungee_jumping" in result
+        assert result.endswith("travel experience")
 
     def test_empty_activities_list(self) -> None:
         result = get_query_for_destination("Bali", activities=[])
-        assert result == DESTINATION_QUERIES["bali"]
+        assert result == "Bali travel destination landscape cityscape"
 
     # ── Determinism ──────────────────────────────────────────────────────
 
@@ -104,23 +106,13 @@ class TestGetQueryForDestination:
 
 
 class TestQueryDataIntegrity:
-    """Verify the lookup dictionaries are well-formed."""
-
-    def test_destination_queries_are_strings(self) -> None:
-        for key, value in DESTINATION_QUERIES.items():
-            assert isinstance(key, str), f"Key {key!r} is not a string"
-            assert isinstance(value, str), f"Value for {key!r} is not a string"
-            assert len(value) > 0, f"Empty query for {key!r}"
+    """Verify the remaining bounded query dictionaries are well-formed."""
 
     def test_activity_queries_are_strings(self) -> None:
         for key, value in ACTIVITY_QUERIES.items():
             assert isinstance(key, str), f"Key {key!r} is not a string"
             assert isinstance(value, str), f"Value for {key!r} is not a string"
             assert len(value) > 0, f"Empty query for {key!r}"
-
-    def test_destination_keys_lowercase(self) -> None:
-        for key in DESTINATION_QUERIES:
-            assert key == key.lower(), f"Key {key!r} is not lowercase"
 
     def test_activity_keys_lowercase(self) -> None:
         for key in ACTIVITY_QUERIES:
