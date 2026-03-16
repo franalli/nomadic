@@ -1,0 +1,1152 @@
+import { act, renderHook } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mockState = vi.hoisted(() => ({
+  streamGraphPlan: vi.fn(),
+  toast: vi.fn(),
+  classifyNodeAction: vi.fn(),
+  shouldShowLoaderForNode: vi.fn(),
+  requestScrollTo: vi.fn(),
+}));
+
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+  return {
+    ...actual,
+    streamGraphPlan: mockState.streamGraphPlan,
+  };
+});
+
+vi.mock('@/components/ui/toast', () => ({
+  useToast: () => ({ toast: mockState.toast }),
+}));
+
+vi.mock('@/hooks/useMapSync', () => ({
+  useMapSync: {
+    getState: () => ({ requestScrollTo: mockState.requestScrollTo }),
+  },
+}));
+
+vi.mock('@/lib/loaderConfig', () => ({
+  classifyNodeAction: mockState.classifyNodeAction,
+  shouldShowLoaderForNode: mockState.shouldShowLoaderForNode,
+}));
+
+vi.mock('@/lib/debug', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/debug')>();
+  return {
+    ...actual,
+    debugLog: vi.fn(),
+    explicitDebugLog: vi.fn(),
+  };
+});
+
+import type { ChatSseCallbacks, ChatSseRefs, ExecuteStreamParams } from '@/hooks/useChatSse';
+import { useChatSse } from '@/hooks/useChatSse';
+import { useChatStore } from '@/state/chatStore';
+import {
+  DEFAULT_TRIP_INPUTS,
+  nextEnvelopeBufferGeneration,
+  useDocumentStore,
+} from '@/state/documentStore';
+import type { DayCard, StrategySection } from '@/types/plan-envelope';
+import type { Tile } from '@/types/tile';
+
+function makeSection(
+  id: string,
+  overrides: Partial<StrategySection> = {}
+): StrategySection {
+  return {
+    id,
+    title: `Section ${id}`,
+    specialist_type: 'diving',
+    principles: [],
+    must_dos: [],
+    optional_upgrades: [],
+    logistics_notes: [],
+    bullets: [],
+    ...overrides,
+  };
+}
+
+function makeDayCard(dayNumber: number, overrides: Partial<DayCard> = {}): DayCard {
+  return {
+    day_number: dayNumber,
+    label: `Day ${dayNumber}`,
+    blocks: [],
+    ...overrides,
+  };
+}
+
+function makeTile(id: string, overrides: Partial<Tile> = {}): Tile {
+  return {
+    id,
+    type: 'activity',
+    title: `Tile ${id}`,
+    currency: 'USD',
+    deeplink_url: `https://example.com/${id}`,
+    ...overrides,
+  };
+}
+
+type SeedDocumentOptions = {
+  strategySections?: StrategySection[];
+  dayCards?: DayCard[];
+  tiles?: Record<string, Tile>;
+  planViewState?: string;
+};
+
+function seedDocument(options: StrategySection[] | SeedDocumentOptions = []): void {
+  const normalizedOptions = Array.isArray(options)
+    ? { strategySections: options }
+    : options;
+  const {
+    strategySections = [],
+    dayCards,
+    tiles = {},
+    planViewState = 'S2_STRATEGY_READY',
+  } = normalizedOptions;
+
+  useDocumentStore.setState({
+    document: {
+      trip_context_id: null,
+      trip_inputs: {
+        ...DEFAULT_TRIP_INPUTS,
+        destination: 'Bali',
+        start_date: '2026-04-01',
+        end_date: '2026-04-07',
+        trip_duration: 7,
+      },
+      branches: [],
+      tiles,
+      strategy_sections: strategySections,
+      ...(dayCards !== undefined && { day_cards: dayCards }),
+      plan_view_state: planViewState,
+    },
+  });
+}
+
+function createCallbacks(): ChatSseCallbacks {
+  return {
+    setHasReceivedFirstToken: vi.fn(),
+    setNodeStatus: vi.fn(),
+    setStreamingMessageId: vi.fn(),
+    setTriggerContext: vi.fn(),
+    setSuggestedResponses: vi.fn(),
+    setSuggestedResponseMeta: vi.fn(),
+    setSuggestionChips: vi.fn(),
+    setIsLoading: vi.fn(),
+    setSessionState: vi.fn(),
+    appendToMessage: vi.fn(),
+    updateMessage: vi.fn(),
+    updateMessageId: vi.fn(),
+    filterMessages: vi.fn(),
+    onPlanResult: vi.fn(),
+    onAutoExpandItinerary: vi.fn(),
+    onFeasibilityWarning: vi.fn(),
+    scrollToBottom: vi.fn(),
+    scrollPanelIntoView: vi.fn(),
+  };
+}
+
+function createRefs(requestId: string): ChatSseRefs {
+  return {
+    abortStreamRef: { current: null },
+    isSendingRef: { current: true },
+    activeStreamRequestIdRef: { current: requestId },
+    autoExpandTimeoutRef: { current: null },
+    prevSpecialistTypesRef: { current: new Set() },
+    prevTileTypesRef: { current: new Set() },
+    prevTripInputsRef: { current: null },
+  };
+}
+
+function createLoaders() {
+  return {
+    delayedLoader: {
+      startLoading: vi.fn(),
+      onTangibleOutput: vi.fn(),
+      reset: vi.fn(),
+    },
+    actionLoader: {
+      startLoading: vi.fn(),
+      onTangibleOutput: vi.fn(),
+      reset: vi.fn(),
+    },
+  };
+}
+
+function renderUseChatSse() {
+  const requestId = 'req-1';
+  const refs = createRefs(requestId);
+  const callbacks = createCallbacks();
+  const loaders = createLoaders();
+
+  const { result } = renderHook(() => useChatSse(refs, callbacks));
+  const params: ExecuteStreamParams = {
+    body: { message: 'Build my itinerary' },
+    requestId,
+    streamingMsgId: 'stream-msg',
+    isSilentPlanGeneration: false,
+    selectedBranchId: null,
+    envelopeGeneration: nextEnvelopeBufferGeneration(),
+    triggerContext: null,
+    delayedLoader: loaders.delayedLoader as ExecuteStreamParams['delayedLoader'],
+    actionLoader: loaders.actionLoader as ExecuteStreamParams['actionLoader'],
+  };
+
+  return { result, refs, callbacks, ...loaders, params };
+}
+
+describe('useChatSse', () => {
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      ((cb: FrameRequestCallback) =>
+        window.setTimeout(() => cb(performance.now()), 0)) as typeof requestAnimationFrame
+    );
+    vi.stubGlobal(
+      'cancelAnimationFrame',
+      ((id: number) => window.clearTimeout(id)) as typeof cancelAnimationFrame
+    );
+
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    useDocumentStore.getState().reset();
+    useChatStore.getState().resetChat();
+    vi.clearAllMocks();
+
+    mockState.streamGraphPlan.mockImplementation((_body, streamCallbacks) => {
+      return () => {
+        void streamCallbacks;
+      };
+    });
+    mockState.classifyNodeAction.mockReturnValue({
+      actionType: 'generate_plan',
+      verticalType: 'activities',
+    });
+    mockState.shouldShowLoaderForNode.mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  });
+
+  it('keeps loader state active until the last overlapping node completes', async () => {
+    seedDocument();
+    const { result, callbacks, delayedLoader, actionLoader, params } = renderUseChatSse();
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    act(() => {
+      streamCallbacks.onNodeStatus?.({
+        status: 'started',
+        node: 'get_specialist_advice',
+        label: 'Specialist',
+        icon_key: 'sparkles',
+        estimated_duration_ms: 1200,
+      });
+      streamCallbacks.onNodeStatus?.({
+        status: 'started',
+        node: 'search_tiles',
+        label: 'Tile search',
+        icon_key: 'map',
+        estimated_duration_ms: 1200,
+      });
+      streamCallbacks.onNodeStatus?.({
+        status: 'completed',
+        node: 'get_specialist_advice',
+        label: 'Specialist',
+        icon_key: 'sparkles',
+        estimated_duration_ms: 1200,
+      });
+    });
+
+    expect(callbacks.setNodeStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ node: 'search_tiles', active: true })
+    );
+    expect(delayedLoader.startLoading).toHaveBeenCalledTimes(2);
+    expect(actionLoader.startLoading).toHaveBeenCalledTimes(2);
+    expect(delayedLoader.reset).not.toHaveBeenCalled();
+    expect(actionLoader.reset).not.toHaveBeenCalled();
+
+    act(() => {
+      streamCallbacks.onNodeStatus?.({
+        status: 'completed',
+        node: 'search_tiles',
+        label: 'Tile search',
+        icon_key: 'map',
+        estimated_duration_ms: 1200,
+      });
+    });
+
+    expect(callbacks.setNodeStatus).toHaveBeenLastCalledWith(null);
+    expect(delayedLoader.reset).toHaveBeenCalledTimes(1);
+    expect(actionLoader.reset).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      streamCallbacks.onError(new Error('stop test stream'));
+      vi.runAllTimers();
+    });
+
+    await expect(streamResult).resolves.toBe('error');
+  });
+
+  it('applies specialist preview immediately and defers the compatibility strategy merge', async () => {
+    const staleSection = makeSection('stale', {
+      title: 'Old Hiking Plan',
+      specialist_type: 'hiking',
+    });
+    const authoritativeSection = makeSection('final', {
+      title: 'Dive Plan',
+      specialist_type: 'diving',
+    });
+
+    seedDocument([staleSection]);
+    const { result, params } = renderUseChatSse();
+    const mergeEnvelopeSpy = vi.spyOn(useDocumentStore.getState(), 'mergeEnvelope');
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    act(() => {
+      streamCallbacks.onPartial?.({
+        kind: 'specialist_preview',
+        payload: {
+          topics: ['diving'],
+          activities: [
+            {
+              title: 'USAT Liberty Shipwreck Shore Dive',
+              specialist_type: 'diving',
+              duration_hours: 3,
+              description: 'Easy-entry wreck dive with strong marine life.',
+            },
+          ],
+          strategy_sections: [authoritativeSection],
+        },
+      });
+      streamCallbacks.onPartial?.({
+        kind: 'strategy_sections',
+        payload: [authoritativeSection],
+      });
+    });
+
+    expect(useDocumentStore.getState().document?.strategy_sections).toEqual([
+      authoritativeSection,
+    ]);
+    expect(useDocumentStore.getState()._specialistPreview).toEqual([
+      {
+        title: 'USAT Liberty Shipwreck Shore Dive',
+        specialist_type: 'diving',
+        duration_hours: 3,
+        description: 'Easy-entry wreck dive with strong marine life.',
+      },
+    ]);
+    expect(mergeEnvelopeSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.runAllTimers();
+    });
+
+    expect(mergeEnvelopeSpy).toHaveBeenCalledWith(
+      { strategy_sections: [authoritativeSection] },
+      params.envelopeGeneration
+    );
+
+    act(() => {
+      streamCallbacks.onError(new Error('stop test stream'));
+      vi.runAllTimers();
+    });
+
+    await expect(streamResult).resolves.toBe('error');
+    mergeEnvelopeSpy.mockRestore();
+  });
+
+  it('clears specialist preview state when the stream errors before complete', async () => {
+    seedDocument();
+    const { result, params } = renderUseChatSse();
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    act(() => {
+      streamCallbacks.onPartial?.({
+        kind: 'specialist_preview',
+        payload: {
+          topics: ['diving'],
+          activities: [
+            {
+              title: 'USAT Liberty Shipwreck Shore Dive',
+              specialist_type: 'diving',
+              duration_hours: 3,
+            },
+          ],
+        },
+      });
+    });
+
+    expect(useDocumentStore.getState()._specialistPreview).toEqual([
+      {
+        title: 'USAT Liberty Shipwreck Shore Dive',
+        specialist_type: 'diving',
+        duration_hours: 3,
+      },
+    ]);
+
+    act(() => {
+      streamCallbacks.onError(new Error('stop test stream'));
+      vi.runAllTimers();
+    });
+
+    expect(useDocumentStore.getState()._specialistPreview).toBeNull();
+    await expect(streamResult).resolves.toBe('error');
+  });
+
+  it('keeps the newest strategy sections when a later payload arrives before the deferred merge flushes', async () => {
+    const previewSection = makeSection('preview', {
+      title: 'Preview Dive Plan',
+      specialist_type: 'diving',
+    });
+    const localIntelSection = makeSection('local-intel', {
+      title: 'Local Intel Update',
+      specialist_type: 'local_expert',
+    });
+
+    seedDocument();
+    const { result, params } = renderUseChatSse();
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    act(() => {
+      streamCallbacks.onPartial?.({
+        kind: 'specialist_preview',
+        payload: {
+          topics: ['diving'],
+          activities: [
+            {
+              title: 'Preview Dive Plan',
+              specialist_type: 'diving',
+              duration_hours: 3,
+            },
+          ],
+          strategy_sections: [previewSection],
+        },
+      });
+      streamCallbacks.onPartial?.({
+        kind: 'strategy_sections',
+        payload: [previewSection],
+      });
+      streamCallbacks.onPartial?.({
+        kind: 'strategy_sections',
+        payload: [localIntelSection],
+      });
+    });
+
+    expect(useDocumentStore.getState().document?.strategy_sections).toEqual([
+      localIntelSection,
+    ]);
+
+    await act(async () => {
+      vi.runAllTimers();
+    });
+
+    expect(useDocumentStore.getState().document?.strategy_sections).toEqual([
+      localIntelSection,
+    ]);
+
+    act(() => {
+      streamCallbacks.onError(new Error('stop test stream'));
+      vi.runAllTimers();
+    });
+
+    await expect(streamResult).resolves.toBe('error');
+  });
+
+  it('preserves the latest strategy sections when the document store RAF buffer is enabled', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('VITEST', 'false');
+
+    const previewSection = makeSection('preview', {
+      title: 'Preview Dive Plan',
+      specialist_type: 'diving',
+    });
+    const localIntelSection = makeSection('local-intel', {
+      title: 'Local Intel Update',
+      specialist_type: 'local_expert',
+    });
+
+    seedDocument();
+    const { result, params } = renderUseChatSse();
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    act(() => {
+      streamCallbacks.onPartial?.({
+        kind: 'specialist_preview',
+        payload: {
+          topics: ['diving'],
+          activities: [
+            {
+              title: 'Preview Dive Plan',
+              specialist_type: 'diving',
+              duration_hours: 3,
+            },
+          ],
+          strategy_sections: [previewSection],
+        },
+      });
+      streamCallbacks.onPartial?.({
+        kind: 'strategy_sections',
+        payload: [previewSection],
+      });
+      streamCallbacks.onPartial?.({
+        kind: 'strategy_sections',
+        payload: [localIntelSection],
+      });
+    });
+
+    expect(useDocumentStore.getState().document?.strategy_sections).toEqual([
+      previewSection,
+    ]);
+
+    await act(async () => {
+      vi.runAllTimers();
+    });
+
+    expect(useDocumentStore.getState().document?.strategy_sections).toEqual([
+      localIntelSection,
+    ]);
+
+    act(() => {
+      streamCallbacks.onError(new Error('stop test stream'));
+      vi.runAllTimers();
+    });
+
+    await expect(streamResult).resolves.toBe('error');
+  });
+
+  it('drops a deferred compatibility merge after the active request id changes', async () => {
+    const previewSection = makeSection('preview', {
+      title: 'Preview Dive Plan',
+      specialist_type: 'diving',
+    });
+
+    seedDocument();
+    const { result, params, refs } = renderUseChatSse();
+    const mergeEnvelopeSpy = vi.spyOn(useDocumentStore.getState(), 'mergeEnvelope');
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    act(() => {
+      streamCallbacks.onPartial?.({
+        kind: 'specialist_preview',
+        payload: {
+          topics: ['diving'],
+          activities: [
+            {
+              title: 'Preview Dive Plan',
+              specialist_type: 'diving',
+              duration_hours: 3,
+            },
+          ],
+          strategy_sections: [previewSection],
+        },
+      });
+      streamCallbacks.onPartial?.({
+        kind: 'strategy_sections',
+        payload: [previewSection],
+      });
+    });
+
+    refs.activeStreamRequestIdRef.current = 'req-2';
+
+    await act(async () => {
+      vi.runAllTimers();
+    });
+
+    expect(useDocumentStore.getState().document?.strategy_sections).toEqual([
+      previewSection,
+    ]);
+    expect(mergeEnvelopeSpy).not.toHaveBeenCalled();
+
+    act(() => {
+      streamCallbacks.onError(new Error('stop test stream'));
+      vi.runAllTimers();
+    });
+
+    await expect(streamResult).resolves.toBe('stale');
+    mergeEnvelopeSpy.mockRestore();
+  });
+
+  it('merges day_cards partial payload context and warnings into the document store', async () => {
+    const dayCards = [makeDayCard(1, { label: 'Arrival + snorkel' })];
+    const itineraryOverview = {
+      duration_label: '7 days',
+      base_structure: 'Single base',
+      activity_density: '2 activities/day',
+    };
+    const itineraryAssumptions = {
+      assumptions: ['Boat transfer required'],
+      flexible_elements: ['Swap Day 3 dive site'],
+    };
+    const constraintViolations = [
+      {
+        code: 'late_arrival',
+        message: 'Arrival lands after boat departure.',
+        severity: 'warning',
+        category: 'timing',
+      },
+    ];
+
+    seedDocument();
+    const { result, params } = renderUseChatSse();
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    act(() => {
+      streamCallbacks.onPartial?.({
+        kind: 'day_cards',
+        payload: {
+          day_cards: dayCards,
+          plan_view_state: 'S3_ITINERARY_READY',
+          itinerary_overview: itineraryOverview,
+          itinerary_assumptions: itineraryAssumptions,
+          constraint_violations: constraintViolations,
+          warnings: ['Keep a no-fly buffer after the final dive day.'],
+        },
+      });
+    });
+
+    expect(useDocumentStore.getState().document).toMatchObject({
+      plan_view_state: 'S3_ITINERARY_READY',
+      day_cards: dayCards,
+      itinerary_overview: itineraryOverview,
+      itinerary_assumptions: itineraryAssumptions,
+      constraint_violations: constraintViolations,
+    });
+    expect(mockState.toast).toHaveBeenCalledWith(
+      'Keep a no-fly buffer after the final dive day.',
+      { type: 'warning', duration: 4000 }
+    );
+
+    act(() => {
+      streamCallbacks.onError(new Error('stop test stream'));
+      vi.runAllTimers();
+    });
+
+    await expect(streamResult).resolves.toBe('error');
+  });
+
+  it('merges tile_enrichment day cards, tiles, and context when the payload is marked changed', async () => {
+    const existingStayTile = makeTile('stay-1', { type: 'stay' });
+    const enrichedActivityTile = makeTile('activity-1', { type: 'activity' });
+    const enrichedDayCards = [makeDayCard(2, { label: 'Two-tank dive day' })];
+    const itineraryOverview = {
+      duration_label: '7 days',
+      base_structure: 'Two bases',
+      activity_density: '1 activity/day',
+    };
+
+    seedDocument({
+      tiles: { [existingStayTile.id]: existingStayTile },
+    });
+    const { result, params } = renderUseChatSse();
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    act(() => {
+      streamCallbacks.onPartial?.({
+        kind: 'tile_enrichment',
+        payload: {
+          day_cards: enrichedDayCards,
+          tiles: { [enrichedActivityTile.id]: enrichedActivityTile },
+          plan_view_state: 'S3_ITINERARY_READY',
+          itinerary_overview: itineraryOverview,
+        },
+      });
+    });
+
+    expect(useDocumentStore.getState().document).toMatchObject({
+      plan_view_state: 'S3_ITINERARY_READY',
+      day_cards: enrichedDayCards,
+      itinerary_overview: itineraryOverview,
+      tiles: {
+        [existingStayTile.id]: existingStayTile,
+        [enrichedActivityTile.id]: enrichedActivityTile,
+      },
+    });
+
+    act(() => {
+      streamCallbacks.onError(new Error('stop test stream'));
+      vi.runAllTimers();
+    });
+
+    await expect(streamResult).resolves.toBe('error');
+  });
+
+  it('replays the backend itinerary enrichment partial sequence without duplicating warning toasts', async () => {
+    const staleStayTile = makeTile('stay-stale', {
+      type: 'stay',
+      title: 'Old Harbor Stay',
+    });
+    const staleActivityTile = makeTile('activity-stale', {
+      type: 'activity',
+      title: 'Old Reef Dive',
+    });
+    const refreshedStayTile = makeTile('stay-refresh', {
+      type: 'stay',
+      title: 'Cliffside Resort',
+    });
+    const refreshedActivityTile = makeTile('activity-refresh', {
+      type: 'activity',
+      title: 'Manta Point Drift',
+    });
+    const initialDayCards = [
+      makeDayCard(1, { label: 'Arrival + resort transfer' }),
+      makeDayCard(2, { label: 'Warm-up reef checkout dive' }),
+    ];
+    const enrichedDayCards = [
+      makeDayCard(1, { label: 'Arrival + resort transfer' }),
+      makeDayCard(2, { label: 'Manta Point double-dive' }),
+    ];
+    const itineraryOverview = {
+      duration_label: '7 days',
+      base_structure: 'Two bases',
+      activity_density: '2 dives/day',
+    };
+    const itineraryAssumptions = {
+      assumptions: ['Boat departures depend on morning sea conditions'],
+      flexible_elements: ['Swap Day 2 and Day 3 based on currents'],
+    };
+    const constraintViolations = [
+      {
+        code: 'nofly_buffer',
+        message: 'Keep a 24-hour no-fly buffer after your final dive.',
+        severity: 'warning',
+        category: 'safety',
+      },
+    ];
+    const warningMessage = 'Keep a 24-hour no-fly buffer after your final dive.';
+    const replacementTiles = {
+      [refreshedStayTile.id]: refreshedStayTile,
+      [refreshedActivityTile.id]: refreshedActivityTile,
+    };
+    const enrichmentContext = {
+      plan_view_state: 'S3_ITINERARY_READY',
+      itinerary_overview: itineraryOverview,
+      itinerary_assumptions: itineraryAssumptions,
+      constraint_violations: constraintViolations,
+      warnings: [warningMessage],
+    };
+
+    seedDocument({
+      tiles: {
+        [staleStayTile.id]: staleStayTile,
+        [staleActivityTile.id]: staleActivityTile,
+      },
+    });
+    const { result, params } = renderUseChatSse();
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    act(() => {
+      streamCallbacks.onPartial?.({
+        kind: 'day_cards',
+        payload: {
+          day_cards: initialDayCards,
+          ...enrichmentContext,
+        },
+      });
+    });
+
+    expect(useDocumentStore.getState().document).toMatchObject({
+      plan_view_state: 'S3_ITINERARY_READY',
+      day_cards: initialDayCards,
+      itinerary_overview: itineraryOverview,
+      itinerary_assumptions: itineraryAssumptions,
+      constraint_violations: constraintViolations,
+      tiles: {
+        [staleStayTile.id]: staleStayTile,
+        [staleActivityTile.id]: staleActivityTile,
+      },
+    });
+    expect(mockState.toast).toHaveBeenCalledTimes(1);
+    expect(mockState.toast).toHaveBeenCalledWith(warningMessage, {
+      type: 'warning',
+      duration: 4000,
+    });
+
+    act(() => {
+      streamCallbacks.onPartial?.({
+        kind: 'tile_enrichment',
+        payload: {
+          day_cards: enrichedDayCards,
+          tiles: replacementTiles,
+          day_cards_changed: true,
+          tiles_changed: true,
+          ...enrichmentContext,
+        },
+        tiles_replaced: true,
+      });
+    });
+
+    expect(useDocumentStore.getState().document).toMatchObject({
+      plan_view_state: 'S3_ITINERARY_READY',
+      day_cards: enrichedDayCards,
+      itinerary_overview: itineraryOverview,
+      itinerary_assumptions: itineraryAssumptions,
+      constraint_violations: constraintViolations,
+      tiles: replacementTiles,
+    });
+    expect(useDocumentStore.getState().document?.tiles).toEqual(replacementTiles);
+    expect(useDocumentStore.getState().document?.tiles).not.toHaveProperty(staleStayTile.id);
+    expect(useDocumentStore.getState().document?.tiles).not.toHaveProperty(
+      staleActivityTile.id
+    );
+    expect(mockState.toast).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      streamCallbacks.onPartial?.({
+        kind: 'day_cards',
+        payload: {
+          day_cards: enrichedDayCards,
+          ...enrichmentContext,
+        },
+      });
+    });
+
+    expect(useDocumentStore.getState().document).toMatchObject({
+      plan_view_state: 'S3_ITINERARY_READY',
+      day_cards: enrichedDayCards,
+      itinerary_overview: itineraryOverview,
+      itinerary_assumptions: itineraryAssumptions,
+      constraint_violations: constraintViolations,
+      tiles: replacementTiles,
+    });
+    expect(mockState.toast).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      streamCallbacks.onPartial?.({
+        kind: 'tiles',
+        payload: replacementTiles,
+        tiles_replaced: true,
+      });
+    });
+
+    expect(useDocumentStore.getState().document).toMatchObject({
+      plan_view_state: 'S3_ITINERARY_READY',
+      day_cards: enrichedDayCards,
+      itinerary_overview: itineraryOverview,
+      itinerary_assumptions: itineraryAssumptions,
+      constraint_violations: constraintViolations,
+      tiles: replacementTiles,
+    });
+    expect(useDocumentStore.getState().document?.tiles).toEqual(replacementTiles);
+    expect(useDocumentStore.getState().document?.tiles).not.toHaveProperty(staleStayTile.id);
+    expect(useDocumentStore.getState().document?.tiles).not.toHaveProperty(
+      staleActivityTile.id
+    );
+    expect(mockState.toast).toHaveBeenCalledTimes(1);
+    expect(mockState.toast).toHaveBeenCalledWith(warningMessage, {
+      type: 'warning',
+      duration: 4000,
+    });
+
+    act(() => {
+      streamCallbacks.onError(new Error('stop test stream'));
+      vi.runAllTimers();
+    });
+
+    await expect(streamResult).resolves.toBe('error');
+  });
+
+  it('replays the itinerary enrichment partial sequence through the RAF buffer without duplicating warning toasts', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('VITEST', 'false');
+
+    const staleStayTile = makeTile('stay-stale', {
+      type: 'stay',
+      title: 'Old Harbor Stay',
+    });
+    const staleActivityTile = makeTile('activity-stale', {
+      type: 'activity',
+      title: 'Old Reef Dive',
+    });
+    const refreshedStayTile = makeTile('stay-refresh', {
+      type: 'stay',
+      title: 'Cliffside Resort',
+    });
+    const refreshedActivityTile = makeTile('activity-refresh', {
+      type: 'activity',
+      title: 'Manta Point Drift',
+    });
+    const initialDayCards = [
+      makeDayCard(1, { label: 'Arrival + resort transfer' }),
+      makeDayCard(2, { label: 'Warm-up reef checkout dive' }),
+    ];
+    const enrichedDayCards = [
+      makeDayCard(1, { label: 'Arrival + resort transfer' }),
+      makeDayCard(2, { label: 'Manta Point double-dive' }),
+    ];
+    const itineraryOverview = {
+      duration_label: '7 days',
+      base_structure: 'Two bases',
+      activity_density: '2 dives/day',
+    };
+    const itineraryAssumptions = {
+      assumptions: ['Boat departures depend on morning sea conditions'],
+      flexible_elements: ['Swap Day 2 and Day 3 based on currents'],
+    };
+    const constraintViolations = [
+      {
+        code: 'nofly_buffer',
+        message: 'Keep a 24-hour no-fly buffer after your final dive.',
+        severity: 'warning',
+        category: 'safety',
+      },
+    ];
+    const warningMessage = 'Keep a 24-hour no-fly buffer after your final dive.';
+    const replacementTiles = {
+      [refreshedStayTile.id]: refreshedStayTile,
+      [refreshedActivityTile.id]: refreshedActivityTile,
+    };
+    const enrichmentContext = {
+      plan_view_state: 'S3_ITINERARY_READY',
+      itinerary_overview: itineraryOverview,
+      itinerary_assumptions: itineraryAssumptions,
+      constraint_violations: constraintViolations,
+      warnings: [warningMessage],
+    };
+
+    seedDocument({
+      tiles: {
+        [staleStayTile.id]: staleStayTile,
+        [staleActivityTile.id]: staleActivityTile,
+      },
+    });
+    const { result, params } = renderUseChatSse();
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    act(() => {
+      streamCallbacks.onPartial?.({
+        kind: 'day_cards',
+        payload: {
+          day_cards: initialDayCards,
+          ...enrichmentContext,
+        },
+      });
+      streamCallbacks.onPartial?.({
+        kind: 'tile_enrichment',
+        payload: {
+          day_cards: enrichedDayCards,
+          tiles: replacementTiles,
+          day_cards_changed: true,
+          tiles_changed: true,
+          ...enrichmentContext,
+        },
+        tiles_replaced: true,
+      });
+      streamCallbacks.onPartial?.({
+        kind: 'day_cards',
+        payload: {
+          day_cards: enrichedDayCards,
+          ...enrichmentContext,
+        },
+      });
+      streamCallbacks.onPartial?.({
+        kind: 'tiles',
+        payload: replacementTiles,
+        tiles_replaced: true,
+      });
+    });
+
+    expect(useDocumentStore.getState().document?.tiles).toEqual({
+      [staleStayTile.id]: staleStayTile,
+      [staleActivityTile.id]: staleActivityTile,
+    });
+    expect(useDocumentStore.getState().document?.day_cards).toBeUndefined();
+    expect(mockState.toast).toHaveBeenCalledTimes(1);
+    expect(mockState.toast).toHaveBeenCalledWith(warningMessage, {
+      type: 'warning',
+      duration: 4000,
+    });
+
+    await act(async () => {
+      vi.runAllTimers();
+    });
+
+    expect(useDocumentStore.getState().document).toMatchObject({
+      plan_view_state: 'S3_ITINERARY_READY',
+      day_cards: enrichedDayCards,
+      itinerary_overview: itineraryOverview,
+      itinerary_assumptions: itineraryAssumptions,
+      constraint_violations: constraintViolations,
+      tiles: replacementTiles,
+    });
+    expect(useDocumentStore.getState().document?.tiles).toEqual(replacementTiles);
+    expect(useDocumentStore.getState().document?.tiles).not.toHaveProperty(staleStayTile.id);
+    expect(useDocumentStore.getState().document?.tiles).not.toHaveProperty(
+      staleActivityTile.id
+    );
+    expect(mockState.toast).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      streamCallbacks.onError(new Error('stop test stream'));
+      vi.runAllTimers();
+    });
+
+    await expect(streamResult).resolves.toBe('error');
+  });
+
+  it('preserves existing day cards when tile_enrichment marks them unchanged', async () => {
+    const existingDayCards = [makeDayCard(1, { label: 'Existing itinerary' })];
+    const incomingDayCards = [makeDayCard(1, { label: 'Should not replace existing itinerary' })];
+    const existingStayTile = makeTile('stay-1', { type: 'stay' });
+    const enrichedActivityTile = makeTile('activity-2', { type: 'activity' });
+
+    seedDocument({
+      dayCards: existingDayCards,
+      tiles: { [existingStayTile.id]: existingStayTile },
+      planViewState: 'S3_ITINERARY_READY',
+    });
+    const { result, params } = renderUseChatSse();
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    act(() => {
+      streamCallbacks.onPartial?.({
+        kind: 'tile_enrichment',
+        payload: {
+          day_cards: incomingDayCards,
+          day_cards_changed: false,
+          tiles: { [enrichedActivityTile.id]: enrichedActivityTile },
+          plan_view_state: 'S3_EDITING',
+        },
+      });
+    });
+
+    expect(useDocumentStore.getState().document).toMatchObject({
+      plan_view_state: 'S3_EDITING',
+      day_cards: existingDayCards,
+      tiles: {
+        [existingStayTile.id]: existingStayTile,
+        [enrichedActivityTile.id]: enrichedActivityTile,
+      },
+    });
+
+    act(() => {
+      streamCallbacks.onError(new Error('stop test stream'));
+      vi.runAllTimers();
+    });
+
+    await expect(streamResult).resolves.toBe('error');
+  });
+
+  it('preserves existing tiles when tile_enrichment marks them unchanged', async () => {
+    const enrichedDayCards = [makeDayCard(3, { label: 'Updated shore dive day' })];
+    const existingStayTile = makeTile('stay-1', { type: 'stay' });
+    const incomingActivityTile = makeTile('activity-3', { type: 'activity' });
+
+    seedDocument({
+      tiles: { [existingStayTile.id]: existingStayTile },
+    });
+    const { result, params } = renderUseChatSse();
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    act(() => {
+      streamCallbacks.onPartial?.({
+        kind: 'tile_enrichment',
+        payload: {
+          day_cards: enrichedDayCards,
+          tiles: { [incomingActivityTile.id]: incomingActivityTile },
+          tiles_changed: false,
+          plan_view_state: 'S3_ITINERARY_READY',
+        },
+      });
+    });
+
+    expect(useDocumentStore.getState().document).toMatchObject({
+      plan_view_state: 'S3_ITINERARY_READY',
+      day_cards: enrichedDayCards,
+      tiles: {
+        [existingStayTile.id]: existingStayTile,
+      },
+    });
+    expect(useDocumentStore.getState().document?.tiles).not.toHaveProperty(
+      incomingActivityTile.id
+    );
+
+    act(() => {
+      streamCallbacks.onError(new Error('stop test stream'));
+      vi.runAllTimers();
+    });
+
+    await expect(streamResult).resolves.toBe('error');
+  });
+});

@@ -3,6 +3,15 @@ import { API_BASE } from '@/lib/config';
 import { debugLog } from '@/lib/debug';
 import { fetchSharedTripClient } from '@/lib/sharedTripApi';
 import { useDocumentStore } from '@/state/documentStore';
+import type { DocumentTripInputs, PlanDocumentData } from '@/types/document';
+import type {
+  DayCard,
+  ItineraryAssumptions,
+  ItineraryOverview,
+  PlanViewState,
+  StrategySection,
+} from '@/types/plan-envelope';
+import type { Tile } from '@/types/tile';
 
 export { API_BASE } from '@/lib/config';
 
@@ -756,13 +765,93 @@ export interface SSENodeStatusEvent {
   };
 }
 
+export interface SSEPartialContext {
+  plan_view_state?: PlanViewState;
+  itinerary_overview?: ItineraryOverview | null;
+  itinerary_assumptions?: ItineraryAssumptions | null;
+  constraint_violations?: PlanDocumentData['constraint_violations'];
+  warnings?: string[];
+}
+
+export interface SpecialistPreviewSection {
+  id?: string | null;
+  specialist_type?: string | null;
+  title?: string | null;
+  one_liner?: string | null;
+  hero_image?: string | null;
+  feasibility_status?: StrategySection['feasibility_status'];
+  feasibility_reason?: string | null;
+  alternative_suggestion?: string | null;
+  content_count?: number;
+  highlights?: string[];
+}
+
+export interface SpecialistPreviewActivity {
+  title: string;
+  day?: number | null;
+  specialist_type: string;
+  duration_hours?: number | null;
+  description?: string | null;
+  image_url?: string | null;
+  coordinates?: [number, number] | null;
+}
+
+export interface SpecialistPreviewPayload {
+  destination?: string | null;
+  topics?: string[];
+  activities?: SpecialistPreviewActivity[];
+  sections?: SpecialistPreviewSection[];
+  strategy_sections?: StrategySection[];
+}
+
+export interface DayCardsPartialPayload {
+  day_cards: DayCard[];
+  tiles?: Record<string, Tile>;
+  strategy_sections?: StrategySection[];
+  plan_view_state?: PlanViewState;
+  itinerary_overview?: ItineraryOverview | null;
+  itinerary_assumptions?: ItineraryAssumptions | null;
+  constraint_violations?: PlanDocumentData['constraint_violations'];
+  warnings?: string[];
+}
+
+export interface TileEnrichmentPayload extends DayCardsPartialPayload {
+  day_cards_changed?: boolean;
+  tiles_changed?: boolean;
+  context?: SSEPartialContext;
+}
+
+export type SSEPartialData =
+  | {
+      kind: 'strategy_sections';
+      payload: StrategySection[];
+    }
+  | {
+      kind: 'tiles';
+      payload: Record<string, Tile>;
+      tiles_replaced?: boolean;
+    }
+  | {
+      kind: 'trip_inputs';
+      payload: Partial<DocumentTripInputs>;
+    }
+  | {
+      kind: 'day_cards';
+      payload: DayCardsPartialPayload;
+    }
+  | {
+      kind: 'specialist_preview';
+      payload: SpecialistPreviewPayload;
+    }
+  | {
+      kind: 'tile_enrichment';
+      payload: TileEnrichmentPayload;
+      tiles_replaced?: boolean;
+    };
+
 export interface SSEPartialEvent {
   type: 'partial';
-  data: {
-    kind: 'strategy_sections' | 'tiles' | 'trip_inputs' | 'day_cards';
-    payload: unknown;
-    tiles_replaced?: boolean;
-  };
+  data: SSEPartialData;
 }
 
 export interface SSEFeasibilityWarningEvent {

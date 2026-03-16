@@ -13,8 +13,8 @@ vi.mock('@/components/tiles/TileDetailsModal', () => ({
   TileDetailsModal: () => null,
 }));
 
-import { BookingPlanningView } from '@/components/plan/BookingPlanningView';
 import { LandingHeaderContent } from '@/components/layout/LandingHeaderContent';
+import { BookingPlanningView } from '@/components/plan/BookingPlanningView';
 import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { usePanelToggleStore } from '@/state/panelToggleStore';
 import type { DocumentTripInputs } from '@/types/document';

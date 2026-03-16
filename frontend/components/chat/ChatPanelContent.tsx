@@ -3,7 +3,6 @@
 
 import { forwardRef, useImperativeHandle } from 'react';
 
-import { isBootstrap } from '@/components/plan/planStateHelpers';
 import { cn } from '@/lib/utils';
 
 import { ErrorBoundary } from '../ui/ErrorBoundary';
@@ -12,6 +11,7 @@ import { ChatInputHandler } from './ChatInputHandler';
 import { ChatMessageList } from './ChatMessageList';
 import { ChatModuleSheets } from './ChatModuleSheets';
 import type { ChatPanelHandle, ChatPanelProps } from './ChatPanel.types';
+import { shouldShowBootstrapHero, shouldUseLandingChatLayout } from './chatPanelLayout';
 import { ChatStatusHeader } from './ChatStatusHeader';
 import { ChatSuggestionBar } from './ChatSuggestionBar';
 import { SmartLoader } from './SmartLoader';
@@ -67,13 +67,36 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     [chatSend.addAssistantMessage, chatSend.handleStopStreaming, chatSend.sendMessageCore]
   );
 
+  const useLandingChatLayout = shouldUseLandingChatLayout({
+    isDesktop,
+    planViewState,
+    isFraming: isFramingProp,
+    isGenerating: isGenerating ?? false,
+  });
+  const showBootstrapHero = shouldShowBootstrapHero({
+    isDesktop,
+    planViewState,
+    isFraming: isFramingProp,
+    isGenerating: isGenerating ?? false,
+    isSetupHeaderCollapsed,
+  });
+  const shouldTightenInitialLoadingGap =
+    isDesktop &&
+    chatSend.isLoading &&
+    visibleMessages.length === 1 &&
+    visibleMessages[0]?.role === 'user' &&
+    panelHeightClass === 'min-h-[300px]';
+  const effectivePanelHeightClass = shouldTightenInitialLoadingGap
+    ? 'min-h-[220px]'
+    : panelHeightClass;
+
   return (
     <ErrorBoundary label="chat">
       <div
         ref={panelRef}
         className={cn(
           'text-zinc-900 dark:text-white flex min-h-0 w-full flex-col gap-4 bg-transparent p-4 transition-[min-height,max-height] duration-300',
-          panelHeightClass,
+          effectivePanelHeightClass,
           !isDesktop && 'pb-1'
         )}
       >
@@ -102,9 +125,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
           onRetry={chatSend.sendMessageCore}
           isDesktop={isDesktop}
           planViewState={planViewState ?? undefined}
-          isLanding={isDesktop && (isBootstrap(planViewState) || !!isFramingProp)}
+          isLanding={useLandingChatLayout}
           scrollHeaderContent={
-            isDesktop && isBootstrap(planViewState) && !isSetupHeaderCollapsed ? (
+            showBootstrapHero ? (
               <ChatBootstrapHero
                 planViewState={planViewState}
                 planState={planState}

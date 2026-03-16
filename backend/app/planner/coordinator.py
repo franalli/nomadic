@@ -616,6 +616,253 @@ def _flatten_tiles_payload(tiles: Dict[str, Any]) -> Dict[str, Any]:
     return flattened
 
 
+def _requested_specialist_topics(topics: List[str]) -> List[str]:
+    """Return normalized requested specialist topics in first-seen order."""
+    requested_topics: List[str] = []
+    for topic in topics:
+        normalized = _norm_topic(topic)
+        if normalized and normalized not in requested_topics:
+            requested_topics.append(normalized)
+    return requested_topics
+
+
+def _ordered_requested_specialist_plans(
+    specialist_plans: Dict[str, Any],
+    topics: List[str],
+) -> Dict[str, Any]:
+    """Keep dispatched specialist plans in requested topic order."""
+    requested_topics = _requested_specialist_topics(topics)
+    if not requested_topics:
+        return dict(specialist_plans)
+
+    topic_filter = set(requested_topics)
+    ordered_plans = {
+        topic: plan
+        for topic, plan in specialist_plans.items()
+        if _norm_topic(topic) not in topic_filter
+    }
+
+    for topic in requested_topics:
+        if topic in specialist_plans:
+            ordered_plans[topic] = specialist_plans[topic]
+
+    return ordered_plans
+
+
+def _ordered_requested_specialist_sections(
+    sections: List[Any],
+    topics: List[str],
+) -> List[Any]:
+    """Keep dispatched specialist sections in requested topic order."""
+    requested_topics = _requested_specialist_topics(topics)
+    if not requested_topics:
+        return list(sections)
+
+    topic_filter = set(requested_topics)
+    base_sections: List[Any] = []
+    requested_sections: Dict[str, Any] = {}
+
+    for section in sections:
+        if not isinstance(section, dict):
+            base_sections.append(section)
+            continue
+
+        topic = _norm_topic(section.get("specialist_type", ""))
+        if topic in topic_filter:
+            requested_sections[topic] = section
+            continue
+        base_sections.append(section)
+
+    return base_sections + [
+        requested_sections[topic] for topic in requested_topics if topic in requested_sections
+    ]
+
+
+def _specialist_preview_payload(
+    state: Dict[str, Any],
+    topics: List[str],
+) -> Dict[str, Any]:
+    """Build a frontend-friendly preview payload for freshly dispatched specialists."""
+    requested_topics = _requested_specialist_topics(topics)
+    topic_filter = set(requested_topics)
+    preview_activities: List[Dict[str, Any]] = []
+    previews: List[Dict[str, Any]] = []
+
+    for section in state.get("strategy_sections", []):
+        if not isinstance(section, dict):
+            continue
+
+        topic = _norm_topic(section.get("specialist_type", ""))
+        if not topic or topic not in topic_filter:
+            continue
+
+        content_added = section.get("content_added", [])
+        content_items = content_added if isinstance(content_added, list) else []
+        highlights = [
+            str(item.get("title", "")).strip()
+            for item in content_items
+            if isinstance(item, dict) and str(item.get("title", "")).strip()
+        ]
+        for item in content_items:
+            if not isinstance(item, dict) or item.get("is_buffer"):
+                continue
+
+            title = str(item.get("title", "")).strip()
+            if not title:
+                continue
+
+            preview_activities.append(
+                {
+                    "title": title,
+                    "day": item.get("day"),
+                    "specialist_type": topic,
+                    "duration_hours": item.get("duration_hours", 3),
+                    "description": item.get("description"),
+                    "image_url": item.get("image_url"),
+                    "coordinates": item.get("coordinates"),
+                }
+            )
+
+        previews.append(
+            {
+                "id": section.get("id"),
+                "specialist_type": topic,
+                "title": section.get("title"),
+                "one_liner": section.get("one_liner"),
+                "hero_image": section.get("hero_image"),
+                "feasibility_status": section.get("feasibility_status"),
+                "feasibility_reason": section.get("feasibility_reason"),
+                "alternative_suggestion": section.get("alternative_suggestion"),
+                "content_count": len(content_items),
+                "highlights": highlights[:3],
+            }
+        )
+
+    return {
+        "destination": state.get("trip_plan", {}).get("destination"),
+        "topics": requested_topics,
+        "activities": preview_activities,
+        "sections": previews,
+        "strategy_sections": state.get("strategy_sections", []),
+    }
+
+
+def _partial_plan_view_state(
+    state: Dict[str, Any],
+    day_cards: list[Dict[str, Any]],
+) -> str | None:
+    """Resolve the best available plan state for progressive itinerary payloads."""
+    turn_meta = state.get("turn_meta")
+    if isinstance(turn_meta, dict) and turn_meta.get("builder_result"):
+        return _compute_coordinator_s3_state(turn_meta, day_cards)
+    if day_cards:
+        return "S3_ITINERARY_READY"
+    return "S3_BLOCKED"
+
+
+def _day_cards_partial_context(
+    state: Dict[str, Any],
+    day_cards: list[Dict[str, Any]],
+) -> Dict[str, Any] | None:
+    """Expose envelope-adjacent itinerary context on progressive day-card partials."""
+    turn_meta = state.get("turn_meta", {})
+    if not isinstance(turn_meta, dict):
+        return None
+
+    builder_result = turn_meta.get("builder_result")
+    if not isinstance(builder_result, dict) or not builder_result:
+        return None
+
+    context: Dict[str, Any] = {
+        "plan_view_state": _partial_plan_view_state(state, day_cards),
+        "itinerary_overview": builder_result.get("overview"),
+        "itinerary_assumptions": builder_result.get("assumptions"),
+    }
+
+    constraint_violations = _builder_conflicts_to_constraint_violations(
+        builder_result.get("conflicts"),
+        builder_result.get("resolutions"),
+    )
+    if constraint_violations:
+        context["constraint_violations"] = constraint_violations
+
+    warnings = builder_result.get("warnings")
+    if isinstance(warnings, list) and warnings:
+        context["warnings"] = warnings
+
+    return {key: value for key, value in context.items() if value is not None}
+
+
+def _day_cards_partial_payload(
+    state: Dict[str, Any],
+    day_cards: list[Dict[str, Any]],
+    *,
+    tiles_payload: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Build the rich itinerary payload consumed by progressive frontend renders."""
+    payload: Dict[str, Any] = {
+        "day_cards": day_cards,
+        "tiles": tiles_payload
+        if tiles_payload is not None
+        else _flatten_tiles_payload(state.get("tiles", {})),
+        "strategy_sections": state.get("strategy_sections", []),
+    }
+
+    plan_view_state = _partial_plan_view_state(state, day_cards)
+    if plan_view_state is not None:
+        payload["plan_view_state"] = plan_view_state
+
+    context = _day_cards_partial_context(state, day_cards)
+    if context:
+        payload.update(context)
+
+    return payload
+
+
+def _day_cards_partial_event(
+    state: Dict[str, Any],
+    day_cards: list[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Build the progressive itinerary partial emitted immediately after the builder."""
+    return {
+        "type": "partial",
+        "data": {
+            "kind": "day_cards",
+            "payload": _day_cards_partial_payload(state, day_cards),
+        },
+    }
+
+
+def _tile_enrichment_partial_event(
+    state: Dict[str, Any],
+    day_cards: list[Dict[str, Any]],
+    tiles_payload: Dict[str, Any],
+    *,
+    day_cards_changed: bool,
+    tiles_changed: bool,
+) -> Dict[str, Any] | None:
+    """Build a dedicated post-response enrichment partial."""
+    if not day_cards_changed and not tiles_changed:
+        return None
+
+    partial_data: Dict[str, Any] = {
+        "kind": "tile_enrichment",
+        "payload": _day_cards_partial_payload(
+            state,
+            day_cards,
+            tiles_payload=tiles_payload,
+        ),
+    }
+    partial_data["payload"]["day_cards_changed"] = day_cards_changed
+    partial_data["payload"]["tiles_changed"] = tiles_changed
+
+    turn_meta = state.get("turn_meta") or {}
+    if turn_meta.get("tiles_replaced"):
+        partial_data["tiles_replaced"] = True
+
+    return {"type": "partial", "data": partial_data}
+
+
 def _short_circuit_message(intent: str) -> str:
     """Deterministic, no-LLM response for greeting/reset short-circuits."""
     if intent == "RESET":
@@ -1749,6 +1996,18 @@ def _cancel_pending_itinerary_enrichment(state: Dict[str, Any]) -> None:
         task.cancel()
 
 
+async def _cleanup_pending_itinerary_enrichment(state: Dict[str, Any]) -> None:
+    """Cancel and await any deferred itinerary enrichment task still attached to state."""
+    task = state.pop(_PENDING_ITINERARY_ENRICHMENT_TASK_KEY, None)
+    if not isinstance(task, asyncio.Task):
+        return
+
+    if not task.done():
+        task.cancel()
+
+    await asyncio.gather(task, return_exceptions=True)
+
+
 def _start_pending_itinerary_enrichment(
     state: Dict[str, Any],
     session_id: str = "",
@@ -2189,7 +2448,8 @@ def _apply_classifier_to_state(
     ):
         from datetime import timedelta
 
-        default_duration = 7
+        existing = trip_plan.get("trip_duration")
+        default_duration = existing if existing is not None and existing > 0 else 7
         try:
             start_dt = datetime.strptime(trip_plan["start_date"], "%Y-%m-%d")
             end_dt = start_dt + timedelta(days=default_duration - 1)
@@ -2542,19 +2802,21 @@ async def _dispatch_specialists_parallel(
     other_plans: Dict[str, Any],
     is_replan: bool = False,
     preserves: Optional[List[str]] = None,
-) -> Dict[str, Optional[Dict[str, Any]]]:
+) -> AsyncGenerator[tuple[str, Optional[Dict[str, Any]]], None]:
     """Dispatch multiple specialists in parallel.
 
     Delegates to ``dispatch_specialist_with_brief()`` so coordinator brief +
     replan pathways match graph specialist behavior.
 
-    Returns dict of topic -> LLMSpecialistOutput dict (or None on failure).
+    Yields topic/result pairs as each specialist finishes. Result is ``None``
+    when a specialist fails so callers preserve the existing graceful failure
+    behavior without waiting for the slowest sibling.
     """
     from app.db import _get_async_session_factory
     from app.planner.nodes.vertical_specialist import dispatch_specialist_with_brief
 
     if not topics:
-        return {}
+        return
 
     existing_plans: Dict[str, Any] = state.get("specialist_plans", {})
     # NOTE: build_brief() reads only trip_plan + trip_settings from state.
@@ -2582,9 +2844,9 @@ async def _dispatch_specialists_parallel(
         preserves or [],
     )
 
-    output: Dict[str, Optional[Dict[str, Any]]] = {}
-
-    async def _dispatch_one(topic: str) -> tuple[str, Optional[Dict[str, Any]]]:
+    async def _dispatch_one(
+        topic: str,
+    ) -> tuple[str, Optional[Dict[str, Any]], Exception | None]:
         topic_other_plans = {
             k: v for k, v in other_plans.items() if isinstance(v, dict) and k != topic
         }
@@ -2606,37 +2868,42 @@ async def _dispatch_specialists_parallel(
         _act_settings = _trip_settings.get("activity_settings", {})
         _raw_day_pref = _act_settings.get("day_preferences", {}).get(topic)
 
-        async with async_session_factory() as db:
-            result = await dispatch_specialist_with_brief(
-                brief=brief,
-                topic=topic,
-                replan=replan_request,
-                db=db,
-                raw_day_pref=_raw_day_pref,
-            )
+        try:
+            async with async_session_factory() as db:
+                result = await dispatch_specialist_with_brief(
+                    brief=brief,
+                    topic=topic,
+                    replan=replan_request,
+                    db=db,
+                    raw_day_pref=_raw_day_pref,
+                )
+        except Exception as exc:  # pragma: no cover - exercised via caller assertions
+            return topic, None, exc
 
-        return topic, result.model_dump() if result is not None else None
+        return topic, result.model_dump() if result is not None else None, None
 
-    results = await asyncio.gather(
-        *[_dispatch_one(topic) for topic in topics],
-        return_exceptions=True,
-    )
+    tasks = [asyncio.create_task(_dispatch_one(topic)) for topic in topics]
 
-    for topic, result in zip(topics, results, strict=False):
-        if isinstance(result, Exception):
-            logger.error(
-                "[coordinator] Specialist dispatch failed for %s: %s",
-                topic,
-                result,
-                exc_info=result,
-            )
-            output[topic] = None
-            continue
+    try:
+        for task in asyncio.as_completed(tasks):
+            topic, out_dict, error = await task
+            if error is not None:
+                logger.error(
+                    "[coordinator] Specialist dispatch failed for %s: %s",
+                    topic,
+                    error,
+                    exc_info=error,
+                )
+                yield topic, None
+                continue
 
-        out_topic, out_dict = result
-        output[out_topic] = out_dict
-
-    return output
+            yield topic, out_dict
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _llm_output_to_plan_dict(
@@ -3379,6 +3646,11 @@ def _normalize_step_events(
     if isinstance(step_result, list):
         return [event for event in step_result if isinstance(event, dict)]
     return []
+
+
+def _is_step_event_stream(step_result: Any) -> bool:
+    """Return True when a step result must be consumed as an async event stream."""
+    return hasattr(step_result, "__aiter__") and hasattr(step_result, "__anext__")
 
 
 # ---------------------------------------------------------------------------
@@ -4825,7 +5097,7 @@ async def _execute_step(
     classifier: ClassifierOutput,
     user_message: str,
     session_id: str = "",
-) -> Optional[Dict[str, Any] | List[Dict[str, Any]]]:
+) -> Optional[Dict[str, Any] | List[Dict[str, Any]] | AsyncGenerator[Dict[str, Any], None]]:
     """Execute a single step from the execution plan.
 
     Returns one or more SSE events to yield, or None if no event needed.
@@ -4851,18 +5123,6 @@ async def _execute_step(
         prechecks = state.get("turn_meta", {}).get("feasibility_prechecks", {})
         all_infeasible = {t: v for t, v in prechecks.items() if v[0] == "infeasible"}
         feasible_topics = [t for t in topics if t not in prechecks]
-
-        if feasible_topics:
-            results = await _dispatch_specialists_parallel(
-                topics=feasible_topics,
-                state=state,
-                classifier=classifier,
-                other_plans=other_plans,
-                is_replan=is_replan,
-                preserves=preserves,
-            )
-        else:
-            results = {}
 
         # Store specialist plans and build strategy sections
         specialist_plans = dict(state.get("specialist_plans", {}))
@@ -4911,28 +5171,88 @@ async def _execute_step(
                 sections = list(state.get("strategy_sections", []))
                 sections = [s for s in sections if s.get("specialist_type") != inf_topic]
                 sections.append(section)
-                state["strategy_sections"] = sections
-
-        for topic, llm_output_dict in results.items():
-            if llm_output_dict is not None:
-                brief = build_brief(topic, state, classifier, specialist_plans)
-                plan_dict = _llm_output_to_plan_dict(topic, llm_output_dict, brief)
-                specialist_plans[topic] = plan_dict
-
-                # Build strategy section
-                section = _plan_to_strategy_section(topic, plan_dict, state)
-                # Upsert into strategy_sections
-                sections = list(state.get("strategy_sections", []))
-                sections = [s for s in sections if s.get("specialist_type") != topic]
-                sections.append(section)
-                state["strategy_sections"] = sections
+                state["strategy_sections"] = _ordered_requested_specialist_sections(
+                    sections,
+                    topics,
+                )
 
         _refresh_preserved_specialist_section_metadata(state, preserves)
-        state["specialist_plans"] = specialist_plans
-        return {
-            "type": "partial",
-            "data": {"kind": "strategy_sections", "payload": state.get("strategy_sections", [])},
-        }
+        state["specialist_plans"] = _ordered_requested_specialist_plans(
+            specialist_plans,
+            topics,
+        )
+
+        async def _stream_specialist_dispatch_events() -> AsyncGenerator[Dict[str, Any], None]:
+            emitted_preview = False
+
+            if feasible_topics:
+                async for topic, llm_output_dict in _dispatch_specialists_parallel(
+                    topics=feasible_topics,
+                    state=state,
+                    classifier=classifier,
+                    other_plans=other_plans,
+                    is_replan=is_replan,
+                    preserves=preserves,
+                ):
+                    if llm_output_dict is None:
+                        continue
+
+                    brief = build_brief(topic, state, classifier, specialist_plans)
+                    plan_dict = _llm_output_to_plan_dict(topic, llm_output_dict, brief)
+                    specialist_plans[topic] = plan_dict
+                    state["specialist_plans"] = _ordered_requested_specialist_plans(
+                        specialist_plans,
+                        topics,
+                    )
+
+                    section = _plan_to_strategy_section(topic, plan_dict, state)
+                    sections = list(state.get("strategy_sections", []))
+                    sections = [s for s in sections if s.get("specialist_type") != topic]
+                    sections.append(section)
+                    state["strategy_sections"] = _ordered_requested_specialist_sections(
+                        sections,
+                        topics,
+                    )
+
+                    emitted_preview = True
+                    yield {
+                        "type": "partial",
+                        "data": {
+                            "kind": "specialist_preview",
+                            "payload": _specialist_preview_payload(state, topics),
+                        },
+                    }
+                    yield {
+                        "type": "partial",
+                        "data": {
+                            "kind": "strategy_sections",
+                            "payload": state.get("strategy_sections", []),
+                        },
+                    }
+
+            state["specialist_plans"] = _ordered_requested_specialist_plans(
+                specialist_plans,
+                topics,
+            )
+            if emitted_preview:
+                return
+
+            yield {
+                "type": "partial",
+                "data": {
+                    "kind": "specialist_preview",
+                    "payload": _specialist_preview_payload(state, topics),
+                },
+            }
+            yield {
+                "type": "partial",
+                "data": {
+                    "kind": "strategy_sections",
+                    "payload": state.get("strategy_sections", []),
+                },
+            }
+
+        return _stream_specialist_dispatch_events()
 
     if step_type == StepType.LOCAL_INTEL:
         section = await _run_local_intel(state, session_id=session_id)
@@ -4982,12 +5302,7 @@ async def _execute_step(
         events: list[Dict[str, Any]] = []
         day_cards = state.get("day_cards", [])
         if isinstance(day_cards, list):
-            events.append(
-                {
-                    "type": "partial",
-                    "data": {"kind": "day_cards", "payload": day_cards},
-                }
-            )
+            events.append(_day_cards_partial_event(state, day_cards))
         # Only emit tile partial if new tiles were injected (avoids duplicate
         # re-render — SEARCH_TILES already emitted the initial set)
         post_ids = {
@@ -5022,8 +5337,8 @@ async def _execute_parallel_group(
     classifier: ClassifierOutput,
     user_message: str,
     session_id: str = "",
-) -> List[Dict[str, Any]]:
-    """Execute a group of steps in parallel via asyncio.gather.
+) -> AsyncGenerator[tuple[ExecutionStep, List[Dict[str, Any]], bool], None]:
+    """Execute a parallel group and yield step results as each task completes.
 
     Note on state mutation: parallel steps mutate the same state dict.
     This is safe in asyncio (single-threaded) as long as steps write
@@ -5033,43 +5348,76 @@ async def _execute_parallel_group(
     LOCAL_INTEL runs sequentially to avoid concurrent strategy_sections writes.
     """
     if not steps:
-        return []
+        return
 
-    tasks = [
-        _execute_step(step, state, classifier, user_message, session_id=session_id)
-        for step in steps
-    ]
+    event_queue: asyncio.Queue[
+        tuple[ExecutionStep, List[Dict[str, Any]], bool, Exception | None]
+    ] = asyncio.Queue()
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    partial_events: List[Dict[str, Any]] = []
+    async def _run_parallel_step(step: ExecutionStep) -> None:
+        try:
+            result = await _execute_step(
+                step,
+                state,
+                classifier,
+                user_message,
+                session_id=session_id,
+            )
+            if _is_step_event_stream(result):
+                async for event in result:
+                    await event_queue.put((step, [event], False, None))
+            else:
+                step_events = _normalize_step_events(result)
+                if step_events:
+                    await event_queue.put((step, step_events, False, None))
+            await event_queue.put((step, [], True, None))
+        except Exception as exc:  # pragma: no cover - exercised via caller assertions
+            await event_queue.put((step, [], True, exc))
+
+    tasks = [asyncio.create_task(_run_parallel_step(step)) for step in steps]
 
     failures: List[str] = []
-    # Log any exceptions from parallel steps
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            failures.append(steps[i].step_type.value)
-            logger.error(
-                "[coordinator] Parallel step %s failed: %s",
-                steps[i].step_type.value,
-                result,
-                exc_info=result,
-            )
-        else:
-            partial_events.extend(_normalize_step_events(result))
+    successful_events = 0
+    pending_steps = len(steps)
+
+    try:
+        while pending_steps > 0:
+            step, step_events, completed, error = await event_queue.get()
+            if error is not None:
+                failures.append(step.step_type.value)
+                logger.error(
+                    "[coordinator] Parallel step %s failed: %s",
+                    step.step_type.value,
+                    error,
+                    exc_info=error,
+                )
+                pending_steps -= 1
+                yield step, [], True
+                continue
+
+            successful_events += len(step_events)
+            if step_events or completed:
+                yield step, step_events, completed
+            if completed:
+                pending_steps -= 1
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     if failures:
         logger.warning(
             "[coordinator] Partial parallel failure (%s) — continuing with %d successful results",
             ", ".join(failures),
-            len(partial_events),
+            successful_events,
         )
         turn_meta = dict(state.get("turn_meta", {}))
         existing = list(turn_meta.get("partial_failures", []))
         existing.extend(failures)
         turn_meta["partial_failures"] = existing
         state["turn_meta"] = turn_meta
-
-    return partial_events
 
 
 # ---------------------------------------------------------------------------
@@ -5115,11 +5463,44 @@ async def execute_turn(
         SSE event dicts: node_status, partial, token, complete, error.
     """
     wall_start = time.monotonic()
-    _unsplash_task = None
+    _unsplash_task: asyncio.Task[Any] | None = None
+
+    async def _cleanup_unsplash_task(
+        *,
+        cancel: bool,
+        timeout: float | None = None,
+    ) -> None:
+        """Consume or cancel the prefetch task so it never runs detached."""
+        nonlocal _unsplash_task
+
+        task = _unsplash_task
+        if not isinstance(task, asyncio.Task):
+            return
+
+        try:
+            if cancel and not task.done():
+                task.cancel()
+            if not task.done():
+                if timeout is None:
+                    await asyncio.shield(task)
+                else:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except asyncio.TimeoutError:
+            return
+        except asyncio.CancelledError:
+            if not task.done():
+                raise
+        except Exception:
+            return
+        finally:
+            if task.done():
+                await asyncio.gather(task, return_exceptions=True)
+                if _unsplash_task is task:
+                    _unsplash_task = None
 
     try:
         # Step 0: Reset turn_meta for this turn
-        _cancel_pending_itinerary_enrichment(state)
+        await _cleanup_pending_itinerary_enrichment(state)
         state["turn_meta"] = {}
         # Carry forward patch-driven field changes (e.g. dates changed via
         # PATCH pill but not through chat). These bypass the classifier's
@@ -5375,34 +5756,54 @@ async def execute_turn(
                     user_message,
                     session_id=session_id,
                 )
-                for event in _normalize_step_events(step_event):
-                    yield event
+                if _is_step_event_stream(step_event):
+                    async for event in step_event:
+                        yield event
+                else:
+                    for event in _normalize_step_events(step_event):
+                        yield event
 
                 if node_name:
                     yield _node_status(node_name, "completed", label, icon, duration)
             else:
                 # Parallel group
+                completed_parallel_steps: set[StepType] = set()
                 for step in group:
                     label, icon, duration = _step_status_info(step, state, classifier)
                     node_name = _step_node_name(step)
                     if node_name:
                         yield _node_status(node_name, "started", label, icon, duration)
 
-                step_events = await _execute_parallel_group(
+                async for completed_step, step_events, completed in _execute_parallel_group(
                     group,
                     state,
                     classifier,
                     user_message,
                     session_id=session_id,
-                )
-                for step_event in step_events:
-                    yield step_event
+                ):
+                    for step_event in step_events:
+                        yield step_event
+
+                    if not completed:
+                        continue
+
+                    completed_parallel_steps.add(completed_step.step_type)
+                    label, icon, duration = _step_status_info(completed_step, state, classifier)
+                    node_name = _step_node_name(completed_step)
+                    if node_name:
+                        yield _node_status(node_name, "completed", label, icon, duration)
 
                 for step in group:
+                    if step.step_type in completed_parallel_steps:
+                        continue
                     label, icon, duration = _step_status_info(step, state, classifier)
                     node_name = _step_node_name(step)
                     if node_name:
                         yield _node_status(node_name, "completed", label, icon, duration)
+
+        if cancel_event and cancel_event.is_set():
+            logger.info("[coordinator] Cancel event set — skipping response/envelope")
+            return
 
         # Compute field diffs for conversationalist context
         _pre_briefs = state.get("_pre_change_briefs", {})
@@ -5448,18 +5849,51 @@ async def execute_turn(
             if assistant_message:
                 yield {"type": "token", "data": assistant_message}
 
+        pre_enrichment_day_cards_hash = stable_hash(state.get("day_cards", []))
+        pre_enrichment_tiles_payload = _flatten_tiles_payload(state.get("tiles", {}))
+        pre_enrichment_tiles_hash = stable_hash(pre_enrichment_tiles_payload)
+
         await _await_pending_itinerary_enrichment(state)
+
+        post_enrichment_day_cards = state.get("day_cards", [])
+        day_cards_changed = (
+            isinstance(post_enrichment_day_cards, list)
+            and stable_hash(post_enrichment_day_cards) != pre_enrichment_day_cards_hash
+        )
+
+        post_enrichment_tiles_payload = _flatten_tiles_payload(state.get("tiles", {}))
+        tiles_changed = stable_hash(post_enrichment_tiles_payload) != pre_enrichment_tiles_hash
+
+        if isinstance(post_enrichment_day_cards, list):
+            enrichment_event = _tile_enrichment_partial_event(
+                state,
+                post_enrichment_day_cards,
+                post_enrichment_tiles_payload,
+                day_cards_changed=day_cards_changed,
+                tiles_changed=tiles_changed,
+            )
+            if enrichment_event is not None:
+                yield enrichment_event
+
+        if day_cards_changed and isinstance(post_enrichment_day_cards, list):
+            yield _day_cards_partial_event(state, post_enrichment_day_cards)
+
+        if tiles_changed:
+            tiles_partial_data: dict[str, Any] = {
+                "kind": "tiles",
+                "payload": post_enrichment_tiles_payload,
+            }
+            turn_meta = state.get("turn_meta") or {}
+            if turn_meta.get("tiles_replaced"):
+                tiles_partial_data["tiles_replaced"] = True
+            yield {"type": "partial", "data": tiles_partial_data}
 
         # Append user + assistant messages to state messages
         state.setdefault("messages", []).append(HumanMessage(content=user_message))
         state["messages"].append(AIMessage(content=assistant_message))
 
         # Step 7: Await unsplash prefetch (if running), refresh enrichment, build envelope
-        if _unsplash_task and not _unsplash_task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(_unsplash_task), timeout=2.0)
-            except (asyncio.TimeoutError, Exception):
-                pass  # Fall back to placeholder gracefully
+        await _cleanup_unsplash_task(cancel=False, timeout=2.0)
         await _refresh_enrichment_states(state, session_id)
         envelope = _build_envelope(state, user_message, session_id, assistant_message)
 
@@ -5473,11 +5907,12 @@ async def execute_turn(
         yield {"type": "complete", "data": envelope}
 
     except Exception as exc:
-        _cancel_pending_itinerary_enrichment(state)
+        await _cleanup_unsplash_task(cancel=True)
         logger.error("[coordinator] Turn failed: %s", exc, exc_info=True)
         yield {"type": "error", "message": str(exc)}
     finally:
-        _cancel_pending_itinerary_enrichment(state)
+        await _cleanup_unsplash_task(cancel=True)
+        await _cleanup_pending_itinerary_enrichment(state)
 
 
 def _step_status_info(

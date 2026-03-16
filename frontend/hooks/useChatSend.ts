@@ -160,6 +160,43 @@ function didOptimisticExtensionRegress(
   return currentEnd.getTime() <= previousEnd.getTime();
 }
 
+function shouldStartPlanGeneration({
+  isGenerateTrigger,
+  hasBranches,
+  message,
+  readyToGenerate,
+  tripInputs,
+}: {
+  isGenerateTrigger: boolean;
+  hasBranches?: boolean;
+  message: string;
+  readyToGenerate?: boolean;
+  tripInputs: DocumentTripInputs | null | undefined;
+}): boolean {
+  if (isGenerateTrigger) return true;
+  if (readyToGenerate === true) return true;
+  if (hasBranches) return false;
+
+  const normalized = message.trim().toLowerCase();
+  const hasDateCue =
+    /\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?(?:\s*-\s*\d{1,2}(?:st|nd|rd|th)?)?|this weekend|next weekend|long weekend)\b/i.test(
+      normalized
+    );
+  if (!hasDateCue) return false;
+
+  if (tripInputs?.destination) return true;
+  if (/\bfrom\b/.test(normalized)) return true;
+  if (
+    /\b(?:trip|travel|vacation|holiday|getaway|itinerary|plan|hotel|stay|flight)\b/.test(
+      normalized
+    )
+  ) {
+    return true;
+  }
+
+  return normalized.split(/\s+/).filter(Boolean).length >= 4;
+}
+
 function waitForPendingMutationsToSettle(timeoutMs = 5_000): Promise<boolean> {
   if (!useDocumentStore.getState().hasPendingMutations()) {
     return Promise.resolve(true);
@@ -210,6 +247,7 @@ interface UseChatSendParams {
   onUserMessageSubmit?: (message: string) => void;
   selectedBranchId: string | null;
   hasBranches?: boolean;
+  readyToGenerate?: boolean;
 
   // External state setters
   setGenerateTriggered: (v: boolean) => void;
@@ -282,6 +320,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
     onUserMessageSubmit,
     selectedBranchId,
     hasBranches,
+    readyToGenerate,
     setGenerateTriggered,
     setActiveStatus,
     scrollPanelIntoView,
@@ -584,6 +623,17 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
 
       if (isGenerateTrigger) {
         setGenerateTriggered(true);
+      }
+
+      if (
+        shouldStartPlanGeneration({
+          isGenerateTrigger,
+          hasBranches,
+          message: trimmed,
+          readyToGenerate,
+          tripInputs: tripInputsSnapshot,
+        })
+      ) {
         onGeneratePlanStart?.();
       }
 
@@ -767,6 +817,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
       delayedLoader,
       actionLoader,
       hasBranches,
+      readyToGenerate,
       onUserMessageSubmit,
       toast,
       executeStream,

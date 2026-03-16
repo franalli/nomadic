@@ -72,7 +72,7 @@ describe('useLandingDerived plan view gate', () => {
     expect(result.current.canGeneratePlan).toBe(false);
   });
 
-  it('returns null planViewState and isFraming=true during active generation without backend state', () => {
+  it('keeps the plan tab enabled during active generation when prerequisites are present', () => {
     const { result } = renderHook(() =>
       useLandingDerived(
         makeParams({
@@ -92,6 +92,58 @@ describe('useLandingDerived plan view gate', () => {
     expect(result.current.planViewState).toBeNull();
     // isFraming is the separate UI loading signal
     expect(result.current.isFraming).toBe(true);
+    expect(result.current.planTabEnabled).toBe(true);
+  });
+
+  it('prefers the active local itinerary generation over stale store generation', () => {
+    const { result } = renderHook(() =>
+      useLandingDerived(
+        makeParams({
+          storeTripInputs: {
+            ...DEFAULT_TRIP_INPUTS,
+            destination: 'Rome',
+            start_date: '2026-03-01',
+            end_date: '2026-03-07',
+          },
+          docGeneration: {
+            active: true,
+            stage: 'structure',
+            message: 'Working on strategy',
+          },
+          uiGeneration: {
+            active: true,
+            stage: 'itinerary',
+            message: 'Building itinerary',
+          },
+        })
+      )
+    );
+
+    expect(result.current.generation).toEqual(
+      expect.objectContaining({
+        active: true,
+        stage: 'itinerary',
+        message: 'Building itinerary',
+      })
+    );
+  });
+
+  it('keeps the plan tab disabled during active generation without prerequisites', () => {
+    const { result } = renderHook(() =>
+      useLandingDerived(
+        makeParams({
+          docGeneration: {
+            active: true,
+            stage: 'structure',
+            message: 'Extracting trip details',
+          },
+          isGenerating: true,
+          userRequestedGeneration: true,
+        })
+      )
+    );
+
+    expect(result.current.planTabEnabled).toBe(false);
   });
 
   it('unlocks strategy state once destination and both dates are present', () => {

@@ -60,6 +60,37 @@ interface UseLandingPlanStateArgs {
   chatPanelRef: RefObject<ChatPanelHandle | null>;
 }
 
+export function computeLayoutDataDensity({
+  hasDestination,
+  planViewState,
+  strategySections,
+  tiles,
+  hasDates,
+  generation,
+}: {
+  hasDestination: boolean;
+  planViewState: PlanViewState | null;
+  strategySections: StrategySection[] | undefined;
+  tiles: Record<string, Tile>;
+  hasDates: boolean;
+  generation: GenerationState | null;
+}): DataDensity {
+  if (generation?.active === true) {
+    return 'ghost';
+  }
+
+  if (!hasDestination) {
+    return 'empty';
+  }
+
+  return computeDataDensity(
+    planViewState ?? 'P0_MINIMAL',
+    strategySections,
+    tiles,
+    hasDates
+  );
+}
+
 export function useLandingPlanState({
   isDesktop,
   activeView,
@@ -178,14 +209,14 @@ export function useLandingPlanState({
     hasBranchesReady,
   });
 
-  const dataDensity: DataDensity = hasDestination
-    ? computeDataDensity(
-        planViewState ?? 'P0_MINIMAL',
-        planViewModel.strategy_sections,
-        tiles,
-        hasDates
-      )
-    : 'empty';
+  const dataDensity = computeLayoutDataDensity({
+    hasDestination,
+    planViewState,
+    strategySections: planViewModel.strategy_sections,
+    tiles,
+    hasDates,
+    generation,
+  });
   const showHeaderPills = hasDestination && dataDensity !== 'empty';
 
   const tripInputsEditor = useTripInputsEditor({

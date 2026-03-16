@@ -535,10 +535,9 @@ def check_llm_calls(backend_log: str, flow_num: int, report: FlowReport) -> int:
         ),
         # Conversationalist: streaming response generation
         (r"\[conversationalist\].*(?:S|s)treaming", "conversationalist"),
-        # Experience generator: parallel/single-category generation (not cache hits)
+        # Experience generator: actual LLM completions only (not orchestration/summary lines)
         (
-            r"\[EXPERIENCE\].*(?:Parallel generation|fill-day.*generated|Single category)"
-            r"|\[EXPERIENCE\].*(?:LLM|generat)(?!.*Cache HIT)",
+            r"\[EXPERIENCE\].*(?:Generated \d+ tiles in \d+ms|Batch tokens=)(?!.*Cache HIT)",
             "experience_generator",
         ),
         # Local expert LLM call (Phase B) — only the initiation line

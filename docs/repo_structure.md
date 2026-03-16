@@ -357,6 +357,7 @@ frontend/
 │   │   ├── ChatPanel.tsx
 │   │   ├── chatMessageMarkdown.tsx        # Markdown renderer extracted from ChatMessageRenderer
 │   │   ├── ChatPanel.types.ts              # ChatPanel shared types
+│   │   ├── chatPanelLayout.ts              # Layout logic helpers (shouldUseLandingChatLayout, shouldShowBootstrapHero)
 │   │   ├── ChatPanelContent.tsx            # ChatPanel content rendering (extracted from ChatPanel)
 │   │   ├── ChatStatusHeader.tsx        # Desktop status hero/mini bar above chat
 │   │   ├── ChatSkeleton.tsx

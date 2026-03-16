@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.planner.coordinator import (
+    _PENDING_ITINERARY_ENRICHMENT_TASK_KEY,
     _apply_activity_tile_enrichment_to_day_cards,
     _build_itinerary,
     _builder_conflicts_to_constraint_violations,
@@ -85,6 +86,19 @@ def _make_state(**overrides: Any) -> Dict[str, Any]:
     }
     state.update(overrides)
     return state
+
+
+async def _collect_step_events(step_result: Any) -> list[Dict[str, Any]]:
+    """Collect step events from either a static return value or async stream."""
+    if hasattr(step_result, "__aiter__") and hasattr(step_result, "__anext__"):
+        return [event async for event in step_result]
+    if step_result is None:
+        return []
+    if isinstance(step_result, dict):
+        return [step_result]
+    if isinstance(step_result, list):
+        return [event for event in step_result if isinstance(event, dict)]
+    return []
 
 
 # =============================================================================
@@ -1604,6 +1618,897 @@ class TestSearchTilesFlightAutoUpgrade:
 
 class TestExecuteTurn:
     @pytest.mark.asyncio
+    async def test_dispatch_specialists_step_streams_each_completed_specialist_in_requested_order(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.planner.coordinator as coordinator_module
+
+        classifier = _make_classifier(
+            intent="PLANNING",
+            change_type=ChangeType.INITIAL_PLAN,
+            destination="Bali",
+            start_date="2026-04-01",
+            end_date="2026-04-07",
+        )
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-07",
+            },
+            trip_settings={"activity_settings": {"categories": ["diving", "hiking"]}},
+        )
+
+        async def _fake_dispatch_specialists_parallel(*_args: Any, **_kwargs: Any):
+            yield (
+                "hiking",
+                {
+                    "activities": [],
+                    "constraints": [],
+                    "editorial": "Volcano ridge plan",
+                    "feasibility_status": "feasible",
+                },
+            )
+            await asyncio.sleep(0.02)
+            yield (
+                "diving",
+                {
+                    "activities": [],
+                    "constraints": [],
+                    "editorial": "Warm-water dive plan",
+                    "feasibility_status": "feasible",
+                },
+            )
+
+        monkeypatch.setattr(
+            coordinator_module,
+            "_dispatch_specialists_parallel",
+            _fake_dispatch_specialists_parallel,
+        )
+        monkeypatch.setattr(
+            coordinator_module,
+            "_llm_output_to_plan_dict",
+            lambda topic, *_args, **_kwargs: {
+                "topic": topic,
+                "day_plans": [],
+                "constraints": [],
+                "feasibility_status": "feasible",
+            },
+        )
+        monkeypatch.setattr(
+            coordinator_module,
+            "_plan_to_strategy_section",
+            lambda topic, *_args, **_kwargs: {
+                "id": f"section_{topic}",
+                "specialist_type": topic,
+                "title": f"{topic.title()} Bali",
+                "one_liner": f"{topic.title()} highlights",
+                "hero_image": f"https://images.test/{topic}.jpg",
+                "feasibility_status": "feasible",
+                "content_added": [{"title": f"{topic.title()} highlight"}],
+            },
+        )
+        monkeypatch.setattr(
+            coordinator_module,
+            "_refresh_preserved_specialist_section_metadata",
+            lambda *_args, **_kwargs: None,
+        )
+
+        step_result = await coordinator_module._execute_step(
+            ExecutionStep(
+                step_type=StepType.DISPATCH_SPECIALISTS,
+                params={"topics": ["diving", "hiking"]},
+            ),
+            state,
+            classifier,
+            "build my itinerary",
+            session_id="session-123",
+        )
+
+        assert hasattr(step_result, "__aiter__")
+
+        first_event = await asyncio.wait_for(anext(step_result), timeout=0.01)
+        assert first_event["data"]["kind"] == "specialist_preview"
+        first_preview = first_event["data"]["payload"]
+        assert first_preview["destination"] == "Bali"
+        assert first_preview["topics"] == ["diving", "hiking"]
+        assert first_preview["activities"] == [
+            {
+                "title": "Hiking highlight",
+                "day": None,
+                "specialist_type": "hiking",
+                "duration_hours": 3,
+                "description": None,
+                "image_url": None,
+                "coordinates": None,
+            }
+        ]
+        assert [section["specialist_type"] for section in first_preview["sections"]] == ["hiking"]
+
+        second_event = await asyncio.wait_for(anext(step_result), timeout=0.01)
+        assert second_event["data"]["kind"] == "strategy_sections"
+        assert [section["specialist_type"] for section in second_event["data"]["payload"]] == [
+            "hiking"
+        ]
+
+        third_event = await asyncio.wait_for(anext(step_result), timeout=0.05)
+        assert third_event["data"]["kind"] == "specialist_preview"
+        assert [
+            activity["specialist_type"] for activity in third_event["data"]["payload"]["activities"]
+        ] == [
+            "diving",
+            "hiking",
+        ]
+        assert [
+            section["specialist_type"] for section in third_event["data"]["payload"]["sections"]
+        ] == [
+            "diving",
+            "hiking",
+        ]
+
+        fourth_event = await asyncio.wait_for(anext(step_result), timeout=0.01)
+        assert fourth_event["data"]["kind"] == "strategy_sections"
+        assert [section["specialist_type"] for section in fourth_event["data"]["payload"]] == [
+            "diving",
+            "hiking",
+        ]
+
+        with pytest.raises(StopAsyncIteration):
+            await anext(step_result)
+
+        assert list(state["specialist_plans"]) == ["diving", "hiking"]
+        assert [section["specialist_type"] for section in state["strategy_sections"]] == [
+            "diving",
+            "hiking",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_dispatch_specialists_step_emits_empty_preview_when_all_dispatched_specialists_fail(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.planner.coordinator as coordinator_module
+
+        classifier = _make_classifier(
+            intent="PLANNING",
+            change_type=ChangeType.INITIAL_PLAN,
+            destination="Bali",
+            start_date="2026-04-01",
+            end_date="2026-04-07",
+        )
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-07",
+            },
+            trip_settings={"activity_settings": {"categories": ["diving", "hiking"]}},
+        )
+
+        async def _fake_dispatch_specialists_parallel(*_args: Any, **_kwargs: Any):
+            yield "diving", None
+            yield "hiking", None
+
+        monkeypatch.setattr(
+            coordinator_module,
+            "_dispatch_specialists_parallel",
+            _fake_dispatch_specialists_parallel,
+        )
+        monkeypatch.setattr(
+            coordinator_module,
+            "_refresh_preserved_specialist_section_metadata",
+            lambda *_args, **_kwargs: None,
+        )
+
+        step_result = await coordinator_module._execute_step(
+            ExecutionStep(
+                step_type=StepType.DISPATCH_SPECIALISTS,
+                params={"topics": ["diving", "hiking"]},
+            ),
+            state,
+            classifier,
+            "build my itinerary",
+            session_id="session-123",
+        )
+        events = await _collect_step_events(step_result)
+
+        assert [event["data"]["kind"] for event in events] == [
+            "specialist_preview",
+            "strategy_sections",
+        ]
+        preview_payload = events[0]["data"]["payload"]
+        assert preview_payload["topics"] == ["diving", "hiking"]
+        assert preview_payload["sections"] == []
+        assert events[1]["data"]["payload"] == []
+        assert state["specialist_plans"] == {}
+        assert state["strategy_sections"] == []
+
+    @pytest.mark.asyncio
+    async def test_execute_turn_streams_parallel_step_partials_and_completed_statuses_as_each_step_finishes(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.planner.coordinator as coordinator_module
+        import app.planner.nodes.router_extraction as router_module
+        import app.planner.services.feasibility_service as feasibility_module
+        import app.services.unsplash as unsplash_module
+
+        classifier = _make_classifier(
+            intent="PLANNING",
+            change_type=ChangeType.INITIAL_PLAN,
+            destination="Bali",
+        )
+        plan = ExecutionPlan(
+            reason="parallel partial streaming",
+            steps=[
+                ExecutionStep(
+                    step_type=StepType.DISPATCH_SPECIALISTS,
+                    params={"topics": ["diving"]},
+                ),
+                ExecutionStep(
+                    step_type=StepType.SEARCH_TILES,
+                    params={"tile_types": ["activities"]},
+                    parallel_with=StepType.DISPATCH_SPECIALISTS,
+                ),
+                ExecutionStep(step_type=StepType.GENERATE_RESPONSE, params={}),
+            ],
+            estimated_llm_calls=1,
+        )
+        state = _make_state(
+            trip_plan={"destination": "Bali"},
+            trip_settings={},
+            messages=[],
+        )
+
+        async def _fake_execute_step(
+            step: ExecutionStep,
+            _state_arg: Dict[str, Any],
+            _classifier: ClassifierOutput,
+            _user_message: str,
+            session_id: str = "",
+        ) -> Any:
+            assert session_id == "session-123"
+            if step.step_type == StepType.DISPATCH_SPECIALISTS:
+
+                async def _stream_specialist_events():
+                    await asyncio.sleep(0)
+                    yield {
+                        "type": "partial",
+                        "data": {
+                            "kind": "specialist_preview",
+                            "payload": {
+                                "destination": "Bali",
+                                "topics": ["diving"],
+                                "activities": [
+                                    {
+                                        "title": "Dive highlight",
+                                        "day": 1,
+                                        "specialist_type": "diving",
+                                        "duration_hours": 3,
+                                        "description": None,
+                                        "image_url": None,
+                                        "coordinates": None,
+                                    }
+                                ],
+                                "sections": [{"specialist_type": "diving"}],
+                            },
+                        },
+                    }
+                    await asyncio.sleep(0)
+                    yield {
+                        "type": "partial",
+                        "data": {
+                            "kind": "strategy_sections",
+                            "payload": [{"specialist_type": "diving", "content_added": []}],
+                        },
+                    }
+
+                return _stream_specialist_events()
+            if step.step_type == StepType.SEARCH_TILES:
+                await asyncio.sleep(0.01)
+                return {
+                    "type": "partial",
+                    "data": {
+                        "kind": "tiles",
+                        "payload": {
+                            "tile_1": {
+                                "id": "tile_1",
+                                "type": "activity",
+                                "title": "Dive",
+                            }
+                        },
+                    },
+                }
+            return None
+
+        async def _fake_generate_response_streaming(*args: Any, **kwargs: Any):
+            yield "done"
+
+        def _fake_build_envelope(
+            state_arg: Dict[str, Any],
+            user_message: str,
+            session_id: str,
+            assistant_message: str,
+        ) -> Dict[str, Any]:
+            return {
+                "document": {
+                    "day_cards": list(state_arg.get("day_cards", [])),
+                    "trip_inputs": dict(state_arg.get("trip_plan", {})),
+                },
+                "assistant_message": assistant_message,
+                "session_state": {"trip_plan": dict(state_arg.get("trip_plan", {}))},
+            }
+
+        monkeypatch.setattr(router_module, "classify_change", AsyncMock(return_value=classifier))
+        monkeypatch.setattr(coordinator_module, "plan_turn", lambda *_args, **_kwargs: plan)
+        monkeypatch.setattr(coordinator_module, "_execute_step", _fake_execute_step)
+        monkeypatch.setattr(
+            coordinator_module,
+            "_generate_response_streaming",
+            _fake_generate_response_streaming,
+        )
+        monkeypatch.setattr(coordinator_module, "_refresh_enrichment_states", AsyncMock())
+        monkeypatch.setattr(coordinator_module, "_build_envelope", _fake_build_envelope)
+        monkeypatch.setattr(
+            feasibility_module,
+            "batch_feasibility_precheck",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            unsplash_module,
+            "prefetch_destination_images",
+            AsyncMock(return_value=None),
+        )
+
+        events = [
+            event
+            async for event in execute_turn(
+                "build my itinerary",
+                state,
+                session_id="session-123",
+            )
+        ]
+
+        partial_kinds = [event["data"]["kind"] for event in events if event["type"] == "partial"]
+        preview_index = partial_kinds.index("specialist_preview")
+        strategy_index = partial_kinds.index("strategy_sections")
+        tiles_index = partial_kinds.index("tiles")
+        assert preview_index < tiles_index
+        assert strategy_index < tiles_index
+
+        completed_nodes = [
+            event["data"]["node"]
+            for event in events
+            if event["type"] == "node_status" and event["data"]["status"] == "completed"
+        ]
+        specialist_completed_index = completed_nodes.index("get_specialist_advice")
+        tiles_completed_index = completed_nodes.index("search_tiles")
+        assert specialist_completed_index < tiles_completed_index
+
+    @pytest.mark.asyncio
+    async def test_execute_turn_streams_sequential_async_generator_step_before_completed_status(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.planner.coordinator as coordinator_module
+        import app.planner.nodes.router_extraction as router_module
+        import app.planner.services.feasibility_service as feasibility_module
+        import app.services.unsplash as unsplash_module
+
+        classifier = _make_classifier(
+            intent="PLANNING",
+            change_type=ChangeType.INITIAL_PLAN,
+            destination="Bali",
+        )
+        plan = ExecutionPlan(
+            reason="sequential streamed step",
+            steps=[
+                ExecutionStep(
+                    step_type=StepType.DISPATCH_SPECIALISTS,
+                    params={"topics": ["diving"]},
+                ),
+                ExecutionStep(step_type=StepType.GENERATE_RESPONSE, params={}),
+            ],
+            estimated_llm_calls=1,
+        )
+        state = _make_state(
+            trip_plan={"destination": "Bali"},
+            trip_settings={},
+            messages=[],
+        )
+
+        async def _fake_execute_step(
+            step: ExecutionStep,
+            _state_arg: Dict[str, Any],
+            _classifier: ClassifierOutput,
+            _user_message: str,
+            session_id: str = "",
+        ) -> Any:
+            assert session_id == "session-123"
+            if step.step_type != StepType.DISPATCH_SPECIALISTS:
+                return None
+
+            async def _stream_specialist_events():
+                await asyncio.sleep(0)
+                yield {
+                    "type": "partial",
+                    "data": {
+                        "kind": "specialist_preview",
+                        "payload": {
+                            "destination": "Bali",
+                            "topics": ["diving"],
+                            "activities": [
+                                {
+                                    "title": "Dive highlight",
+                                    "day": 1,
+                                    "specialist_type": "diving",
+                                    "duration_hours": 3,
+                                    "description": None,
+                                    "image_url": None,
+                                    "coordinates": None,
+                                }
+                            ],
+                            "sections": [{"specialist_type": "diving"}],
+                        },
+                    },
+                }
+                await asyncio.sleep(0)
+                yield {
+                    "type": "partial",
+                    "data": {
+                        "kind": "strategy_sections",
+                        "payload": [{"specialist_type": "diving", "content_added": []}],
+                    },
+                }
+
+            return _stream_specialist_events()
+
+        async def _fake_generate_response_streaming(*args: Any, **kwargs: Any):
+            yield "done"
+
+        def _fake_build_envelope(
+            state_arg: Dict[str, Any],
+            user_message: str,
+            session_id: str,
+            assistant_message: str,
+        ) -> Dict[str, Any]:
+            return {
+                "document": {
+                    "day_cards": list(state_arg.get("day_cards", [])),
+                    "trip_inputs": dict(state_arg.get("trip_plan", {})),
+                },
+                "assistant_message": assistant_message,
+                "session_state": {"trip_plan": dict(state_arg.get("trip_plan", {}))},
+            }
+
+        monkeypatch.setattr(router_module, "classify_change", AsyncMock(return_value=classifier))
+        monkeypatch.setattr(coordinator_module, "plan_turn", lambda *_args, **_kwargs: plan)
+        monkeypatch.setattr(coordinator_module, "_execute_step", _fake_execute_step)
+        monkeypatch.setattr(
+            coordinator_module,
+            "_generate_response_streaming",
+            _fake_generate_response_streaming,
+        )
+        monkeypatch.setattr(coordinator_module, "_refresh_enrichment_states", AsyncMock())
+        monkeypatch.setattr(coordinator_module, "_build_envelope", _fake_build_envelope)
+        monkeypatch.setattr(
+            feasibility_module,
+            "batch_feasibility_precheck",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            unsplash_module,
+            "prefetch_destination_images",
+            AsyncMock(return_value=None),
+        )
+
+        events = [
+            event
+            async for event in execute_turn(
+                "build my itinerary",
+                state,
+                session_id="session-123",
+            )
+        ]
+
+        partial_kinds = [event["data"]["kind"] for event in events if event["type"] == "partial"]
+        assert partial_kinds == ["trip_inputs", "specialist_preview", "strategy_sections"]
+
+        specialist_started_index = next(
+            idx
+            for idx, event in enumerate(events)
+            if event["type"] == "node_status"
+            and event["data"]["node"] == "get_specialist_advice"
+            and event["data"]["status"] == "started"
+        )
+        preview_index = next(
+            idx
+            for idx, event in enumerate(events)
+            if event["type"] == "partial" and event["data"]["kind"] == "specialist_preview"
+        )
+        strategy_index = next(
+            idx
+            for idx, event in enumerate(events)
+            if event["type"] == "partial" and event["data"]["kind"] == "strategy_sections"
+        )
+        specialist_completed_index = next(
+            idx
+            for idx, event in enumerate(events)
+            if event["type"] == "node_status"
+            and event["data"]["node"] == "get_specialist_advice"
+            and event["data"]["status"] == "completed"
+        )
+        response_started_index = next(
+            idx
+            for idx, event in enumerate(events)
+            if event["type"] == "node_status"
+            and event["data"]["node"] == "response"
+            and event["data"]["status"] == "started"
+        )
+        assert (
+            specialist_started_index
+            < preview_index
+            < strategy_index
+            < specialist_completed_index
+            < response_started_index
+        )
+        assert events[-1]["type"] == "complete"
+
+    @pytest.mark.asyncio
+    async def test_execute_turn_early_close_cancels_parallel_async_generator_tasks(
+        self, monkeypatch: Any
+    ) -> None:
+        import importlib
+
+        import app.db as db_module
+        import app.planner.coordinator as coordinator_module
+        import app.planner.nodes.router_extraction as router_module
+        import app.planner.services.feasibility_service as feasibility_module
+        import app.services.unsplash as unsplash_module
+
+        classifier = _make_classifier(
+            intent="PLANNING",
+            change_type=ChangeType.INITIAL_PLAN,
+            destination="Bali",
+            start_date="2026-04-01",
+            end_date="2026-04-07",
+        )
+        plan = ExecutionPlan(
+            reason="parallel cleanup",
+            steps=[
+                ExecutionStep(
+                    step_type=StepType.DISPATCH_SPECIALISTS,
+                    params={"topics": ["diving", "hiking"]},
+                ),
+                ExecutionStep(
+                    step_type=StepType.SEARCH_TILES,
+                    params={"tile_types": ["activities"]},
+                    parallel_with=StepType.DISPATCH_SPECIALISTS,
+                ),
+                ExecutionStep(step_type=StepType.GENERATE_RESPONSE, params={}),
+            ],
+            estimated_llm_calls=1,
+        )
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-07",
+            },
+            trip_settings={"activity_settings": {"categories": ["diving", "hiking"]}},
+            messages=[],
+        )
+        hiking_started = asyncio.Event()
+        hiking_release = asyncio.Event()
+        hiking_cancelled = asyncio.Event()
+        search_started = asyncio.Event()
+        search_release = asyncio.Event()
+        search_cancelled = asyncio.Event()
+        unsplash_started = asyncio.Event()
+        unsplash_release = asyncio.Event()
+        unsplash_cancelled = asyncio.Event()
+        turn_stream = None
+
+        class _FakeSpecialistOutput:
+            def __init__(self, payload: Dict[str, Any]) -> None:
+                self._payload = payload
+
+            def model_dump(self) -> Dict[str, Any]:
+                return dict(self._payload)
+
+        class _DummyAsyncSession:
+            async def __aenter__(self) -> object:
+                return object()
+
+            async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+                return None
+
+        async def _fake_dispatch_specialist_with_brief(*, topic: str, **_kwargs: Any) -> Any:
+            if topic == "diving":
+                await asyncio.sleep(0)
+                return _FakeSpecialistOutput(
+                    {
+                        "activities": [],
+                        "constraints": [],
+                        "editorial": "Warm-water dive plan",
+                        "feasibility_status": "feasible",
+                    }
+                )
+
+            hiking_started.set()
+            try:
+                await hiking_release.wait()
+            except asyncio.CancelledError:
+                hiking_cancelled.set()
+                raise
+
+            return _FakeSpecialistOutput(
+                {
+                    "activities": [],
+                    "constraints": [],
+                    "editorial": "Volcano ridge plan",
+                    "feasibility_status": "feasible",
+                }
+            )
+
+        async def _fake_search_tiles(*_args: Any, **_kwargs: Any) -> Dict[str, Any]:
+            search_started.set()
+            try:
+                await search_release.wait()
+            except asyncio.CancelledError:
+                search_cancelled.set()
+                raise
+
+            return {"activities": []}
+
+        async def _fake_generate_response_streaming(*args: Any, **kwargs: Any):
+            yield "done"
+
+        async def _fake_prefetch_destination_images(_destination: str) -> None:
+            unsplash_started.set()
+            try:
+                await unsplash_release.wait()
+            except asyncio.CancelledError:
+                unsplash_cancelled.set()
+                raise
+
+        vertical_specialist_module = importlib.import_module(
+            "app.planner.nodes.vertical_specialist"
+        )
+
+        monkeypatch.setattr(router_module, "classify_change", AsyncMock(return_value=classifier))
+        monkeypatch.setattr(coordinator_module, "plan_turn", lambda *_args, **_kwargs: plan)
+        monkeypatch.setattr(db_module, "_get_async_session_factory", lambda: _DummyAsyncSession)
+        monkeypatch.setattr(
+            vertical_specialist_module,
+            "dispatch_specialist_with_brief",
+            _fake_dispatch_specialist_with_brief,
+        )
+        monkeypatch.setattr(coordinator_module, "_search_tiles", _fake_search_tiles)
+        monkeypatch.setattr(
+            coordinator_module,
+            "_llm_output_to_plan_dict",
+            lambda topic, *_args, **_kwargs: {
+                "topic": topic,
+                "day_plans": [],
+                "constraints": [],
+                "feasibility_status": "feasible",
+            },
+        )
+        monkeypatch.setattr(
+            coordinator_module,
+            "_plan_to_strategy_section",
+            lambda topic, *_args, **_kwargs: {
+                "id": f"section_{topic}",
+                "specialist_type": topic,
+                "title": f"{topic.title()} Bali",
+                "one_liner": f"{topic.title()} highlights",
+                "hero_image": f"https://images.test/{topic}.jpg",
+                "feasibility_status": "feasible",
+                "content_added": [{"title": f"{topic.title()} highlight"}],
+            },
+        )
+        monkeypatch.setattr(
+            coordinator_module,
+            "_refresh_preserved_specialist_section_metadata",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            coordinator_module,
+            "_generate_response_streaming",
+            _fake_generate_response_streaming,
+        )
+        monkeypatch.setattr(coordinator_module, "_refresh_enrichment_states", AsyncMock())
+        monkeypatch.setattr(
+            feasibility_module,
+            "batch_feasibility_precheck",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            unsplash_module,
+            "prefetch_destination_images",
+            _fake_prefetch_destination_images,
+        )
+
+        try:
+            turn_stream = execute_turn(
+                "build my itinerary",
+                state,
+                session_id="session-123",
+            )
+
+            preview_event = None
+            while True:
+                event = await asyncio.wait_for(anext(turn_stream), timeout=0.1)
+                if event["type"] == "partial" and event["data"]["kind"] == "specialist_preview":
+                    preview_event = event
+                    break
+
+            await asyncio.wait_for(hiking_started.wait(), timeout=0.1)
+            await asyncio.wait_for(search_started.wait(), timeout=0.1)
+            await asyncio.wait_for(unsplash_started.wait(), timeout=0.1)
+
+            await turn_stream.aclose()
+
+            await asyncio.wait_for(hiking_cancelled.wait(), timeout=0.1)
+            await asyncio.wait_for(search_cancelled.wait(), timeout=0.1)
+            await asyncio.wait_for(unsplash_cancelled.wait(), timeout=0.1)
+        finally:
+            hiking_release.set()
+            search_release.set()
+            unsplash_release.set()
+            if turn_stream is not None:
+                await turn_stream.aclose()
+            await asyncio.sleep(0)
+
+        assert preview_event is not None
+        assert preview_event["data"]["payload"]["topics"] == ["diving", "hiking"]
+        assert [
+            section["specialist_type"] for section in preview_event["data"]["payload"]["sections"]
+        ] == ["diving"]
+
+    @pytest.mark.asyncio
+    async def test_execute_turn_records_parallel_failures_without_blocking_successful_partials(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.planner.coordinator as coordinator_module
+        import app.planner.nodes.router_extraction as router_module
+        import app.planner.services.feasibility_service as feasibility_module
+        import app.services.unsplash as unsplash_module
+
+        classifier = _make_classifier(
+            intent="PLANNING",
+            change_type=ChangeType.INITIAL_PLAN,
+            destination="Bali",
+        )
+        plan = ExecutionPlan(
+            reason="parallel partial failure",
+            steps=[
+                ExecutionStep(
+                    step_type=StepType.DISPATCH_SPECIALISTS,
+                    params={"topics": ["diving"]},
+                ),
+                ExecutionStep(
+                    step_type=StepType.SEARCH_TILES,
+                    params={"tile_types": ["activities"]},
+                    parallel_with=StepType.DISPATCH_SPECIALISTS,
+                ),
+                ExecutionStep(step_type=StepType.GENERATE_RESPONSE, params={}),
+            ],
+            estimated_llm_calls=1,
+        )
+        state = _make_state(
+            trip_plan={"destination": "Bali"},
+            trip_settings={},
+            messages=[],
+        )
+
+        async def _fake_execute_step(
+            step: ExecutionStep,
+            _state_arg: Dict[str, Any],
+            _classifier: ClassifierOutput,
+            _user_message: str,
+            session_id: str = "",
+        ) -> Any:
+            assert session_id == "session-123"
+            if step.step_type == StepType.DISPATCH_SPECIALISTS:
+                await asyncio.sleep(0)
+                return [
+                    {
+                        "type": "partial",
+                        "data": {
+                            "kind": "specialist_preview",
+                            "payload": {
+                                "destination": "Bali",
+                                "topics": ["diving"],
+                                "activities": [
+                                    {
+                                        "title": "Dive highlight",
+                                        "day": 1,
+                                        "specialist_type": "diving",
+                                        "duration_hours": 3,
+                                        "description": None,
+                                        "image_url": None,
+                                        "coordinates": None,
+                                    }
+                                ],
+                                "sections": [{"specialist_type": "diving"}],
+                            },
+                        },
+                    },
+                    {
+                        "type": "partial",
+                        "data": {
+                            "kind": "strategy_sections",
+                            "payload": [{"specialist_type": "diving", "content_added": []}],
+                        },
+                    },
+                ]
+            if step.step_type == StepType.SEARCH_TILES:
+                await asyncio.sleep(0.01)
+                raise RuntimeError("tile provider timeout")
+            return None
+
+        async def _fake_generate_response_streaming(*args: Any, **kwargs: Any):
+            yield "done"
+
+        def _fake_build_envelope(
+            state_arg: Dict[str, Any],
+            user_message: str,
+            session_id: str,
+            assistant_message: str,
+        ) -> Dict[str, Any]:
+            return {
+                "document": {
+                    "day_cards": list(state_arg.get("day_cards", [])),
+                    "trip_inputs": dict(state_arg.get("trip_plan", {})),
+                },
+                "assistant_message": assistant_message,
+                "session_state": {"trip_plan": dict(state_arg.get("trip_plan", {}))},
+            }
+
+        monkeypatch.setattr(router_module, "classify_change", AsyncMock(return_value=classifier))
+        monkeypatch.setattr(coordinator_module, "plan_turn", lambda *_args, **_kwargs: plan)
+        monkeypatch.setattr(coordinator_module, "_execute_step", _fake_execute_step)
+        monkeypatch.setattr(
+            coordinator_module,
+            "_generate_response_streaming",
+            _fake_generate_response_streaming,
+        )
+        monkeypatch.setattr(coordinator_module, "_refresh_enrichment_states", AsyncMock())
+        monkeypatch.setattr(coordinator_module, "_build_envelope", _fake_build_envelope)
+        monkeypatch.setattr(
+            feasibility_module,
+            "batch_feasibility_precheck",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            unsplash_module,
+            "prefetch_destination_images",
+            AsyncMock(return_value=None),
+        )
+
+        events = [
+            event
+            async for event in execute_turn(
+                "build my itinerary",
+                state,
+                session_id="session-123",
+            )
+        ]
+
+        partial_kinds = [event["data"]["kind"] for event in events if event["type"] == "partial"]
+        assert partial_kinds == ["trip_inputs", "specialist_preview", "strategy_sections"]
+        assert state["turn_meta"]["partial_failures"] == ["search_tiles"]
+
+        completed_nodes = [
+            event["data"]["node"]
+            for event in events
+            if event["type"] == "node_status" and event["data"]["status"] == "completed"
+        ]
+        specialist_completed_index = completed_nodes.index("get_specialist_advice")
+        tiles_completed_index = completed_nodes.index("search_tiles")
+        assert specialist_completed_index < tiles_completed_index
+        assert events[-1]["type"] == "complete"
+
+    @pytest.mark.asyncio
     async def test_build_itinerary_step_emits_day_cards_partial_before_tile_partial(
         self, monkeypatch: Any
     ) -> None:
@@ -1622,6 +2527,19 @@ class TestExecuteTurn:
         ) -> list[Dict[str, Any]]:
             assert session_id == "session-123"
             state_arg["day_cards"] = list(day_cards)
+            state_arg["turn_meta"] = {
+                "tiles_replaced": True,
+                "builder_result": {
+                    "success": True,
+                    "activities_placed": 1,
+                    "activities_dropped": 0,
+                    "conflicts": [],
+                    "resolutions": [],
+                    "warnings": ["Low supply for day 1"],
+                    "overview": {"duration_label": "1 day"},
+                    "assumptions": {"pace": "balanced"},
+                },
+            }
             state_arg["tiles"] = {
                 "activities": [
                     {"id": "existing_activity", "type": "activity"},
@@ -1642,7 +2560,26 @@ class TestExecuteTurn:
 
         assert isinstance(events, list)
         assert events[0]["data"]["kind"] == "day_cards"
-        assert events[0]["data"]["payload"] == day_cards
+        assert events[0]["data"]["payload"] == {
+            "day_cards": day_cards,
+            "tiles": {
+                "existing_activity": {
+                    "id": "existing_activity",
+                    "type": "activity",
+                    "category": "activity",
+                },
+                "new_specialist_tile": {
+                    "id": "new_specialist_tile",
+                    "type": "activity",
+                    "category": "activity",
+                },
+            },
+            "strategy_sections": [],
+            "plan_view_state": "S3_ITINERARY_READY",
+            "itinerary_overview": {"duration_label": "1 day"},
+            "itinerary_assumptions": {"pace": "balanced"},
+            "warnings": ["Low supply for day 1"],
+        }
         assert events[1]["data"]["kind"] == "tiles"
         assert events[1]["data"]["tiles_replaced"] is True
 
@@ -1678,7 +2615,21 @@ class TestExecuteTurn:
 
         assert events == {
             "type": "partial",
-            "data": {"kind": "day_cards", "payload": []},
+            "data": {
+                "kind": "day_cards",
+                "payload": {
+                    "day_cards": [],
+                    "tiles": {
+                        "existing_activity": {
+                            "id": "existing_activity",
+                            "type": "activity",
+                            "category": "activity",
+                        }
+                    },
+                    "strategy_sections": [],
+                    "plan_view_state": "S3_BLOCKED",
+                },
+            },
         }
 
     @pytest.mark.asyncio
@@ -1746,7 +2697,15 @@ class TestExecuteTurn:
             state_arg["_pending_itinerary_enrichment_task"] = asyncio.create_task(_pending())
             return {
                 "type": "partial",
-                "data": {"kind": "day_cards", "payload": state_arg["day_cards"]},
+                "data": {
+                    "kind": "day_cards",
+                    "payload": {
+                        "day_cards": state_arg["day_cards"],
+                        "tiles": {"tile_1": {"id": "tile_1", "title": "Dive"}},
+                        "strategy_sections": [],
+                        "plan_view_state": "S3_ITINERARY_READY",
+                    },
+                },
             }
 
         async def _fake_generate_response_streaming(*args: Any, **kwargs: Any):
@@ -1801,6 +2760,45 @@ class TestExecuteTurn:
 
         assert order.index("enrichment_started") < order.index("response_finished")
         assert order.index("enrichment_finished") < order.index("envelope")
+        response_completed_index = next(
+            idx
+            for idx, event in enumerate(events)
+            if event["type"] == "node_status"
+            and event["data"]["node"] == "response"
+            and event["data"]["status"] == "completed"
+        )
+        complete_index = next(
+            idx for idx, event in enumerate(events) if event["type"] == "complete"
+        )
+        partial_events = [
+            event
+            for event in events
+            if event["type"] == "partial" and event["data"]["kind"] != "trip_inputs"
+        ]
+        assert [event["data"]["kind"] for event in partial_events] == [
+            "day_cards",
+            "tile_enrichment",
+            "day_cards",
+            "tiles",
+        ]
+        tile_enrichment_event = partial_events[1]
+        assert (
+            tile_enrichment_event["data"]["payload"]["day_cards"][0]["blocks"][0]["deeplink"]
+            == "https://viator.test"
+        )
+        assert tile_enrichment_event["data"]["payload"]["tiles"]["tile_1"]["provider"] == "viator"
+        assert tile_enrichment_event["data"]["payload"]["day_cards_changed"] is True
+        assert tile_enrichment_event["data"]["payload"]["tiles_changed"] is True
+        assert tile_enrichment_event["data"]["payload"]["plan_view_state"] == "S3_ITINERARY_READY"
+
+        enriched_day_cards_event = partial_events[2]
+        assert (
+            enriched_day_cards_event["data"]["payload"]["day_cards"][0]["blocks"][0]["deeplink"]
+            == "https://viator.test"
+        )
+        assert partial_events[3]["data"]["payload"]["tile_1"]["provider"] == "viator"
+        tile_enrichment_index = events.index(tile_enrichment_event)
+        assert response_completed_index < tile_enrichment_index < complete_index
         assert events[-1]["type"] == "complete"
 
     @pytest.mark.asyncio
@@ -1892,6 +2890,236 @@ class TestExecuteTurn:
         assert state["day_cards"] == day_cards
         assert events[-1]["type"] == "complete"
         assert events[-1]["data"]["document"]["day_cards"] == day_cards
+
+    @pytest.mark.asyncio
+    async def test_cancel_event_stops_before_response_and_complete(self, monkeypatch: Any) -> None:
+        import app.planner.coordinator as coordinator_module
+        import app.planner.nodes.router_extraction as router_module
+        import app.planner.services.feasibility_service as feasibility_module
+        import app.services.unsplash as unsplash_module
+
+        classifier = _make_classifier(
+            intent="PLANNING",
+            change_type=ChangeType.INITIAL_PLAN,
+            destination="Bali",
+        )
+        plan = ExecutionPlan(
+            reason="cancel after step execution",
+            steps=[
+                ExecutionStep(step_type=StepType.BUILD_ITINERARY, params={}),
+                ExecutionStep(step_type=StepType.GENERATE_RESPONSE, params={}),
+            ],
+            estimated_llm_calls=1,
+        )
+        state = _make_state(
+            trip_plan={"destination": "Bali"},
+            trip_settings={},
+            messages=[],
+        )
+        cancel_event = asyncio.Event()
+        enrichment_started = asyncio.Event()
+        enrichment_cancelled = asyncio.Event()
+
+        async def _fake_execute_step(
+            step: ExecutionStep,
+            state_arg: Dict[str, Any],
+            _classifier: ClassifierOutput,
+            _user_message: str,
+            session_id: str = "",
+        ) -> Any:
+            assert session_id == "session-123"
+            assert step.step_type == StepType.BUILD_ITINERARY
+            state_arg["day_cards"] = [{"day_number": 1, "label": "Arrival", "blocks": []}]
+
+            async def _pending_enrichment() -> None:
+                enrichment_started.set()
+                try:
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    enrichment_cancelled.set()
+                    raise
+
+            state_arg[_PENDING_ITINERARY_ENRICHMENT_TASK_KEY] = asyncio.create_task(
+                _pending_enrichment()
+            )
+            cancel_event.set()
+            return {
+                "type": "partial",
+                "data": {
+                    "kind": "day_cards",
+                    "payload": {
+                        "day_cards": state_arg["day_cards"],
+                        "tiles": {},
+                        "strategy_sections": [],
+                        "plan_view_state": "S3_ITINERARY_READY",
+                    },
+                },
+            }
+
+        generate_response_streaming = AsyncMock()
+        refresh_enrichment_states = AsyncMock()
+        build_envelope = AsyncMock()
+
+        monkeypatch.setattr(router_module, "classify_change", AsyncMock(return_value=classifier))
+        monkeypatch.setattr(coordinator_module, "plan_turn", lambda *_args, **_kwargs: plan)
+        monkeypatch.setattr(coordinator_module, "_execute_step", _fake_execute_step)
+        monkeypatch.setattr(
+            coordinator_module,
+            "_generate_response_streaming",
+            generate_response_streaming,
+        )
+        monkeypatch.setattr(
+            coordinator_module,
+            "_refresh_enrichment_states",
+            refresh_enrichment_states,
+        )
+        monkeypatch.setattr(coordinator_module, "_build_envelope", build_envelope)
+        monkeypatch.setattr(
+            feasibility_module,
+            "batch_feasibility_precheck",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            unsplash_module,
+            "prefetch_destination_images",
+            AsyncMock(return_value=None),
+        )
+
+        events = [
+            event
+            async for event in execute_turn(
+                "build my itinerary",
+                state,
+                session_id="session-123",
+                cancel_event=cancel_event,
+            )
+        ]
+
+        await asyncio.wait_for(enrichment_started.wait(), timeout=0.1)
+        await asyncio.wait_for(enrichment_cancelled.wait(), timeout=0.1)
+
+        partial_events = [event for event in events if event["type"] == "partial"]
+        assert [event["data"]["kind"] for event in partial_events] == ["trip_inputs", "day_cards"]
+        assert not any(event["type"] == "complete" for event in events)
+        assert not any(
+            event["type"] == "node_status" and event["data"]["node"] == "response"
+            for event in events
+        )
+        assert _PENDING_ITINERARY_ENRICHMENT_TASK_KEY not in state
+        generate_response_streaming.assert_not_called()
+        refresh_enrichment_states.assert_not_awaited()
+        build_envelope.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_execute_turn_aclose_cancels_pending_itinerary_enrichment(
+        self, monkeypatch: Any
+    ) -> None:
+        import app.planner.coordinator as coordinator_module
+        import app.planner.nodes.router_extraction as router_module
+        import app.planner.services.feasibility_service as feasibility_module
+        import app.services.unsplash as unsplash_module
+
+        classifier = _make_classifier(
+            intent="PLANNING",
+            change_type=ChangeType.INITIAL_PLAN,
+            destination="Bali",
+        )
+        plan = ExecutionPlan(
+            reason="cancel generator after builder partial",
+            steps=[
+                ExecutionStep(step_type=StepType.BUILD_ITINERARY, params={}),
+                ExecutionStep(step_type=StepType.GENERATE_RESPONSE, params={}),
+            ],
+            estimated_llm_calls=1,
+        )
+        state = _make_state(
+            trip_plan={"destination": "Bali"},
+            trip_settings={},
+            messages=[],
+        )
+        enrichment_started = asyncio.Event()
+        enrichment_cancelled = asyncio.Event()
+
+        async def _fake_execute_step(
+            step: ExecutionStep,
+            state_arg: Dict[str, Any],
+            _classifier: ClassifierOutput,
+            _user_message: str,
+            session_id: str = "",
+        ) -> Any:
+            assert session_id == "session-123"
+            assert step.step_type == StepType.BUILD_ITINERARY
+            state_arg["day_cards"] = [{"day_number": 1, "label": "Arrival", "blocks": []}]
+
+            async def _pending_enrichment() -> None:
+                enrichment_started.set()
+                try:
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    enrichment_cancelled.set()
+                    raise
+
+            state_arg[_PENDING_ITINERARY_ENRICHMENT_TASK_KEY] = asyncio.create_task(
+                _pending_enrichment()
+            )
+            return {
+                "type": "partial",
+                "data": {
+                    "kind": "day_cards",
+                    "payload": {
+                        "day_cards": state_arg["day_cards"],
+                        "tiles": {},
+                        "strategy_sections": [],
+                        "plan_view_state": "S3_ITINERARY_READY",
+                    },
+                },
+            }
+
+        generate_response_streaming = AsyncMock()
+
+        monkeypatch.setattr(router_module, "classify_change", AsyncMock(return_value=classifier))
+        monkeypatch.setattr(coordinator_module, "plan_turn", lambda *_args, **_kwargs: plan)
+        monkeypatch.setattr(coordinator_module, "_execute_step", _fake_execute_step)
+        monkeypatch.setattr(
+            coordinator_module,
+            "_generate_response_streaming",
+            generate_response_streaming,
+        )
+        monkeypatch.setattr(coordinator_module, "_refresh_enrichment_states", AsyncMock())
+        monkeypatch.setattr(coordinator_module, "_build_envelope", AsyncMock())
+        monkeypatch.setattr(
+            feasibility_module,
+            "batch_feasibility_precheck",
+            AsyncMock(return_value={}),
+        )
+        monkeypatch.setattr(
+            unsplash_module,
+            "prefetch_destination_images",
+            AsyncMock(return_value=None),
+        )
+
+        turn = execute_turn(
+            "build my itinerary",
+            state,
+            session_id="session-123",
+        )
+
+        seen_day_cards = False
+        try:
+            while True:
+                event = await turn.__anext__()
+                if event["type"] == "partial" and event["data"]["kind"] == "day_cards":
+                    seen_day_cards = True
+                    break
+        finally:
+            await turn.aclose()
+
+        await asyncio.wait_for(enrichment_started.wait(), timeout=0.1)
+        await asyncio.wait_for(enrichment_cancelled.wait(), timeout=0.1)
+
+        assert seen_day_cards is True
+        assert _PENDING_ITINERARY_ENRICHMENT_TASK_KEY not in state
+        generate_response_streaming.assert_not_called()
 
 
 class TestDeferredActivityTileRehydration:
@@ -2159,18 +3387,34 @@ class TestDeferredActivityTileRehydration:
             messages=[],
         )
         cancel_calls: list[Dict[str, Any]] = []
+        unsplash_started = asyncio.Event()
+        unsplash_release = asyncio.Event()
+        unsplash_cancelled = asyncio.Event()
 
         async def _broken_generate(*_args: Any, **_kwargs: Any):
+            await asyncio.sleep(0)
             raise RuntimeError("boom")
             yield "unreachable"
+
+        async def _fake_prefetch_destination_images(_destination: str) -> None:
+            unsplash_started.set()
+            try:
+                await unsplash_release.wait()
+            except asyncio.CancelledError:
+                unsplash_cancelled.set()
+                raise
 
         monkeypatch.setattr(router_module, "classify_change", AsyncMock(return_value=classifier))
         monkeypatch.setattr(coordinator_module, "plan_turn", lambda *_args, **_kwargs: plan)
         monkeypatch.setattr(coordinator_module, "_generate_response_streaming", _broken_generate)
+
+        async def _fake_cleanup_pending_itinerary_enrichment(state_arg: Dict[str, Any]) -> None:
+            cancel_calls.append(dict(state_arg))
+
         monkeypatch.setattr(
             coordinator_module,
-            "_cancel_pending_itinerary_enrichment",
-            lambda state_arg: cancel_calls.append(dict(state_arg)),
+            "_cleanup_pending_itinerary_enrichment",
+            _fake_cleanup_pending_itinerary_enrichment,
         )
         monkeypatch.setattr(
             feasibility_module,
@@ -2180,17 +3424,22 @@ class TestDeferredActivityTileRehydration:
         monkeypatch.setattr(
             unsplash_module,
             "prefetch_destination_images",
-            AsyncMock(return_value=None),
+            _fake_prefetch_destination_images,
         )
 
-        events = [
-            event
-            async for event in execute_turn(
-                "build my itinerary",
-                state,
-                session_id="session-123",
-            )
-        ]
+        try:
+            events = [
+                event
+                async for event in execute_turn(
+                    "build my itinerary",
+                    state,
+                    session_id="session-123",
+                )
+            ]
+            await asyncio.wait_for(unsplash_started.wait(), timeout=0.1)
+            await asyncio.wait_for(unsplash_cancelled.wait(), timeout=0.1)
+        finally:
+            unsplash_release.set()
 
         assert events[-1]["type"] == "error"
         assert len(cancel_calls) >= 1

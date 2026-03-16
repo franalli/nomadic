@@ -107,6 +107,9 @@ beforeEach(() => {
     document: null,
     updatedBy: null,
     updatedAt: null,
+    generation: null,
+    currentRunId: null,
+    abortController: null,
     isCommitting: false,
     error: null,
     llmUpdatedFields: new Set(),
@@ -176,6 +179,34 @@ describe('fetchDocument single-flight', () => {
     expect(mockApiFetch).toHaveBeenCalledTimes(1);
     expect(d1).toEqual(d2);
     expect(d1?.trip_inputs.destination).toBe('Rome');
+  });
+});
+
+describe('generation lifecycle', () => {
+  it('clears stale generation state when completeGeneration runs', () => {
+    useDocumentStore.setState({
+      generation: { active: true, stage: 'structure', message: 'Searching' },
+      currentRunId: 'run-1',
+    });
+
+    useDocumentStore.getState().completeGeneration();
+
+    expect(useDocumentStore.getState().currentRunId).toBeNull();
+    expect(useDocumentStore.getState().generation).toBeNull();
+  });
+
+  it('clears stale generation state when abortGeneration runs', () => {
+    useDocumentStore.setState({
+      generation: { active: true, stage: 'itinerary', message: 'Building' },
+      currentRunId: 'run-2',
+      abortController: new AbortController(),
+    });
+
+    useDocumentStore.getState().abortGeneration();
+
+    expect(useDocumentStore.getState().currentRunId).toBeNull();
+    expect(useDocumentStore.getState().abortController).toBeNull();
+    expect(useDocumentStore.getState().generation).toBeNull();
   });
 });
 
@@ -275,6 +306,27 @@ describe('mergeEnvelope', () => {
     const dayCards = useDocumentStore.getState().document!.day_cards!;
     expect(dayCards).toHaveLength(1);
     expect(dayCards[0].day_number).toBe(3);
+  });
+
+  it('bootstraps a minimal document when a partial envelope arrives before any document exists', () => {
+    useDocumentStore.setState({ document: null });
+
+    useDocumentStore.getState().mergeEnvelope({
+      trip_inputs: {
+        destination: 'Bali',
+        start_date: '2026-04-01',
+        end_date: '2026-04-07',
+        missing_fields: [],
+      },
+      strategy_sections: [makeSection('diving', { specialist_type: 'diving' })],
+      day_cards: [makeDayCard(1)],
+    });
+
+    const doc = useDocumentStore.getState().document;
+    expect(doc).not.toBeNull();
+    expect(doc!.trip_inputs.destination).toBe('Bali');
+    expect(doc!.strategy_sections).toHaveLength(1);
+    expect(doc!.day_cards).toHaveLength(1);
   });
 
   it('produces no document content changes from an empty envelope', () => {

@@ -14,10 +14,15 @@
 import { useCallback, useEffect, useRef } from 'react';
 
 import { isBootstrap } from '@/components/plan/planStateHelpers';
+import { useToast } from '@/components/ui/toast';
 import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { useMapSync } from '@/hooks/useMapSync';
 import {
+  type DayCardsPartialPayload,
+  type SpecialistPreviewActivity,
+  type SpecialistPreviewPayload,
+  type SpecialistPreviewSection,
   type SSEFeasibilityWarningEvent,
   type SSENodeStatusEvent,
   type SSEPartialEvent,
@@ -28,9 +33,9 @@ import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig'
 import { useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
 import { useMobileNavStore } from '@/state/mobileNavStore';
-import type { GraphPlanResponse } from '@/types/document';
+import type { GraphPlanResponse, PlanDocumentData } from '@/types/document';
 import type { TriggerContext } from '@/types/loader';
-import type { DayCard } from '@/types/plan-envelope';
+import type { DayCard, StrategySection } from '@/types/plan-envelope';
 
 // Re-exported helpers kept colocated with their consumer
 const READY_MESSAGE_ID_PREFIX = 'ready_';
@@ -107,6 +112,219 @@ function findFirstChangedDay(
   }
 
   return null;
+}
+
+function normalizePreviewText(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function uniqueNonEmptyStrings(values: Array<string | null | undefined> | undefined): string[] {
+  if (!values?.length) return [];
+
+  return Array.from(
+    new Set(
+      values
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+}
+
+function formatPreviewTitle(value: string | undefined): string {
+  if (!value) return 'Specialist Preview';
+
+  return value
+    .split('_')
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ');
+}
+
+function previewToStrategySection(
+  preview: SpecialistPreviewSection,
+  fallbackTopic?: string
+): StrategySection | null {
+  if (!preview) return null;
+
+  const specialistType =
+    normalizePreviewText(preview.specialist_type) ?? normalizePreviewText(fallbackTopic);
+  const title = normalizePreviewText(preview.title) ?? formatPreviewTitle(specialistType);
+  const oneLiner = normalizePreviewText(preview.one_liner);
+  const highlights = uniqueNonEmptyStrings(preview.highlights).slice(0, 5);
+  const previewTitles = highlights.length > 0 ? highlights : [title];
+  const contentAdded = previewTitles
+    .map((itemTitle) => ({
+      title: itemTitle,
+      ...(oneLiner && { description: oneLiner }),
+    }))
+    .slice(0, 3);
+
+  return {
+    id:
+      normalizePreviewText(preview.id) ??
+      `preview_${(specialistType ?? title).toLowerCase().replace(/\s+/g, '_')}`,
+    title,
+    specialist_type: specialistType,
+    one_liner: oneLiner,
+    principles: oneLiner ? [oneLiner] : [],
+    must_dos: highlights,
+    optional_upgrades: [],
+    logistics_notes: [],
+    ...(normalizePreviewText(preview.hero_image) && {
+      hero_image: normalizePreviewText(preview.hero_image),
+    }),
+    ...(preview.feasibility_status && {
+      feasibility_status: preview.feasibility_status,
+    }),
+    ...(normalizePreviewText(preview.feasibility_reason) && {
+      feasibility_reason: normalizePreviewText(preview.feasibility_reason),
+    }),
+    ...(normalizePreviewText(preview.alternative_suggestion) && {
+      alternative_suggestion: normalizePreviewText(preview.alternative_suggestion),
+    }),
+    ...(contentAdded.length > 0 && { content_added: contentAdded }),
+    bullets: highlights.length > 0 ? highlights : oneLiner ? [oneLiner] : [],
+  };
+}
+
+function deriveStrategySectionsFromSpecialistPreview(
+  payload: SpecialistPreviewPayload
+): StrategySection[] {
+  if (Array.isArray(payload.strategy_sections) && payload.strategy_sections.length > 0) {
+    return payload.strategy_sections;
+  }
+
+  if (!Array.isArray(payload.sections) || payload.sections.length === 0) {
+    return [];
+  }
+
+  return payload.sections
+    .map((section, index) => previewToStrategySection(section, payload.topics?.[index]))
+    .filter((section): section is StrategySection => section !== null);
+}
+
+function derivePreviewActivitiesFromSpecialistPreview(
+  payload: SpecialistPreviewPayload
+): SpecialistPreviewActivity[] {
+  if (Array.isArray(payload.activities) && payload.activities.length > 0) {
+    return payload.activities.filter((activity) => Boolean(activity?.title?.trim()));
+  }
+
+  if (!Array.isArray(payload.sections) || payload.sections.length === 0) {
+    return [];
+  }
+
+  const activities: SpecialistPreviewActivity[] = [];
+
+  payload.sections.forEach((section, index) => {
+    const specialistType =
+      normalizePreviewText(section.specialist_type) ??
+      normalizePreviewText(payload.topics?.[index]);
+    if (!specialistType) return;
+
+    const titles = uniqueNonEmptyStrings(section.highlights);
+    const fallbackTitle =
+      normalizePreviewText(section.title) ?? formatPreviewTitle(specialistType);
+
+    for (const title of (titles.length > 0 ? titles : [fallbackTitle])) {
+      activities.push({
+        title,
+        specialist_type: specialistType,
+        description: normalizePreviewText(section.one_liner),
+        duration_hours: 3,
+      });
+    }
+  });
+
+  return activities.slice(0, 6);
+}
+
+function normalizeSpecialistPreviewPayload(
+  payload: SpecialistPreviewPayload,
+  currentSections: StrategySection[] | undefined
+): SpecialistPreviewPayload {
+  const previewActivities = derivePreviewActivitiesFromSpecialistPreview(payload);
+  const hasAuthoritativeStrategySections =
+    Array.isArray(payload.strategy_sections) && payload.strategy_sections.length > 0;
+  const previewStrategySections: StrategySection[] = hasAuthoritativeStrategySections
+    ? payload.strategy_sections ?? []
+    : deriveStrategySectionsFromSpecialistPreview(payload);
+  const mergedStrategySections =
+    hasAuthoritativeStrategySections
+      ? previewStrategySections
+      : previewStrategySections.length > 0
+      ? mergePreviewStrategySections(currentSections, previewStrategySections)
+      : [];
+
+  return {
+    ...payload,
+    ...(previewActivities.length > 0 && { activities: previewActivities }),
+    ...(mergedStrategySections.length > 0 && {
+      strategy_sections: mergedStrategySections,
+    }),
+  };
+}
+
+function mergePreviewSection(existing: StrategySection, incoming: StrategySection): StrategySection {
+  return {
+    ...existing,
+    ...incoming,
+    title: incoming.title || existing.title,
+    specialist_type: incoming.specialist_type ?? existing.specialist_type,
+    one_liner: incoming.one_liner ?? existing.one_liner,
+    editorial_one_liner: incoming.editorial_one_liner ?? existing.editorial_one_liner,
+    principles: incoming.principles.length > 0 ? incoming.principles : existing.principles,
+    must_dos: incoming.must_dos.length > 0 ? incoming.must_dos : existing.must_dos,
+    optional_upgrades:
+      incoming.optional_upgrades.length > 0
+        ? incoming.optional_upgrades
+        : existing.optional_upgrades,
+    logistics_notes:
+      incoming.logistics_notes.length > 0
+        ? incoming.logistics_notes
+        : existing.logistics_notes,
+    bullets: incoming.bullets.length > 0 ? incoming.bullets : existing.bullets,
+    content_added:
+      incoming.content_added && incoming.content_added.length > 0
+        ? incoming.content_added
+        : existing.content_added,
+    hero_image: incoming.hero_image ?? existing.hero_image,
+    feasibility_status: incoming.feasibility_status ?? existing.feasibility_status,
+    feasibility_reason: incoming.feasibility_reason ?? existing.feasibility_reason,
+    alternative_suggestion:
+      incoming.alternative_suggestion ?? existing.alternative_suggestion,
+  };
+}
+
+function mergePreviewStrategySections(
+  currentSections: StrategySection[] | undefined,
+  incomingSections: StrategySection[]
+): StrategySection[] {
+  if (!currentSections?.length) {
+    return incomingSections;
+  }
+
+  const merged = [...currentSections];
+
+  for (const incoming of incomingSections) {
+    const existingIndex = merged.findIndex((section) => {
+      if (incoming.specialist_type && section.specialist_type) {
+        return section.specialist_type === incoming.specialist_type;
+      }
+
+      return section.id === incoming.id;
+    });
+
+    if (existingIndex === -1) {
+      merged.push(incoming);
+      continue;
+    }
+
+    merged[existingIndex] = mergePreviewSection(merged[existingIndex], incoming);
+  }
+
+  return merged;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -187,11 +405,14 @@ export interface ExecuteStreamParams {
   actionLoader: ReturnType<typeof useActionLoader>;
 }
 
+type ActiveNodeStatus = Exclude<Parameters<ChatSseCallbacks['setNodeStatus']>[0], null>;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Hook
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
+  const { toast } = useToast();
   const {
     abortStreamRef,
     isSendingRef,
@@ -259,8 +480,17 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
         actionLoader,
       } = params;
 
+      useDocumentStore.setState({ _specialistPreview: null });
+
       return new Promise<'complete' | 'error' | 'stale'>((resolve) => {
         const isStaleRequest = () => activeStreamRequestIdRef.current !== requestId;
+        const activeNodeStatuses = new Map<string, ActiveNodeStatus>();
+        const nodeStatusKey = (node: string, topic?: string) => `${node}::${topic ?? ''}`;
+        let visibleNodeKey: string | null = null;
+        let previewStrategySectionsPending = false;
+        let deferredStrategySectionsPayload: StrategySection[] | null = null;
+        let deferredStrategySectionsFrameId: number | null = null;
+        const emittedBuilderWarnings = new Set<string>();
 
         if (reconcileTimerRef.current) {
           clearTimeout(reconcileTimerRef.current);
@@ -281,6 +511,97 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
         // so we can clear it on complete/error.
         let sseSetRegenFlag = false;
 
+        const applyNodeStatusUi = (
+          status: ActiveNodeStatus,
+          allowRegenOverlay: boolean
+        ) => {
+          const classification = classifyNodeAction(
+            status.node,
+            triggerContext ?? undefined
+          );
+
+          if (classification) {
+            const store = useDocumentStore.getState();
+            const tiles = store.document?.tiles;
+            const hasTiles = tiles && Object.keys(tiles).length > 0;
+
+            actionLoader.startLoading(
+              classification.actionType,
+              status.estimatedDurationMs,
+              {
+                verticalType: classification.verticalType,
+                hasTiles,
+              }
+            );
+
+            if (
+              allowRegenOverlay &&
+              !sseSetRegenFlag &&
+              (classification.actionType === 'generate_plan' ||
+                classification.actionType === 'update_plan' ||
+                classification.actionType === 'create_itinerary')
+            ) {
+              const existingDayCards = store.document?.day_cards;
+              if (existingDayCards && existingDayCards.length > 0) {
+                store.setRegenerationState({ isRegenerating: true });
+                sseSetRegenFlag = true;
+              }
+            }
+          }
+
+          const shouldShow = shouldShowLoaderForNode(
+            status.node,
+            status.estimatedDurationMs
+          );
+          if (shouldShow) {
+            delayedLoader.startLoading(status.estimatedDurationMs);
+          }
+
+          setNodeStatus(status);
+          visibleNodeKey = nodeStatusKey(status.node, status.topic);
+        };
+
+        const syncActiveNodeStatusUi = () => {
+          const nextActiveStatus = Array.from(activeNodeStatuses.values()).at(-1) ?? null;
+          if (!nextActiveStatus) {
+            visibleNodeKey = null;
+            setNodeStatus(null);
+            delayedLoader.reset();
+            actionLoader.reset();
+            return;
+          }
+
+          if (nodeStatusKey(nextActiveStatus.node, nextActiveStatus.topic) === visibleNodeKey) {
+            setNodeStatus(nextActiveStatus);
+            return;
+          }
+
+          applyNodeStatusUi(nextActiveStatus, false);
+        };
+
+        const mergeStrategySectionsPartial = (
+          strategySections: StrategySection[]
+        ) => {
+          const store = useDocumentStore.getState();
+          store.mergeEnvelope(
+            { strategy_sections: strategySections },
+            envelopeGeneration
+          );
+        };
+
+        const emitBuilderWarnings = (warnings: string[] | undefined) => {
+          if (!warnings?.length) return;
+
+          for (const warning of warnings) {
+            const normalizedWarning = warning.trim();
+            if (!normalizedWarning || emittedBuilderWarnings.has(normalizedWarning)) {
+              continue;
+            }
+            emittedBuilderWarnings.add(normalizedWarning);
+            toast(normalizedWarning, { type: 'warning', duration: 4000 });
+          }
+        };
+
         abortStreamRef.current = streamGraphPlan(body, {
           onToken: (token: string) => {
             if (isStaleRequest()) return;
@@ -295,50 +616,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
           onNodeStatus: (status: SSENodeStatusEvent['data']) => {
             if (isStaleRequest()) return;
             if (status.status === 'started') {
-              const classification = classifyNodeAction(
-                status.node,
-                triggerContext ?? undefined
-              );
-
-              if (classification) {
-                const store = useDocumentStore.getState();
-                const tiles = store.document?.tiles;
-                const hasTiles = tiles && Object.keys(tiles).length > 0;
-
-                actionLoader.startLoading(
-                  classification.actionType,
-                  status.estimated_duration_ms,
-                  {
-                    verticalType: classification.verticalType,
-                    hasTiles,
-                  }
-                );
-
-                // Show regeneration overlay when rebuild nodes fire
-                // during SSE and an itinerary already exists.
-                if (
-                  !sseSetRegenFlag &&
-                  (classification.actionType === 'generate_plan' ||
-                    classification.actionType === 'update_plan' ||
-                    classification.actionType === 'create_itinerary')
-                ) {
-                  const existingDayCards = store.document?.day_cards;
-                  if (existingDayCards && existingDayCards.length > 0) {
-                    store.setRegenerationState({ isRegenerating: true });
-                    sseSetRegenFlag = true;
-                  }
-                }
-              }
-
-              const shouldShow = shouldShowLoaderForNode(
-                status.node,
-                status.estimated_duration_ms
-              );
-              if (shouldShow) {
-                delayedLoader.startLoading(status.estimated_duration_ms);
-              }
-
-              setNodeStatus({
+              const nextStatus: ActiveNodeStatus = {
                 active: true,
                 node: status.node,
                 label: status.label,
@@ -347,11 +625,16 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
                 startTime: Date.now(),
                 stage: status.stage,
                 topic: status.topic,
-              });
+              };
+
+              activeNodeStatuses.set(
+                nodeStatusKey(status.node, status.topic),
+                nextStatus
+              );
+              applyNodeStatusUi(nextStatus, true);
             } else if (status.status === 'completed') {
-              setNodeStatus(null);
-              delayedLoader.reset();
-              actionLoader.reset();
+              activeNodeStatuses.delete(nodeStatusKey(status.node, status.topic));
+              syncActiveNodeStatusUi();
             }
           },
 
@@ -359,20 +642,74 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             if (isStaleRequest()) return;
             try {
               const store = useDocumentStore.getState();
-              // Payload shape is validated on the complete event; partial is best-effort
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const p = data.payload as any;
               if (data.kind === 'strategy_sections') {
-                store.mergeEnvelope({ strategy_sections: p }, envelopeGeneration);
+                if (
+                  previewStrategySectionsPending &&
+                  typeof window.requestAnimationFrame === 'function'
+                ) {
+                  previewStrategySectionsPending = false;
+                  deferredStrategySectionsPayload = data.payload;
+                  if (deferredStrategySectionsFrameId !== null) {
+                    window.cancelAnimationFrame(deferredStrategySectionsFrameId);
+                  }
+                  deferredStrategySectionsFrameId = window.requestAnimationFrame(() => {
+                    const queuedStrategySections = deferredStrategySectionsPayload;
+                    deferredStrategySectionsFrameId = null;
+                    deferredStrategySectionsPayload = null;
+                    if (isStaleRequest() || !queuedStrategySections) return;
+                    mergeStrategySectionsPartial(queuedStrategySections);
+                  });
+                } else {
+                  if (deferredStrategySectionsFrameId !== null) {
+                    window.cancelAnimationFrame(deferredStrategySectionsFrameId);
+                    deferredStrategySectionsFrameId = null;
+                    deferredStrategySectionsPayload = null;
+                  }
+                  mergeStrategySectionsPartial(data.payload);
+                }
+              } else if (data.kind === 'specialist_preview') {
+                const normalizedPreviewPayload = normalizeSpecialistPreviewPayload(
+                  data.payload,
+                  store.document?.strategy_sections
+                );
+
+                if (
+                  (normalizedPreviewPayload.activities?.length ?? 0) > 0 ||
+                  (normalizedPreviewPayload.strategy_sections?.length ?? 0) > 0
+                ) {
+                  previewStrategySectionsPending = true;
+                  store.setSpecialistPreview(normalizedPreviewPayload);
+                }
               } else if (data.kind === 'tiles') {
                 store.mergeEnvelope(
-                  { tiles: p, ...(data.tiles_replaced ? { tiles_replaced: true } : {}) },
+                  {
+                    tiles: data.payload,
+                    ...(data.tiles_replaced ? { tiles_replaced: true } : {}),
+                  },
                   envelopeGeneration
                 );
+              } else if (data.kind === 'tile_enrichment') {
+                store.mergeTileEnrichment(
+                  data.payload,
+                  envelopeGeneration,
+                  data.tiles_replaced === true
+                );
+                emitBuilderWarnings(
+                  data.payload.warnings ?? data.payload.context?.warnings
+                );
               } else if (data.kind === 'trip_inputs') {
-                store.mergeEnvelope({ trip_inputs: p }, envelopeGeneration);
+                store.mergeEnvelope(
+                  {
+                    trip_inputs: data.payload as PlanDocumentData['trip_inputs'],
+                  },
+                  envelopeGeneration
+                );
               } else if (data.kind === 'day_cards') {
-                store.mergeEnvelope({ day_cards: p }, envelopeGeneration);
+                store.setPartialDayCards(
+                  data.payload as DayCardsPartialPayload,
+                  envelopeGeneration
+                );
+                emitBuilderWarnings(data.payload.warnings);
               }
             } catch (partialError) {
               debugLog(
@@ -401,6 +738,13 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             }
 
             setStreamingMessageId(null);
+            if (deferredStrategySectionsFrameId !== null) {
+              window.cancelAnimationFrame(deferredStrategySectionsFrameId);
+              deferredStrategySectionsFrameId = null;
+            }
+            deferredStrategySectionsPayload = null;
+            activeNodeStatuses.clear();
+            visibleNodeKey = null;
             setNodeStatus(null);
             abortStreamRef.current = null;
             delayedLoader.reset();
@@ -745,7 +1089,15 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               return;
             }
 
+            useDocumentStore.setState({ _specialistPreview: null });
             setStreamingMessageId(null);
+            if (deferredStrategySectionsFrameId !== null) {
+              window.cancelAnimationFrame(deferredStrategySectionsFrameId);
+              deferredStrategySectionsFrameId = null;
+            }
+            deferredStrategySectionsPayload = null;
+            activeNodeStatuses.clear();
+            visibleNodeKey = null;
             setNodeStatus(null);
             abortStreamRef.current = null;
             delayedLoader.reset();
@@ -815,6 +1167,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
       onAutoExpandItinerary,
       onFeasibilityWarning,
       queueCompletionScroll,
+      toast,
     ]
   );
 

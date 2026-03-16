@@ -238,7 +238,8 @@ export function useLandingRenderSurfaces({
     ]
   );
 
-  const isExpandingItinerary = generation?.stage === 'itinerary';
+  const isExpandingItinerary =
+    generation?.active === true && generation.stage === 'itinerary';
 
   const planViewContent = useMemo(
     () => (

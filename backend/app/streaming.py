@@ -656,64 +656,87 @@ async def generate_sse(
                     doc_settings=doc_settings,
                     cancel_event=cancel_event,
                 )
+                event_source_closed = False
 
-                with spend_guard_scope(session_id):
-                    async for event in event_source:
-                        # Check for client disconnect
-                        if await request.is_disconnected():
-                            logger.info(f"[{request_id}] Client disconnected, cancelling stream")
-                            cancel_event.set()
-                            break
+                async def _close_coordinator_event_source() -> None:
+                    nonlocal event_source_closed
+                    if event_source_closed:
+                        return
+                    event_source_closed = True
+                    await event_source.aclose()
 
-                        # Check if we've exceeded total stream timeout
-                        elapsed = asyncio.get_event_loop().time() - stream_start
-                        if elapsed > route_timeout_seconds:
-                            logger.error(
-                                f"[{request_id}] Stream timeout after {elapsed:.1f}s "
-                                f"(limit: {route_timeout_seconds}s)"
-                            )
-                            timeout_payload = json.dumps(
-                                {
-                                    "type": "error",
-                                    "message": f"Stream timed out after {elapsed:.1f}s",
-                                }
-                            )
-                            yield f"event: error\ndata: {timeout_payload}\n\n"
-                            return
+                try:
+                    with spend_guard_scope(session_id):
+                        async for event in event_source:
+                            if event["type"] == "complete":
+                                logger.debug(
+                                    f"[{request_id}] Stream complete after {token_count} tokens"
+                                )
+                                final_result = event["data"]
+                                if await request.is_disconnected():
+                                    logger.info(
+                                        f"[{request_id}] Client disconnected after completion"
+                                    )
+                                    cancel_event.set()
+                                    await _close_coordinator_event_source()
+                                    break
+                                continue
 
-                        if event["type"] == "token":
-                            token_count += 1
-                            if token_count <= 5 or token_count % 50 == 0:
-                                logger.debug(f"[{request_id}] Streaming token #{token_count}")
-                            yield f"event: token\ndata: {json.dumps(event)}\n\n"
-                        elif event["type"] == "node_status":
-                            # Forward strategy node status for frontend progress tracking
-                            node = event["data"].get("node")
-                            status = event["data"].get("status")
-                            logger.debug(f"[{request_id}] Node status: {node} - {status}")
-                            yield f"event: node_status\ndata: {json.dumps(event)}\n\n"
-                        elif event["type"] == "partial":
-                            # Forward partial data events (v2 emits these from tool results)
-                            yield f"event: partial\ndata: {json.dumps(event)}\n\n"
-                        elif event["type"] == "complete":
-                            logger.debug(
-                                f"[{request_id}] Stream complete after {token_count} tokens"
-                            )
-                            final_result = event["data"]
-                        elif event["type"] == "feasibility_warning":
-                            # Forward feasibility warnings for frontend toast feedback
-                            logger.debug(
-                                f"[{request_id}] Feasibility warning: "
-                                f"{event.get('data', {}).get('topic')}"
-                            )
-                            yield f"event: feasibility_warning\ndata: {json.dumps(event)}\n\n"
-                        elif event["type"] == "error":
-                            # Forward graph errors to frontend with actual message
-                            error_msg = event.get("message", "Unknown graph error")
-                            logger.error(f"[{request_id}] Graph error: {error_msg}")
-                            error_payload = json.dumps({"type": "error", "message": error_msg})
-                            yield f"event: error\ndata: {error_payload}\n\n"
-                            return
+                            # Check for client disconnect
+                            if await request.is_disconnected():
+                                logger.info(
+                                    f"[{request_id}] Client disconnected, cancelling stream"
+                                )
+                                cancel_event.set()
+                                await _close_coordinator_event_source()
+                                break
+
+                            # Check if we've exceeded total stream timeout
+                            elapsed = asyncio.get_event_loop().time() - stream_start
+                            if elapsed > route_timeout_seconds:
+                                logger.error(
+                                    f"[{request_id}] Stream timeout after {elapsed:.1f}s "
+                                    f"(limit: {route_timeout_seconds}s)"
+                                )
+                                timeout_payload = json.dumps(
+                                    {
+                                        "type": "error",
+                                        "message": f"Stream timed out after {elapsed:.1f}s",
+                                    }
+                                )
+                                yield f"event: error\ndata: {timeout_payload}\n\n"
+                                return
+
+                            if event["type"] == "token":
+                                token_count += 1
+                                if token_count <= 5 or token_count % 50 == 0:
+                                    logger.debug(f"[{request_id}] Streaming token #{token_count}")
+                                yield f"event: token\ndata: {json.dumps(event)}\n\n"
+                            elif event["type"] == "node_status":
+                                # Forward strategy node status for frontend progress tracking
+                                node = event["data"].get("node")
+                                status = event["data"].get("status")
+                                logger.debug(f"[{request_id}] Node status: {node} - {status}")
+                                yield f"event: node_status\ndata: {json.dumps(event)}\n\n"
+                            elif event["type"] == "partial":
+                                # Forward partial data events (v2 emits these from tool results)
+                                yield f"event: partial\ndata: {json.dumps(event)}\n\n"
+                            elif event["type"] == "feasibility_warning":
+                                # Forward feasibility warnings for frontend toast feedback
+                                logger.debug(
+                                    f"[{request_id}] Feasibility warning: "
+                                    f"{event.get('data', {}).get('topic')}"
+                                )
+                                yield (f"event: feasibility_warning\ndata: {json.dumps(event)}\n\n")
+                            elif event["type"] == "error":
+                                # Forward graph errors to frontend with actual message
+                                error_msg = event.get("message", "Unknown graph error")
+                                logger.error(f"[{request_id}] Graph error: {error_msg}")
+                                error_payload = json.dumps({"type": "error", "message": error_msg})
+                                yield f"event: error\ndata: {error_payload}\n\n"
+                                return
+                finally:
+                    await _close_coordinator_event_source()
 
                 if final_result is None:
                     error_payload = json.dumps({"type": "error", "message": "No result from graph"})

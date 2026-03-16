@@ -238,11 +238,14 @@ export function useLandingDerived({
     docCanExpand,
   ]);
 
-  // Merged generation state: envelope wins if present, else local UI fallback
+  // Prefer the live local UI generation while a request is active.
+  // Store generation can lag behind or be stale across expand-itinerary runs.
   const envelopeGeneration = docGeneration as GenerationState | undefined;
   const generation: GenerationState | null = useMemo(() => {
-    if (envelopeGeneration) return envelopeGeneration;
+    if (uiGeneration?.active) return uiGeneration;
+    if (envelopeGeneration?.active) return envelopeGeneration;
     if (uiGeneration) return uiGeneration;
+    if (envelopeGeneration) return envelopeGeneration;
     if (isGenerating) return { active: true, stage: 'structure' as const };
     return null;
   }, [envelopeGeneration, uiGeneration, isGenerating]);
@@ -250,11 +253,12 @@ export function useLandingDerived({
   // Tiles from document store
   const tiles = useMemo(() => docTiles ?? {}, [docTiles]);
 
-  // Plan tab enabled when we have branches/plan content
+  // Plan tab stays gated by prerequisites, even while generation is active.
   const planTabEnabled = useMemo(() => {
     if (!hasPlanPrerequisites) return false;
+    if (generation?.active === true) return true;
     return hasBranchesReady || !isBootstrap(planViewState);
-  }, [hasPlanPrerequisites, hasBranchesReady, planViewState]);
+  }, [generation, hasPlanPrerequisites, hasBranchesReady, planViewState]);
 
   // Fallback title
   const fallbackTitle = tripInputs.destination ?? undefined;

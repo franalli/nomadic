@@ -65,6 +65,7 @@ export function useChatPanelController({
     onUserMessageSubmit,
     selectedBranchId,
     hasBranches,
+    readyToGenerate,
     setGenerateTriggered,
     setActiveStatus,
     scrollPanelIntoView,

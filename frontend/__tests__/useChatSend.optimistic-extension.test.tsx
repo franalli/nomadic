@@ -36,7 +36,7 @@ vi.mock('@/hooks/useChatSse', () => ({
 }));
 
 import { useChatSend } from '@/hooks/useChatSend';
-import { useChatStore } from '@/state/chatStore';
+import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 
 function seedTripDocument(): void {
@@ -74,7 +74,40 @@ function seedTripDocument(): void {
   } as never);
 }
 
-function renderUseChatSend() {
+function seedEmptyTripState(): void {
+  useDocumentStore.getState().reset();
+  useChatStore.getState().resetChat();
+  useDocumentStore.setState({
+    ensureSettingsFlushed: vi.fn().mockResolvedValue(undefined),
+    bumpMessageSendNonce: vi.fn(),
+  } as never);
+}
+
+function seedReadyToGenerateTripState(): void {
+  useDocumentStore.getState().reset();
+  useChatStore.getState().resetChat();
+  useDocumentStore.setState({
+    version: 1,
+    document: {
+      trip_context_id: null,
+      trip_inputs: {
+        ...DEFAULT_TRIP_INPUTS,
+        destination: 'Bali',
+        start_date: '2026-04-01',
+        end_date: '2026-04-07',
+        trip_duration: 7,
+      },
+      branches: [],
+      tiles: {},
+      strategy_sections: [],
+      plan_view_state: 'S0_BOOTSTRAP',
+    },
+    ensureSettingsFlushed: vi.fn().mockResolvedValue(undefined),
+    bumpMessageSendNonce: vi.fn(),
+  } as never);
+}
+
+function renderUseChatSend(overrides?: Partial<Parameters<typeof useChatSend>[0]>) {
   return renderHook(() =>
     useChatSend({
       onPlanResult: vi.fn(),
@@ -89,6 +122,7 @@ function renderUseChatSend() {
       scrollToBottom: vi.fn(),
       inputRef: { current: document.createElement('textarea') },
       toast: vi.fn(),
+      ...overrides,
     })
   );
 }
@@ -212,5 +246,86 @@ describe('useChatSend optimistic extension rollback', () => {
     expect(useDocumentStore.getState().document?.trip_inputs.end_date).toBe('2026-04-06');
     expect(useDocumentStore.getState().document?.trip_inputs.trip_duration).toBe(6);
     expect(useDocumentStore.getState().document?.day_cards).toHaveLength(6);
+  });
+});
+
+describe('useChatSend generation start signaling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    seedEmptyTripState();
+    mockState.executeStreamMock.mockResolvedValue('complete');
+  });
+
+  it('does not start plan generation for a greeting before branches exist', async () => {
+    const onGeneratePlanStart = vi.fn();
+    const { result } = renderUseChatSend({
+      onGeneratePlanStart,
+      hasBranches: false,
+    });
+
+    await act(async () => {
+      await result.current.sendMessageCore('hello');
+    });
+
+    expect(onGeneratePlanStart).not.toHaveBeenCalled();
+  });
+
+  it('starts plan generation for the first planning prompt when dates are in the message', async () => {
+    const onGeneratePlanStart = vi.fn();
+    const { result } = renderUseChatSend({
+      onGeneratePlanStart,
+      hasBranches: false,
+    });
+
+    await act(async () => {
+      await result.current.sendMessageCore('Bali diving April 1-7 from Rome');
+    });
+
+    expect(onGeneratePlanStart).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts plan generation for a freeform prompt when destination and dates are already set', async () => {
+    seedReadyToGenerateTripState();
+
+    const onGeneratePlanStart = vi.fn();
+    const { result } = renderUseChatSend({
+      onGeneratePlanStart,
+      hasBranches: false,
+      readyToGenerate: true,
+    });
+
+    await act(async () => {
+      await result.current.sendMessageCore('Bali diving April 1-7 from Rome');
+    });
+
+    expect(onGeneratePlanStart).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts plan generation for the explicit generate trigger', async () => {
+    const onGeneratePlanStart = vi.fn();
+    const { result } = renderUseChatSend({
+      onGeneratePlanStart,
+      hasBranches: false,
+    });
+
+    await act(async () => {
+      await result.current.sendMessageCore(GENERATE_PLAN_TRIGGER);
+    });
+
+    expect(onGeneratePlanStart).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start plan generation for a freeform follow-up once branches already exist', async () => {
+    const onGeneratePlanStart = vi.fn();
+    const { result } = renderUseChatSend({
+      onGeneratePlanStart,
+      hasBranches: true,
+    });
+
+    await act(async () => {
+      await result.current.sendMessageCore('change hotel');
+    });
+
+    expect(onGeneratePlanStart).not.toHaveBeenCalled();
   });
 });

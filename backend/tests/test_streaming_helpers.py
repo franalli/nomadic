@@ -1,5 +1,6 @@
 """Tests for pure helper functions in streaming.py."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -384,6 +385,209 @@ async def test_generate_sse_releases_slot_when_db_session_open_fails(monkeypatch
         async for _chunk in stream:
             pass
 
+    release_slot.assert_awaited_once_with("session:session-123", "ip:127.0.0.1")
+
+
+@pytest.mark.asyncio
+async def test_generate_sse_closes_coordinator_event_source_on_disconnect(
+    monkeypatch,
+) -> None:
+    """Disconnects should close the coordinator generator immediately."""
+
+    class _SessionContext:
+        async def __aenter__(self):
+            return SimpleNamespace()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class _FakeEventSource:
+        def __init__(self, cancel_event: asyncio.Event) -> None:
+            self._cancel_event = cancel_event
+            self._yielded = False
+            self.closed = False
+            self.closed_after_cancel = False
+            self.aclose_calls = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.closed or self._yielded:
+                raise StopAsyncIteration
+            self._yielded = True
+            return {"type": "token", "data": "hello"}
+
+        async def aclose(self) -> None:
+            self.aclose_calls += 1
+            self.closed_after_cancel = self._cancel_event.is_set()
+            self.closed = True
+
+    release_slot = AsyncMock()
+    event_source: _FakeEventSource | None = None
+
+    def _fake_execute_turn(*, cancel_event: asyncio.Event, **_kwargs):
+        nonlocal event_source
+        event_source = _FakeEventSource(cancel_event)
+        return event_source
+
+    monkeypatch.setattr(
+        "app.streaming._get_async_session_factory",
+        lambda: (lambda: _SessionContext()),
+    )
+    monkeypatch.setattr(
+        "app.streaming.get_or_create_session",
+        AsyncMock(return_value=SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        "app.streaming.get_or_create_document",
+        AsyncMock(side_effect=RuntimeError("skip document")),
+    )
+    monkeypatch.setattr(
+        "app.streaming._cleanup_pending_enrichment",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "app.planner.services.state_serde.restore_agent_state",
+        lambda state: state,
+    )
+    monkeypatch.setattr(
+        "app.planner.coordinator.execute_turn",
+        _fake_execute_turn,
+    )
+
+    stream = generate_sse(
+        session_id="session-123",
+        req=SimpleNamespace(message="Plan Bali", trip_inputs=None),
+        session_state={},
+        request_id="req-2",
+        today_iso="2026-03-11",
+        session_key="session:session-123",
+        ip_key="ip:127.0.0.1",
+        request=SimpleNamespace(is_disconnected=AsyncMock(return_value=True)),
+        try_acquire_sse_slot=AsyncMock(return_value=None),
+        release_sse_slot=release_slot,
+        sanitize_trip_inputs_for_category_merge=lambda inputs, _message: inputs,
+        merge_user_owned_trip_settings=lambda *args, **kwargs: None,
+        resolve_itinerary_document_view_state=lambda *args, **kwargs: "S0_BOOTSTRAP",
+    )
+
+    chunks = [chunk async for chunk in stream]
+
+    assert chunks == [
+        'event: error\ndata: {"type": "error", "message": "No result from graph"}\n\n'
+    ]
+    assert event_source is not None
+    assert event_source.closed is True
+    assert event_source.closed_after_cancel is True
+    assert event_source.aclose_calls == 1
+    release_slot.assert_awaited_once_with("session:session-123", "ip:127.0.0.1")
+
+
+@pytest.mark.asyncio
+async def test_generate_sse_preserves_complete_event_before_disconnect_short_circuit(
+    monkeypatch,
+) -> None:
+    """A just-received complete event must survive a late disconnect."""
+
+    class _SessionContext:
+        async def __aenter__(self):
+            return SimpleNamespace()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    final_result = {
+        "assistant_message": "Finished plan.",
+        "session_state": {},
+        "document": {
+            "plan_view_state": "S0_BOOTSTRAP",
+            "strategy_sections": [],
+            "tiles": {},
+            "trip_inputs": {"destination": "Bali"},
+            "itinerary_day_cards": [],
+        },
+    }
+
+    class _FakeEventSource:
+        def __init__(self, cancel_event: asyncio.Event) -> None:
+            self._cancel_event = cancel_event
+            self._yielded = False
+            self.closed = False
+            self.closed_after_cancel = False
+            self.aclose_calls = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.closed or self._yielded:
+                raise StopAsyncIteration
+            self._yielded = True
+            return {"type": "complete", "data": final_result}
+
+        async def aclose(self) -> None:
+            self.aclose_calls += 1
+            self.closed_after_cancel = self._cancel_event.is_set()
+            self.closed = True
+
+    release_slot = AsyncMock()
+    event_source: _FakeEventSource | None = None
+
+    def _fake_execute_turn(*, cancel_event: asyncio.Event, **_kwargs):
+        nonlocal event_source
+        event_source = _FakeEventSource(cancel_event)
+        return event_source
+
+    monkeypatch.setattr(
+        "app.streaming._get_async_session_factory",
+        lambda: (lambda: _SessionContext()),
+    )
+    monkeypatch.setattr(
+        "app.streaming.get_or_create_session",
+        AsyncMock(return_value=SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        "app.streaming.get_or_create_document",
+        AsyncMock(side_effect=RuntimeError("skip document")),
+    )
+    monkeypatch.setattr(
+        "app.streaming._cleanup_pending_enrichment",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "app.planner.services.state_serde.restore_agent_state",
+        lambda state: state,
+    )
+    monkeypatch.setattr(
+        "app.planner.coordinator.execute_turn",
+        _fake_execute_turn,
+    )
+
+    stream = generate_sse(
+        session_id="session-123",
+        req=SimpleNamespace(message="Plan Bali", trip_inputs=None, ui_phase=None),
+        session_state={},
+        request_id="req-3",
+        today_iso="2026-03-11",
+        session_key="session:session-123",
+        ip_key="ip:127.0.0.1",
+        request=SimpleNamespace(is_disconnected=AsyncMock(return_value=True)),
+        try_acquire_sse_slot=AsyncMock(return_value=None),
+        release_sse_slot=release_slot,
+        sanitize_trip_inputs_for_category_merge=lambda inputs, _message: inputs,
+        merge_user_owned_trip_settings=lambda *args, **kwargs: None,
+        resolve_itinerary_document_view_state=lambda *args, **kwargs: "S0_BOOTSTRAP",
+    )
+
+    chunks = [chunk async for chunk in stream]
+
+    assert chunks[-1].startswith("event: complete\ndata: ")
+    assert all("No result from graph" not in chunk for chunk in chunks)
+    assert event_source is not None
+    assert event_source.closed is True
+    assert event_source.closed_after_cancel is True
+    assert event_source.aclose_calls == 1
     release_slot.assert_awaited_once_with("session:session-123", "ip:127.0.0.1")
 
 

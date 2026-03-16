@@ -396,6 +396,44 @@ describe('Split render surfaces', () => {
         scrollHeaderContent: undefined,
       });
     });
+
+    it('tightens the desktop panel height while the first user prompt is still loading', () => {
+      chatPanelMocks.useController.mockReturnValue(
+        buildChatControllerState({
+          panelHeightClass: 'min-h-[300px]',
+          chatSend: {
+            ...buildChatControllerState().chatSend,
+            isLoading: true,
+          },
+          visibleMessages: [{ id: 'user_1', role: 'user', content: 'Bali diving April 1-7' }],
+        })
+      );
+
+      const { rerender } = render(<ChatPanel {...buildChatProps()} />);
+      const panelRoot = screen.getByTestId('error-boundary').firstElementChild;
+
+      expect(panelRoot).toHaveClass('min-h-[220px]');
+      expect(panelRoot).not.toHaveClass('min-h-[300px]');
+
+      chatPanelMocks.useController.mockReturnValue(
+        buildChatControllerState({
+          panelHeightClass: 'min-h-[300px]',
+          chatSend: {
+            ...buildChatControllerState().chatSend,
+            isLoading: true,
+          },
+          visibleMessages: [
+            { id: 'user_1', role: 'user', content: 'Bali diving April 1-7' },
+            { id: 'assistant_1', role: 'assistant', content: 'Working on it now.' },
+          ],
+        })
+      );
+
+      rerender(<ChatPanel {...buildChatProps()} />);
+
+      expect(panelRoot).toHaveClass('min-h-[300px]');
+      expect(panelRoot).not.toHaveClass('min-h-[220px]');
+    });
   });
 
   describe('TileCardContent', () => {

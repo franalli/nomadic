@@ -23,6 +23,7 @@ Usage:
 
 import asyncio
 import logging
+import math
 import time
 from datetime import UTC, datetime, timedelta
 from typing import Optional
@@ -66,6 +67,62 @@ _cache_set = _mem.set
 _inflight_generation_lock = asyncio.Lock()
 _inflight_generation_tasks: dict[str, asyncio.Task[list[dict]]] = {}
 _experience_cache_epoch = 0
+
+_COORD_OUTLIER_THRESHOLD_KM = 100.0
+
+
+def _haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Great-circle distance between two (lat, lng) points in kilometres."""
+    lat1, lng1 = a
+    lat2, lng2 = b
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    h = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng / 2) ** 2
+    )
+    return 6371.0 * 2 * math.asin(min(1.0, math.sqrt(h)))
+
+
+def _discard_coordinate_outliers(tiles: list[dict]) -> None:
+    """Remove geo dicts from tiles whose coordinates are >100km from the cluster median.
+
+    Operates in-place. Requires at least 3 geocoded tiles to compute a reliable median;
+    otherwise all tiles are left untouched.
+    """
+    coords = [
+        (t["geo"]["lat"], t["geo"]["lng"])
+        for t in tiles
+        if t.get("geo")
+        and t["geo"].get("lat") is not None
+        and t["geo"].get("lng") is not None
+        and math.isfinite(t["geo"]["lat"])
+        and math.isfinite(t["geo"]["lng"])
+    ]
+    if len(coords) < 3:
+        return
+
+    med_lat = sorted(c[0] for c in coords)[len(coords) // 2]
+    med_lng = sorted(c[1] for c in coords)[len(coords) // 2]
+
+    for t in tiles:
+        geo = t.get("geo")
+        if (
+            not geo
+            or geo.get("lat") is None
+            or geo.get("lng") is None
+            or not math.isfinite(geo["lat"])
+            or not math.isfinite(geo["lng"])
+        ):
+            continue
+        d = _haversine_km((med_lat, med_lng), (geo["lat"], geo["lng"]))
+        if d > _COORD_OUTLIER_THRESHOLD_KM:
+            logger.warning(
+                "[EXPERIENCE] Discarding outlier coords for '%s': %.1fkm from cluster center",
+                t.get("title", ""),
+                d,
+            )
+            del t["geo"]
 
 
 async def cancel_inflight() -> int:
@@ -821,6 +878,9 @@ async def generate_experience_tiles_for_day(
 
     all_tiles = all_tiles[:tiles_per_day]
 
+    # Discard LLM-generated coordinate outliers before GP enrichment
+    _discard_coordinate_outliers(all_tiles)
+
     # ENRICH: Ground fill-day tiles with Google Places
     if all_tiles and settings.use_google_places_provider:
         try:
@@ -1196,6 +1256,9 @@ async def _generate_experiences_impl(
             logger.warning("[EXPERIENCE] Parallel generation returned 0 tiles")
             _set_tier2_generation_source(state, "llm")
             return []
+
+        # Discard LLM-generated coordinate outliers before GP enrichment
+        _discard_coordinate_outliers(new_tile_dicts)
 
         # ENRICH: Ground tiles with Google Places (real coords, photos, place_id)
         if settings.use_google_places_provider:

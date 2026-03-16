@@ -38,8 +38,34 @@ import {
 export type { DataDensity };
 export { computeDataDensity };
 
-export function computeTimelineVariant(state: PlanViewState): TimelineVariant {
+export function shouldUsePlanMirrorLoader({
+  isShowingMirrorLoader,
+  density,
+  isPlanGenerationActive,
+  hasPartialItinerary = false,
+}: {
+  isShowingMirrorLoader: boolean;
+  density: DataDensity;
+  isPlanGenerationActive: boolean;
+  hasPartialItinerary?: boolean;
+}): boolean {
+  if (hasPartialItinerary) {
+    return false;
+  }
+
+  if (isShowingMirrorLoader || density === 'ghost') {
+    return true;
+  }
+
+  return isPlanGenerationActive && (density === 'empty' || density === 'bridge');
+}
+
+export function computeTimelineVariant(
+  state: PlanViewState,
+  hasPartialItinerary = false,
+): TimelineVariant {
   if (isItineraryReady(state)) return 'real';
+  if (hasPartialItinerary) return 'draft';
   if (isEditing(state) || isStrategyReady(state)) return 'draft';
   return 'ghost';
 }
@@ -96,11 +122,19 @@ export function StrategyStageRenderer({
     isExpandingItinerary, isCommitting, isRegenerating, onSaveTile,
     tripInputs, mode: explicitMode, destinationTitle: destinationCard?.title,
   });
+  const hasPartialItinerary = (o.effectiveDayCards?.length ?? 0) > 0;
 
   const planContent = useMemo(() => {
     const { isShowingMirrorLoader, tripDuration, density: immediateDensity } = o.displayLogic;
     const { fullModeSections } = o.specialistData;
-    if (isShowingMirrorLoader || immediateDensity === 'ghost') return <PlanMirrorLoader tripDuration={tripDuration} />;
+    if (shouldUsePlanMirrorLoader({
+      isShowingMirrorLoader,
+      density: immediateDensity,
+      isPlanGenerationActive: generation?.active === true,
+      hasPartialItinerary,
+    })) {
+      return <PlanMirrorLoader tripDuration={tripDuration} />;
+    }
     if (immediateDensity === 'empty' || immediateDensity === 'bridge') return null;
     return (
       <PlanFullDensityView
@@ -113,7 +147,8 @@ export function StrategyStageRenderer({
         isStreaming={o.isStreaming} isAnyRegenerating={o.isAnyRegenerating}
         isRegenUpdating={o.isRegenUpdating} isDesktop={o.isDesktop}
         preferenceCount={o.preferenceCount}
-        effectiveMode={o.effectiveMode} timelineVariant={computeTimelineVariant(state)}
+        effectiveMode={o.effectiveMode}
+        timelineVariant={computeTimelineVariant(state, hasPartialItinerary)}
         timelineSectionRef={o.timelineSectionRef} scrollContainerRef={o.scrollContainerRef}
         handleSaveTile={o.handleSaveTile} handleOpenBookingDrawer={o.handleOpenBookingDrawer}
         onOpenStaysSettings={onOpenStaysSettings}
@@ -127,7 +162,7 @@ export function StrategyStageRenderer({
     o.effectiveTiles, o.hasSectionData, o.hasItineraryContent, o.isStreaming, o.isAnyRegenerating,
     o.isRegenUpdating, o.isDesktop, o.preferenceCount,
     o.effectiveMode, o.timelineSectionRef, o.scrollContainerRef, o.handleSaveTile, o.handleOpenBookingDrawer,
-    state, viewModel, destinationCard, generation, savedTileIds, isExpandingItinerary,
+    state, viewModel, destinationCard, generation, hasPartialItinerary, savedTileIds, isExpandingItinerary,
     onRefineAssumptions, onOpenSheet,
   ]);
 

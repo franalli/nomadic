@@ -760,6 +760,79 @@ async def match_activity_to_viator(
             if all_queries_definitive:
                 _match_cache.set(cache_key, _NO_MATCH)
             return None
+    # ── Inferred category mismatch gate ────────────────────────────────
+    # Catch cross-domain false positives not covered by explicit CATEGORY_CONFLICTS
+    # (e.g., culinary activity matched to cycling tour, yoga matched to bus tour).
+    source_cat = _infer_category_from_title(activity_title)
+    product_cat = _infer_category_from_title(best_product.get("title", ""))
+
+    if source_cat != product_cat and source_cat != "tours" and product_cat != "tours":
+        # Both have specific but different categories — try a compatible product
+        compatible = [
+            p
+            for p in products
+            if _infer_category_from_title(p.get("title", "")) in (source_cat, "tours")
+            and not _has_category_conflict(category, p.get("title", ""))
+        ]
+        if compatible:
+            best_product, best_score, best_anchor_overlap = _best_scored_product(
+                clean_title, compatible
+            )
+            if best_score < 40:
+                logger.info(
+                    "[VIATOR] Compatible fallback score too low (%d) for '%s'",
+                    best_score,
+                    best_product.get("title", "") if best_product else "",
+                )
+                best_product = None
+            else:
+                logger.info(
+                    "[VIATOR] Inferred category fix: %s→%s, fell back to '%s'",
+                    source_cat,
+                    product_cat,
+                    best_product.get("title", "") if best_product else "",
+                )
+        else:
+            logger.info(
+                "[VIATOR] Rejected inferred mismatch: source=%s product=%s title='%s'",
+                source_cat,
+                product_cat,
+                best_product.get("title", ""),
+            )
+            best_product = None
+
+    # Specific source category matched to generic "tours" — require activity stem overlap
+    if (
+        best_product
+        and source_cat not in ("tours", "nature", "cultural", "temples")
+        and _infer_category_from_title(best_product.get("title", "")) == "tours"
+    ):
+        _STEM_MAP = {
+            "nightlife": "night",
+            "climbing": "climb",
+            "skiing": "ski",
+            "cycling": "cycl",
+            "sailing": "sail",
+            "surfing": "surf",
+            "diving": "div",
+            "hiking": "hik",
+            "cooking": "cook",
+            "snorkeling": "snorkel",
+        }
+        stem = _STEM_MAP.get(source_cat, source_cat[:4]).lower()
+        if stem not in best_product.get("title", "").lower():
+            logger.info(
+                "[VIATOR] Rejected generic tour for specific '%s': '%s'",
+                source_cat,
+                best_product.get("title", ""),
+            )
+            best_product = None
+
+    if best_product is None:
+        if all_queries_definitive:
+            _match_cache.set(cache_key, _NO_MATCH)
+        return None
+
     tile = viator_product_to_tile(best_product, destination)
 
     _match_cache.set(cache_key, tile)

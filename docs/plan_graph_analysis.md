@@ -127,16 +127,18 @@ backend/app/planner/
 | StepType | Executed By | Purpose | Emits partial event |
 | --- | --- | --- | --- |
 | `CLASSIFY` | `router_extraction.classify_change()` | Intent + extracted fields + change classification | `trip_inputs` (after apply) |
-| `DISPATCH_SPECIALISTS` | `_dispatch_specialists_parallel()` + `vertical_specialist.dispatch_specialist_with_brief()` | Replan only affected Tier 1 domains | `strategy_sections` |
+| `DISPATCH_SPECIALISTS` | `_dispatch_specialists_parallel()` + `vertical_specialist.dispatch_specialist_with_brief()` | Replan only affected Tier 1 domains | `specialist_preview`, `strategy_sections` (streamed progressively as each specialist finishes via `_stream_specialist_dispatch_events()` async generator) |
 | `LOCAL_INTEL` | `_run_local_intel()` | Build/update local expert section | `strategy_sections` |
 | `SEARCH_TILES` | `_search_tiles()` | Refresh flights/hotels/activities by change type | `tiles` |
-| `BUILD_ITINERARY` | `_build_itinerary()` | Run pure-Python itinerary builder + store `builder_result` | `day_cards` (including `[]` when the itinerary clears) |
+| `BUILD_ITINERARY` | `_build_itinerary()` | Run pure-Python itinerary builder + store `builder_result` | `day_cards` (enriched payload via `_day_cards_partial_event()` including tiles, strategy_sections, plan_view_state, itinerary context: overview, assumptions, constraint violations, warnings; emits `[]` when the itinerary clears) |
 | `GENERATE_RESPONSE` | `conversationalist.generate_response_streaming()` | Stream final assistant response | token stream |
 | `SHORT_CIRCUIT` | `_short_circuit_message()` and state reset helpers | Deterministic greeting/reset handling; question intent pairs SHORT_CIRCUIT with GENERATE_RESPONSE | none |
 
 ### Parallelism Rules
 
 - `DISPATCH_SPECIALISTS` and `SEARCH_TILES` may run in parallel via `_execute_parallel_group()`.
+- `_execute_parallel_group()` now yields `(step, events, completed)` tuples as each parallel task completes via an `asyncio.Queue`, instead of gathering all results with `asyncio.gather`. This means `node_status` completed events fire as each parallel step finishes, not after the whole group. Step results that are async generators (e.g. specialist dispatch) are consumed incrementally -- each yielded event is forwarded to the caller as it arrives.
+- `_dispatch_specialists_parallel()` is now an `AsyncGenerator` that yields `(topic, result)` pairs as each specialist completes (via `asyncio.as_completed`), instead of returning a collected dict. The step executor returns a streaming async generator `_stream_specialist_dispatch_events()` that emits `specialist_preview` and `strategy_sections` partials after each specialist finishes.
 - `LOCAL_INTEL` remains sequential to avoid concurrent writes to `strategy_sections`.
 - `execute_turn()` now previews `plan_turn()` before geographic feasibility prechecks. If the provisional plan is response-only (`[GENERATE_RESPONSE]`), coordinator skips feasibility I/O entirely and preserves the existing itinerary/strategy for true no-op turns.
 - Partial failures in parallel groups are recorded in `turn_meta["partial_failures"]` and surfaced via `ack_updates`.
@@ -434,6 +436,8 @@ If a block already carries partner deeplink/image data (Viator or GYG), Google P
 - `activity_browser.py` now tries `search_viator_for_destination()` first for Browse Activities, supplements with `search_gyg_for_destination()` when partner inventory is thin, dedupes partner results by title, then uses Google Places to backfill remaining slots. Placeholder category selection is now two-phase: user-selected browse category wins first, then shared `PLACE_TYPE_CATEGORY_TOKENS` from `google_places_provider.py` maps Google `primaryType` tokens to the same fallback image categories used elsewhere.
 - `viator_provider.py` and `gyg_provider.py` own the live affiliate integrations: each keeps a shared async `httpx` client, an in-memory browse/match cache, and a 5-failure/120-second circuit breaker. `gyg_provider.py` also normalizes GYG `long` coordinates to `{lat, lng}` and filters out multi-day tours (>8h). Both providers import shared category conflict rules from `activity_category_conflicts.py` (extracted to avoid duplication).
 - Viator title matching now normalizes specialist titles more aggressively before search: it strips short location prefixes, removes parenthetical/session suffixes, builds up to three ordered freetext query variants, and scores candidate products with fuzzy title similarity plus non-generic anchor-token overlap. `_NO_MATCH` is only negative-cached when destination lookup and all freetext queries were definitive, so transient taxonomy/search failures do not poison later retries.
+- Viator matching now includes an inferred category mismatch gate: `_infer_category_from_title()` classifies both source and product titles, and cross-domain false positives (e.g. culinary activity matched to cycling tour) are rejected or fall back to compatible candidates. A specific-to-generic tour stem overlap check also rejects generic tour matches for specific source categories (e.g. cooking, nightlife, climbing) unless the activity stem appears in the product title.
+- `activity_category_conflicts.py` `CATEGORY_CONFLICTS` map is extended with food/cooking, yoga/spa, nightlife, and shopping conflict sets against outdoor sport keywords, reducing false-positive partner matches across unrelated domains.
 - `partner_enrichment.py` replaces the old Viator-only pre-build pass. It queries enabled partners in parallel, picks the best match per tile by rating, then lower price, with Viator as the final tiebreaker, and mutates the activity tile in place with provider/deeplink/image/price metadata. When both tiles expose coordinates, matches farther than 120km from the source tile are rejected before merge.
 - `lifespan.py` closes the Viator, GYG, and Aviasales async clients on shutdown alongside the Google Places clients.
 
@@ -1179,13 +1183,33 @@ This keeps the final assistant turn aligned with what the backend just applied, 
 
 `generate_sse()` now passes an `asyncio.Event` cancel token into `coordinator.execute_turn()`. When the client disconnects, the streaming layer sets that event and the coordinator stops at the next step boundary instead of continuing background planner work.
 
+`generate_sse()` prioritizes processing `complete` events before checking for client disconnect, so the envelope is always captured even if the client disconnects mid-stream. It uses `try/finally` with explicit `aclose()` on the coordinator event source for guaranteed cleanup of the async generator.
+
+### Post-Response Enrichment Events
+
+After the conversationalist response and pending itinerary enrichment await, `execute_turn()` computes pre/post enrichment hashes for both day_cards and tiles. If either changed, it emits:
+
+1. A `tile_enrichment` partial (with `day_cards_changed`/`tiles_changed` boolean flags) carrying the enriched day_cards + tiles payload
+2. A fresh `day_cards` partial if day_cards changed
+3. A `tiles` partial if tiles changed
+
+These events land after the response token stream but before the `complete` envelope, allowing the frontend to progressively render enrichment results (partner pricing, Google Places coordinates, signed photos) without waiting for the full envelope.
+
+The coordinator also respects `cancel_event` -- if set (e.g. client disconnect), it skips response generation and envelope building entirely.
+
+### Async Cleanup
+
+- `_cleanup_pending_itinerary_enrichment()` now cancels AND awaits the pending enrichment task (not just cancels), preventing detached coroutines.
+- New `_cleanup_unsplash_task()` with `cancel` and `timeout` parameters provides guaranteed cleanup of the Unsplash prefetch task.
+- `execute_turn()` uses these in `try/except/finally` for deterministic task cleanup: normal path awaits with timeout, exception/finally paths cancel and await both tasks.
+
 ### Streaming Events
 
 | Event Type | Data | Description |
 | --- | --- | --- |
-| `node_status` | `{node, status, label, icon_key, estimated_duration_ms}` | Coordinator step progress mapped to legacy node/tool names |
+| `node_status` | `{node, status, label, icon_key, estimated_duration_ms}` | Coordinator step progress mapped to legacy node/tool names. `topic` and `stage` are now populated by the coordinator on specialist dispatch events (not just tolerated optional extras). Completed events fire as each parallel step finishes rather than after the whole group. |
 | `token` | `string` | Response text streamed from `conversationalist.generate_response_streaming()` |
-| `partial` | `{kind: "strategy_sections"\|"tiles"\|"trip_inputs", payload: any}` | Progressive render from coordinator step outputs |
+| `partial` | `{kind: "trip_inputs"\|"specialist_preview"\|"strategy_sections"\|"tiles"\|"day_cards"\|"tile_enrichment", payload: any, ...}` | Progressive render from coordinator step outputs. `specialist_preview` surfaces lightweight specialist highlights plus the current authoritative `strategy_sections`, and the frontend defers the immediately following compatibility `strategy_sections` merge by one animation frame so the preview can paint without an immediate duplicate merge. `day_cards` partials now carry enriched payloads via `_day_cards_partial_payload()` (tiles, strategy_sections, plan_view_state, itinerary context: overview, assumptions, constraint violations, warnings). `tile_enrichment` is a new post-response kind emitted after pending itinerary enrichment completes but before `complete`; it carries the enriched day_cards + tiles with `day_cards_changed` and `tiles_changed` boolean flags so the frontend can selectively re-render only what changed. If day_cards or tiles changed, dedicated `day_cards` and `tiles` partials follow immediately after the `tile_enrichment` partial. |
 | `feasibility_warning` | `{topic, status, reason, alternative}` | Coordinator feasibility signal. Forwarded by `generate_sse()` as a public SSE event for frontend toast display. |
 | `complete` | `{document, session_state, version, updated_at, ...}` | Public SSE payload built in `generate_sse()` after `apply_planner_update()`, wrapping/normalizing coordinator `_build_envelope()` output |
 | `error` | `{message}` | Error information |
@@ -1261,6 +1285,10 @@ Both `google_places_provider.py` and `main.py` resolve the secret through the sa
 This removes drift between signed photo URL generation and runtime verification for `/api/media/google-places-photo` and `/api/media/google-places-photo-url`.
 
 `spend_guard.py` now stores spend counters in the shared `runtime_state` table instead of process-local dicts. Rows are keyed by `{scope, day_key}` (`global`, `session`, `provider`) with `value_micro_usd` counters and next-midnight UTC expiry, so daily caps hold across multiple workers. Provider-level caps are currently enforced for `places`; `request_dedup.py` reuses the same table for short-lived idempotency and expand-mutex lease rows.
+
+### Coordinate Outlier Detection (`experience_generator.py`)
+
+`_discard_coordinate_outliers()` removes geo dicts from tiles whose coordinates are >100km from the cluster median (haversine distance). Applied in-place before Google Places enrichment in both the fill-day path (`generate_experience_tiles_for_day`) and the main generation path (`_generate_experiences_impl`). Requires at least 3 geocoded tiles to compute a reliable median; otherwise all tiles are left untouched. This prevents LLM-hallucinated coordinates from polluting downstream enrichment and placement.
 
 ### Settings-Aware Tile Filtering
 

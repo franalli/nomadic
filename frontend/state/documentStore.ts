@@ -7,7 +7,14 @@
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
-import { apiFetch, parseRetryAfter } from '@/lib/api';
+import {
+  apiFetch,
+  type DayCardsPartialPayload,
+  parseRetryAfter,
+  type SpecialistPreviewActivity,
+  type SpecialistPreviewPayload,
+  type TileEnrichmentPayload,
+} from '@/lib/api';
 import { debugLog, explicitDebugLog } from '@/lib/debug';
 import type {
   ActivitySettings,
@@ -759,6 +766,10 @@ type DocumentState = {
   // Envelope-driven generation status (store-owned, not persisted in document)
   generation: GenerationState | null;
 
+  // Progressive preview state for skeleton rendering before full day_cards land
+  _specialistPreview: SpecialistPreviewActivity[] | null;
+  _partialVersion: number | null;
+
   // Stashed activity tiles (Tier 1 suppressed — available for Browse Activities sheet)
   browseableActivities: Array<Record<string, unknown>>;
 
@@ -798,6 +809,16 @@ type DocumentState = {
 
   // Merge partial envelope update (used for streaming updates)
   mergeEnvelope: (envelope: EnvelopeUpdate, generation?: number) => void;
+  setSpecialistPreview: (payload: SpecialistPreviewPayload) => void;
+  setPartialDayCards: (
+    payload: DayCardsPartialPayload,
+    generation?: number
+  ) => void;
+  mergeTileEnrichment: (
+    payload: TileEnrichmentPayload,
+    generation?: number,
+    tilesReplaced?: boolean
+  ) => void;
 
   // Restore trip inputs from a snapshot (used when undoing a message)
   restoreTripInputs: (tripInputs: DocumentTripInputs) => void;
@@ -875,6 +896,8 @@ const initialState = {
   cartTileIds: new Set<string>(),
   // Envelope-driven generation status (not persisted in document payload)
   generation: null as GenerationState | null,
+  _specialistPreview: null as SpecialistPreviewActivity[] | null,
+  _partialVersion: null as number | null,
   // Stashed activity tiles (Tier 1 suppressed — available for Browse Activities sheet)
   browseableActivities: [] as Array<Record<string, unknown>>,
   // Enrichment poller cancellation — incremented on each message send
@@ -2183,6 +2206,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // Keep shadow in sync so filterNoopTripInputPatch has an accurate baseline
       // after graph runs that modify trip_inputs (e.g., backend adds categories).
       _lastPatchedTripInputs: structuredClone(mergedTripInputs),
+      _specialistPreview: null,
+      ...(response.document.day_cards !== undefined && {
+        _partialVersion: Date.now(),
+      }),
       ...(response.document.browseable_activities !== undefined && {
         browseableActivities: response.document.browseable_activities,
       }),
@@ -2233,9 +2260,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     // === END RAF BUFFERING ===
 
-    const { document: currentDoc } = get();
-    if (!currentDoc) return;
-
     // Skip no-op envelopes — partials without meaningful data don't need a state write
     const hasPayload =
       (envelope.tiles !== undefined && Object.keys(envelope.tiles).length > 0) ||
@@ -2251,6 +2275,23 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     envelope = sanitizeEnvelopeImages(envelope);
+
+    let { document: currentDoc } = get();
+    if (!currentDoc) {
+      currentDoc = {
+        trip_context_id: null,
+        trip_inputs: applyActivityCategoryDefaults({
+          ...DEFAULT_TRIP_INPUTS,
+          ...(envelope.trip_inputs ?? {}),
+        }),
+        branches: [],
+        tiles: {},
+        ...(envelope.plan_view_state !== undefined && {
+          plan_view_state: envelope.plan_view_state,
+        }),
+      };
+      explicitDebugLog('[documentStore.mergeEnvelope] 🧱 Created minimal document for partial envelope');
+    }
 
     // ============================================================
     // DESTINATION LOCK: Once set, destination can only change via full trip reset
@@ -2496,10 +2537,106 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       updatedAt: new Date().toISOString(),
       generation: envelope.generation !== undefined ? envelope.generation : get().generation,
       isRegenerating: nextIsRegenerating,
+      ...(envelope.day_cards !== undefined && {
+        _specialistPreview: null,
+        _partialVersion: Date.now(),
+      }),
       ...(envelope.browseable_activities !== undefined && {
         browseableActivities: envelope.browseable_activities,
       }),
     });
+  },
+
+  setSpecialistPreview: (payload) => {
+    const previewActivities = Array.isArray(payload.activities)
+      ? payload.activities.filter((activity) => Boolean(activity?.title?.trim()))
+      : null;
+    const strategySections =
+      Array.isArray(payload.strategy_sections) && payload.strategy_sections.length > 0
+        ? payload.strategy_sections
+        : undefined;
+
+    set((state) => {
+      const nextDocument = strategySections
+        ? sanitizeDocumentImages({
+            ...(state.document ?? {
+              trip_context_id: null,
+              trip_inputs: structuredClone(DEFAULT_TRIP_INPUTS),
+              branches: [],
+              tiles: {},
+            }),
+            strategy_sections: strategySections,
+          })
+        : state.document;
+
+      return {
+        ...(nextDocument && { document: nextDocument }),
+        _specialistPreview: previewActivities && previewActivities.length > 0
+          ? previewActivities
+          : null,
+        updatedBy: 'planner',
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  },
+
+  setPartialDayCards: (payload, generation) => {
+    get().mergeEnvelope(
+      {
+        day_cards: payload.day_cards,
+        ...(payload.tiles !== undefined && { tiles: payload.tiles }),
+        ...(payload.strategy_sections !== undefined && {
+          strategy_sections: payload.strategy_sections,
+        }),
+        ...(payload.plan_view_state !== undefined && {
+          plan_view_state: payload.plan_view_state,
+        }),
+        ...(payload.itinerary_overview !== undefined && {
+          itinerary_overview: payload.itinerary_overview,
+        }),
+        ...(payload.itinerary_assumptions !== undefined && {
+          itinerary_assumptions: payload.itinerary_assumptions,
+        }),
+        ...(payload.constraint_violations !== undefined && {
+          constraint_violations: payload.constraint_violations,
+        }),
+      },
+      generation
+    );
+  },
+
+  mergeTileEnrichment: (payload, generation, tilesReplaced) => {
+    const context = payload.context;
+    const shouldMergeDayCards =
+      payload.day_cards !== undefined && payload.day_cards_changed !== false;
+    const shouldMergeTiles = payload.tiles !== undefined && payload.tiles_changed !== false;
+
+    get().mergeEnvelope(
+      {
+        ...((payload.plan_view_state ?? context?.plan_view_state) !== undefined && {
+          plan_view_state: payload.plan_view_state ?? context?.plan_view_state,
+        }),
+        ...((payload.itinerary_overview ?? context?.itinerary_overview) !== undefined && {
+          itinerary_overview:
+            payload.itinerary_overview ?? context?.itinerary_overview,
+        }),
+        ...((payload.itinerary_assumptions ?? context?.itinerary_assumptions) !== undefined && {
+          itinerary_assumptions:
+            payload.itinerary_assumptions ?? context?.itinerary_assumptions,
+        }),
+        ...((payload.constraint_violations ?? context?.constraint_violations) !== undefined && {
+          constraint_violations:
+            payload.constraint_violations ?? context?.constraint_violations,
+        }),
+        ...(payload.strategy_sections !== undefined && {
+          strategy_sections: payload.strategy_sections,
+        }),
+        ...(shouldMergeDayCards && { day_cards: payload.day_cards }),
+        ...(shouldMergeTiles && { tiles: payload.tiles }),
+        ...(tilesReplaced ? { tiles_replaced: true } : {}),
+      },
+      generation
+    );
   },
 
   restoreTripInputs: (tripInputs: DocumentTripInputs) => {
@@ -2609,6 +2746,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set({
       currentRunId: null,
       abortController: null,
+      generation: null,
     });
   },
 
@@ -2618,6 +2756,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set({
       currentRunId: null,
       abortController: null,
+      generation: null,
     });
   },
 
