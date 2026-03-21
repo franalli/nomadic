@@ -15,6 +15,7 @@ import { useCallback, useState } from 'react';
 
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 import { ModalErrorBoundary } from '@/components/ui/ModalErrorBoundary';
+import { trackEvent } from '@/lib/analytics';
 import { DS } from '@/lib/design-system';
 import { usePanelToggleStore } from '@/state/panelToggleStore';
 import type { ViewMode } from '@/types/plan-envelope';
@@ -23,6 +24,7 @@ import type { Tile } from '@/types/tile';
 
 import { AlternativesModal } from './modals/AlternativesModal';
 import { SuggestionCard } from './tiles/SuggestionCard';
+import { TileRailCard } from './tiles/TileRailCard';
 
 interface BookingPlanningViewProps {
   /** Filtered stay tiles (after applyFilters) */
@@ -74,6 +76,8 @@ export function BookingPlanningView({
 
   const handleDetailsClick = useCallback((tile: Tile) => {
     setSelectedTile(tile);
+    const eventType = tile.type === 'hotel' ? 'hotel_clicked' : tile.type === 'flight' ? 'flight_clicked' : 'activity_clicked';
+    trackEvent(eventType, null, { tile_type: tile.type, tile_id: tile.id });
   }, []);
 
   const handleSaveClick = useCallback(
@@ -120,37 +124,53 @@ export function BookingPlanningView({
     tiles: Tile[],
     emptyMessage: string,
     options?: { onOpenStaysSettings?: () => void }
-  ) => (
-    <section aria-label={`${title.toLowerCase()} suggestions`}>
-      <h2 className={`${DS.text.label} mb-3`}>{title}</h2>
-      <div className="space-y-4">
+  ) => {
+    const isRail = title === 'Stays' || title === 'Flights';
+
+    return (
+      <section aria-label={`${title.toLowerCase()} suggestions`}>
+        <h2 className={`${DS.text.label} mb-3`}>{title}</h2>
         {tiles.length > 0 ? (
-          <>
-            {tiles.slice(0, 6).map((tile) => (
-              <SuggestionCard
-                key={tile.id}
-                tile={tile}
-                reasoning={tile.meta?.reasoning as string | undefined}
-                isSaved={savedTileIds.has(tile.id)}
-                onSave={handleSaveClick}
-                onViewAlternatives={() => handleViewAlternatives(tile)}
-                onDetailsClick={handleDetailsClick}
-                onOpenStaysSettings={options?.onOpenStaysSettings}
-                variant="compact"
-              />
-            ))}
-            {tiles.length > 6 && (
-              <p className="pt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                +{tiles.length - 6} more {title.toLowerCase()} available
-              </p>
-            )}
-          </>
+          isRail ? (
+            <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory -mx-1 px-1">
+              {tiles.slice(0, 6).map((tile) => (
+                <TileRailCard
+                  key={tile.id}
+                  tile={tile}
+                  isSaved={savedTileIds.has(tile.id)}
+                  onSave={handleSaveClick}
+                  onDetailsClick={handleDetailsClick}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {tiles.slice(0, 6).map((tile) => (
+                <SuggestionCard
+                  key={tile.id}
+                  tile={tile}
+                  reasoning={tile.meta?.reasoning as string | undefined}
+                  isSaved={savedTileIds.has(tile.id)}
+                  onSave={handleSaveClick}
+                  onViewAlternatives={() => handleViewAlternatives(tile)}
+                  onDetailsClick={handleDetailsClick}
+                  onOpenStaysSettings={options?.onOpenStaysSettings}
+                  variant="compact"
+                />
+              ))}
+              {tiles.length > 6 && (
+                <p className="pt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                  +{tiles.length - 6} more {title.toLowerCase()} available
+                </p>
+              )}
+            </div>
+          )
         ) : (
           <p className="py-2 text-xs text-zinc-500 dark:text-zinc-400">{emptyMessage}</p>
         )}
-      </div>
-    </section>
-  );
+      </section>
+    );
+  };
 
   return (
     <ModalErrorBoundary>

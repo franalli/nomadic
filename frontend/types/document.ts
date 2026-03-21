@@ -163,6 +163,18 @@ export type DocumentTripInputs = {
 
 export type DocumentTripInputsPatch = Partial<DocumentTripInputs>;
 
+/** Nearby-date flex pricing from Aviasales grouped_prices fallback. */
+export interface DateFlexSuggestion {
+  cheapest_date: string;
+  cheapest_price: number;
+  requested_date: string;
+  requested_price: number;
+  savings: number;
+  savings_pct: number;
+  currency: string;
+  nearby_prices: Record<string, number>;
+}
+
 export type SuggestionChipMeta = {
   chip_type: 'cta' | 'follow_up' | 'setting';
   category: string;

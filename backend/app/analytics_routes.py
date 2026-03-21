@@ -4,7 +4,11 @@
 Extracted from main.py to keep the FastAPI app module focused on core routes.
 """
 
+import logging
+from typing import Any, Dict, Optional
+
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.db_models as db_models
@@ -13,9 +17,41 @@ from app.db import get_async_db
 from app.middleware import get_session_from_request
 from app.rate_limit import limiter
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api", tags=["analytics"])
 
 async_db_dependency = Depends(get_async_db)
+
+
+class TrackEventRequest(BaseModel):
+    event_type: str = Field(max_length=48)
+    destination: Optional[str] = Field(default=None, max_length=200)
+    metadata: Optional[Dict[str, Any]] = None
+
+
+@router.post("/analytics/event")
+@limiter.limit("60/minute")
+async def track_event(
+    request: Request,
+    body: TrackEventRequest,
+    db: AsyncSession = async_db_dependency,
+):
+    """Fire-and-forget event tracking. Never fails the user request."""
+    try:
+        session_id = getattr(request.state, "session_id", None) or "anonymous"
+        event = db_models.TripEvent(
+            session_id=str(session_id)[:64],
+            event_type=body.event_type,
+            destination=body.destination,
+            metadata_=body.metadata,
+        )
+        db.add(event)
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.warning("[analytics] Event tracking failed (non-fatal): %s", exc)
+    return {"status": "ok"}
 
 
 @router.post("/tiles/click")

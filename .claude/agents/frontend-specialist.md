@@ -37,7 +37,7 @@ Before ANY code change, read the relevant SSoT doc:
 ## Critical Invariants (reinforced from CLAUDE.md)
 
 - **Coordinator architecture is law.** Backend emits `plan_view_state` from coordinator envelopes — frontend reads it, never fabricates it (frontend-only guards: `S0_EMPTY`, `S1_DESTINATION_SET`).
-- **TripPlan is the only state SSoT.** No parallel state objects on frontend.
+- **PlanDocumentData is the only state SSoT.** No parallel state objects on frontend.
 - **No hardcoded world data.** No location lists, city enums, airport codes, coordinate lookups.
 - **Single Renderer Pattern.** `StrategyStageRenderer` adapts to data density — never swap for separate view components.
 - **≤8 files per task** without explicit approval.
@@ -60,16 +60,16 @@ frontend/
                      ChatStatusHeader,
                      ChatSuggestionBar, ChatSuggestionChips,
                      chatMessageProcessing.ts, chatMessageMarkdown.tsx,
-                     suggestion-actions.ts
+                     chatPanelLayout.ts, suggestion-actions.ts
     plan/          → StrategyStageRenderer, strategyStagePoi.ts,
                      BookingSection, BookingSection.helpers.ts, BookingSectionBookingView,
                      TimelineThread, useTimelineThreadBrowseSheet, useTimelineThreadMapSync,
-                     PlanHeader, NextStepBar, nextStepBarUtils.ts, planStateHelpers,
+                     PlanHeader, NextStepBar, planStateHelpers,
                      UnifiedChipRow,
                      TripSummaryPills, TripSummaryPills.helpers.ts, TripSummaryPillsSegment,
                      useTripSummaryFade, tripSummaryUtils,
                      BookingPlanningView, BookingSummary,
-                     ChipGroup, ChipGroup.helpers.ts, ChipScrollContainer, ModuleChip, SetupCoreChip,
+                     ChipGroup, ChipScrollContainer, ModuleChip, SetupCoreChip,
                      FullDensityTimeline, PdfExportButton, ShareTripButton,
                      TimelineBlockList, TimelineBlockList.helpers.ts,
                      TimelineBlockListAddActivityButton, TimelineBlockListFreeDay, TimelineBlockListLegacyBlock,
@@ -82,10 +82,9 @@ frontend/
                      PlanTimelineSection,
                      BrowseActivitiesSheet,
                      useBookingDrawerState, useStrategyStageOrchestration
-      pdf/        → TripPdfDocument, TripPdfSections, TripPdfStyles
-      booking/     → BookingDrawer, CategorySection, CategorySectionTile, CheckoutSidebar
-      modals/      → AlternativesModal, AlternativesModal.helpers.ts,
-                     AlternativesModalContent, AlternativesModalOptionCard, AlternativesModalThumbnail
+      pdf/        → TripPdfDocument
+      booking/     → BookingDrawer, CategorySection, CheckoutSidebar
+      modals/      → AlternativesModal
       stages/      → StrategyHero, StrategyHeroCompact, useStrategyHeroEnrichment,
                      S2AgentCard, S2AgentCardExpanded, S2LocalIntelSection,
                      S2TopicConfig,
@@ -94,24 +93,22 @@ frontend/
                      StrategyHeroTravelIntelligence, StrategyHeroUtils
       sheets/      → BaseSheet, BaseSheet.shared.tsx, BaseSheetDesktopDialog, BaseSheetMobileSheet,
                      DestinationSheet, OriginSheet,
-                     DatesSheet, DatesSheet.utils.ts, DatesSheetDialog,
-                     TravelersSheet, TravelersSheetControls,
-                     BudgetSheet, BudgetSheetControls,
-                     FlightsSheet, FlightsSheetControls,
-                     StaysSheet, StaysSheetFields,
-                     ActivitiesSheet, ActivitiesSheet.helpers.ts, ActivitiesSheetContent,
-                     ActivitiesSheetFooter,
-                     LocationSheetParts, SheetFooterActions,
+                     DatesSheet,
+                     TravelersSheet,
+                     BudgetSheet,
+                     FlightsSheet,
+                     StaysSheet,
+                     ActivitiesSheet, ActivitiesSheetContent,
                      TripSettingsSheet, GatingBlocker
       timeline/    → InlineDatePrompt, TimelineSkeleton,
                      DragPreviewCard, DraggableBlock, DroppableDay, FreeDayDropSlot,
-                     ItineraryDndWrapper, RichBlockRenderer, RichBlockRenderer.helpers.ts,
+                     ItineraryDndWrapper, RichBlockRenderer,
                      useTimelineFillDay
-        blocks/    → ActivityMiniCard, ActivityCardActions, ActivityCardActionParts,
-                     ActivityCardMeta, ActivityCardMeta.helpers.ts, activityMiniCardTheme.ts,
-                     ActivityCardPhoto, LogisticsBlock, LogisticsBlockParts,
+        blocks/    → ActivityMiniCard, ActivityCardActions,
+                     ActivityCardMeta, ActivityCardMeta.helpers.ts,
+                     ActivityCardPhoto, LogisticsBlock,
                      SafetyBlock, GhostSlot,
-                     FreeDayCard, FreeDayCardSections,
+                     FreeDayCard,
                      HoldToDeleteButton, PreferenceAttributionBadge, types.ts
       tiles/       → SuggestionCard, SuggestionCardContent, suggestionCardSections
     tiles/         → TileCard, TileCardActions, TileCardContent, TileCardMedia,

@@ -762,7 +762,8 @@ export type AppliedUpdateKey =
   | 'destination'
   | 'dates'
   | 'travelers'
-  | 'budget';
+  | 'budget'
+  | 'preferences';
 
 /**
  * Conflict codes - locked enum, frontend renders deterministic copy.

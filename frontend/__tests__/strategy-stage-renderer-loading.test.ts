@@ -166,4 +166,40 @@ describe('shouldUsePlanMirrorLoader', () => {
       })
     ).toBe(false);
   });
+
+  it('exits the mirror loader when tiles arrive during generation', () => {
+    expect(
+      shouldUsePlanMirrorLoader({
+        isShowingMirrorLoader: false,
+        density: 'ghost',
+        isPlanGenerationActive: true,
+        hasPartialItinerary: false,
+        hasTiles: true,
+      })
+    ).toBe(false);
+  });
+
+  it('does not exit the mirror loader for tiles when generation is inactive', () => {
+    expect(
+      shouldUsePlanMirrorLoader({
+        isShowingMirrorLoader: false,
+        density: 'ghost',
+        isPlanGenerationActive: false,
+        hasPartialItinerary: false,
+        hasTiles: true,
+      })
+    ).toBe(true);
+  });
+
+  it('keeps the mirror loader when no tiles and generation is active', () => {
+    expect(
+      shouldUsePlanMirrorLoader({
+        isShowingMirrorLoader: false,
+        density: 'ghost',
+        isPlanGenerationActive: true,
+        hasPartialItinerary: false,
+        hasTiles: false,
+      })
+    ).toBe(true);
+  });
 });

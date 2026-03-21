@@ -508,3 +508,88 @@ describe('RichBlockRenderer activity hierarchy', () => {
     expect(screen.getByText('$$')).toBeInTheDocument();
   });
 });
+
+describe('RichBlockRenderer null guard', () => {
+  beforeEach(() => {
+    useDocumentStore.getState().reset();
+  });
+
+  function buildBarebonesBlock(overrides: Partial<DayBlock> = {}): DayBlock {
+    return {
+      period: 'morning',
+      ...overrides,
+    };
+  }
+
+  it('returns null for block with no summary, no booked_tile.title, and no activity_type', () => {
+    const block = buildBarebonesBlock();
+    const { container } = render(
+      <RichBlockRenderer
+        block={block}
+        blockIndex={0}
+        blockId="null-guard-1"
+        dayNumber={1}
+        mode="planning"
+      />
+    );
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('renders ActivityMiniCard when block has summary', () => {
+    const block = buildBarebonesBlock({ summary: 'Morning walk along the river' });
+    render(
+      <RichBlockRenderer
+        block={block}
+        blockIndex={0}
+        blockId="null-guard-2"
+        dayNumber={1}
+        mode="planning"
+      />
+    );
+
+    expect(screen.getByText('Morning walk along the river')).toBeInTheDocument();
+  });
+
+  it('renders ActivityMiniCard when block has booked_tile.title but no summary', () => {
+    // booked_tile.title prevents the null guard from suppressing the block,
+    // but ActivityMiniCard derives its display title from activity_type/summary —
+    // so the tile title won't appear as a heading. We just verify the block renders.
+    const block = buildBarebonesBlock({
+      booked_tile: {
+        id: 'tile_abc',
+        type: 'activity',
+        title: 'Colosseum Tour',
+        currency: 'USD',
+        deeplink_url: 'https://example.com/tile_abc',
+      },
+    });
+    const { container } = render(
+      <RichBlockRenderer
+        block={block}
+        blockIndex={0}
+        blockId="null-guard-3"
+        dayNumber={1}
+        mode="planning"
+      />
+    );
+
+    // Block is rendered (not suppressed); the card wrapper element is present.
+    expect(container.firstChild).not.toBeNull();
+  });
+
+  it('renders ActivityMiniCard when block has activity_type but no summary or booked_tile.title', () => {
+    const block = buildBarebonesBlock({ activity_type: 'Sightseeing' });
+    render(
+      <RichBlockRenderer
+        block={block}
+        blockIndex={0}
+        blockId="null-guard-4"
+        dayNumber={1}
+        mode="planning"
+      />
+    );
+
+    expect(screen.getByText('Sightseeing')).toBeInTheDocument();
+  });
+});

@@ -195,6 +195,14 @@ class RouterOutput(BaseModel):
             "expert -> advanced. null if not mentioned."
         ),
     )
+    traveler_style: Optional[str] = Field(
+        None,
+        description=(
+            "Overall trip style/vibe if inferable from the message. One of: "
+            "'adventure', 'relaxed', 'cultural', 'family', 'luxury', 'budget', 'romantic'. "
+            "null if not inferable. Only set when the user's language clearly implies a style."
+        ),
+    )
     reset_budget: bool = Field(
         default=False,
         description=(
@@ -489,6 +497,19 @@ If the user wants to CLEAR constraints (not set new ones), use reset flags:
 - "no budget limit" -> reset_budget: true
 - "any hotel is fine" -> reset_hotel: true
 - "budget of $3000" -> reset_budget: false, budget: 3000
+
+## Task 6b: Traveler Style Detection
+
+If the user's message implies a travel style, set traveler_style:
+- "we're adventure junkies" → "adventure"
+- "chill beach vacation" → "relaxed"
+- "exploring temples and history" → "cultural"
+- "traveling with my kids" → "family"
+- "five-star all the way" → "luxury"
+- "on a shoestring budget" → "budget"
+- "honeymoon trip" → "romantic"
+
+CRITICAL: Only set when the USER explicitly signals a style. Do NOT infer from destination alone, activities alone, or budget alone. null if unclear.
 
 ## Task 7: Settings Extraction
 

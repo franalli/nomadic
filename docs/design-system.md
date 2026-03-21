@@ -1834,17 +1834,17 @@ The "Awaiting Input" terminal-style text reinforces the "Architect/AI" persona. 
 
 Two implementations exist:
 
-**S0 Hero (ChatBootstrapHero):** Uses CSS variable `text-primary` / `bg-primary` for theme-aware emerald, plus `DS.glowClass.dropText` and `DS.glowClass.cursor` glow in both modes.
+**S0 Hero (ChatBootstrapHero):** Uses explicit emerald classes (`text-emerald-600 dark:text-emerald-500`, `bg-emerald-600 dark:bg-emerald-500`) plus dark-only `DS.glowClass.dropText` and `DS.glowClass.cursor` glow.
 
-**Chat Status (ChatMessageList):** Uses explicit emerald classes with dark-only glow.
+**Chat Status (ChatMessageList):** Uses the same explicit emerald classes with dark-only glow.
 
 | Element | Light Mode | Dark Mode |
 |---------|------------|-----------|
 | **Text Color** | `text-emerald-600` | `text-emerald-500` |
-| **Glow** | None (chat) / `DS.glowClass.dropText` (S0 hero) | `DS.glowClass.dropText` |
+| **Glow** | None | `DS.glowClass.dropText` |
 | **Font** | `font-mono text-[9px] uppercase tracking-[0.12em] font-bold` | Same |
 | **Cursor Color** | `bg-emerald-600` | `bg-emerald-500` |
-| **Cursor Glow** | None (chat) / `DS.glowClass.cursor` (S0 hero) | `DS.glowClass.cursor` |
+| **Cursor Glow** | None | `DS.glowClass.cursor` |
 | **Cursor Animation** | `animate-terminal-blink` (defined in `globals.css`) | Same |
 
 ### Code Example (ChatMessageList)
@@ -1873,16 +1873,16 @@ Two implementations exist:
 ### Code Example (S0 Hero — ChatBootstrapHero)
 
 ```tsx
-// Uses CSS variable tokens for theme-aware emerald + glow in both modes
+// Explicit emerald classes + dark-only glow
 <span className={cn(
-  `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-primary`,
-  DS.glowClass.dropText,
+  `font-mono ${DS.textSize.nano} uppercase tracking-[0.12em] font-bold text-emerald-600 dark:text-emerald-500`,
+  `dark:${DS.glowClass.dropText}`,
 )}>
   {status.label}
 </span>
 <div className={cn(
-  'h-1.5 w-1 animate-terminal-blink rounded-sm bg-primary',
-  DS.glowClass.cursor,
+  'h-1.5 w-1 animate-terminal-blink rounded-sm bg-emerald-600 dark:bg-emerald-500',
+  `dark:${DS.glowClass.cursor}`,
 )} />
 ```
 
@@ -2616,7 +2616,7 @@ Additional components in the current codebase:
 | `StrategyHero` | `plan/stages/StrategyHero.tsx` | None (orchestrator; delegates to children) | Specialist colors from `SPECIALIST_STYLE_CLASSES` map (in `StrategyHeroUtils.tsx`); child components use `DS.text.*`, `DS.textSize.*`, `DS.infoBox` |
 | `ActivityMiniCard` | `plan/timeline/blocks/ActivityMiniCard.tsx` | None (orchestrator; delegates to `ActivityCardPhoto`, `ActivityCardMeta`, `ActivityCardActions`) | `hover:shadow-soft` for card hover; default card uses a full-width landscape banner plus metadata/action row |
 | `UnifiedChipRow` | `plan/UnifiedChipRow.tsx` | None (uses `SetupCoreChip` with CSS custom properties) | Constraint chips; disabled: `opacity-50 cursor-not-allowed` |
-| `MobileModeHeader` | `layout/MobileModeHeader.tsx` | None (delegates to children) | Condensed summary bar renders below the fixed header; child components (`MobileModeHeaderSections`, `MobileHeaderMenu`) use `DS.textSize.micro` and `h-11 w-11` touch targets |
+| `MobileModeHeader` | `layout/MobileModeHeader.tsx` | None (delegates to children) | Condensed summary bar renders below the fixed header; child `MobileModeHeaderSections` uses `DS.materials.glass`; child `MobileHeaderMenu` uses `DS.textSize.micro` and `h-11 w-11` touch targets |
 | `NextStepBar` | `plan/NextStepBar.tsx` | `DS.text.label`, `DS.textSize.micro`, `DS.glowClass.action` | Command Island; `shadow-card` for status pill, `shadow-soft` for island |
 | `GhostSlot` | `plan/timeline/blocks/GhostSlot.tsx` | None (raw pattern) | Dashed CTA slot; `border-dashed border-zinc-300 dark:border-white/10` |
 | `LogisticsBlock` | `plan/timeline/blocks/LogisticsBlock.tsx` | None (raw pattern) | Flight/transfer block; type-specific bg (e.g. `dark:bg-zinc-800/50` for departure/checkout, `dark:bg-emerald-950/20` for arrival, `dark:bg-blue-950/20` for checkin) |

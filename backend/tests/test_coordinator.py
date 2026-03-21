@@ -35,6 +35,7 @@ from app.planner.coordinator import (
     _post_build_enrich_placed_activities,
     _preserved_specialist_tiles_for_turn,
     _refresh_preserved_specialist_section_metadata,
+    _rehydrate_trimmed_booked_tiles,
     _resolve_activity_category_filters,
     _run_local_intel,
     _short_circuit_message,
@@ -142,14 +143,103 @@ class TestPlanTurnReset:
 class TestPlanTurnQuestion:
     """Question intent generates a response without plan changes."""
 
-    def test_question_steps(self) -> None:
+    def test_question_no_destination_skips_local_intel(self) -> None:
+        # No destination, no question_type → just GENERATE_RESPONSE, no SHORT_CIRCUIT dead code
         classifier = _make_classifier(intent="QUESTION", change_type=ChangeType.QUESTION)
         plan = plan_turn(classifier, _make_state())
 
         step_types = [s.step_type for s in plan.steps]
-        assert StepType.SHORT_CIRCUIT in step_types
-        assert StepType.GENERATE_RESPONSE in step_types
+        assert step_types == [StepType.GENERATE_RESPONSE]
+        assert StepType.SHORT_CIRCUIT not in step_types
         assert plan.estimated_llm_calls == 1
+
+    def test_question_with_question_type_triggers_local_intel(self) -> None:
+        # question_type set + destination in trip_plan → LOCAL_INTEL + GENERATE_RESPONSE
+        classifier = _make_classifier(
+            intent="QUESTION",
+            change_type=ChangeType.QUESTION,
+            question_type="safety",
+        )
+        state = _make_state(trip_plan={"destination": "Bali"})
+        plan = plan_turn(classifier, state)
+
+        step_types = [s.step_type for s in plan.steps]
+        assert StepType.LOCAL_INTEL in step_types
+        assert StepType.GENERATE_RESPONSE in step_types
+        assert plan.steps[-1].step_type == StepType.GENERATE_RESPONSE
+
+    def test_question_with_specialist_hints_triggers_local_intel(self) -> None:
+        # specialist_hints present + destination → LOCAL_INTEL + GENERATE_RESPONSE
+        classifier = _make_classifier(
+            intent="QUESTION",
+            change_type=ChangeType.QUESTION,
+            specialist_hints=["diving"],
+        )
+        state = _make_state(trip_plan={"destination": "Bali"})
+        plan = plan_turn(classifier, state)
+
+        step_types = [s.step_type for s in plan.steps]
+        assert StepType.LOCAL_INTEL in step_types
+        assert StepType.GENERATE_RESPONSE in step_types
+
+    def test_question_reuses_cached_local_intel(self) -> None:
+        # Local expert section already present for destination → skip LOCAL_INTEL
+        classifier = _make_classifier(
+            intent="QUESTION",
+            change_type=ChangeType.QUESTION,
+            question_type="activities",
+        )
+        state = _make_state(
+            trip_plan={"destination": "Bali"},
+            strategy_sections=[
+                {
+                    "specialist_type": "local_expert",
+                    "title": "Local Expert — Bali",
+                    "one_liner": "your adventure in Bali",
+                }
+            ],
+        )
+        plan = plan_turn(classifier, state)
+
+        step_types = [s.step_type for s in plan.steps]
+        assert StepType.LOCAL_INTEL not in step_types
+        assert StepType.GENERATE_RESPONSE in step_types
+
+    def test_question_destination_change_refetches_local_intel(self) -> None:
+        # Existing local_expert section is for Rwanda; classifier.destination is Tokyo →
+        # _has_local_intel_for_destination returns False for Tokyo → LOCAL_INTEL fires
+        classifier = _make_classifier(
+            intent="QUESTION",
+            change_type=ChangeType.QUESTION,
+            destination="Tokyo",
+            question_type="activities",
+        )
+        state = _make_state(
+            trip_plan={"destination": "Rwanda"},
+            strategy_sections=[
+                {
+                    "specialist_type": "local_expert",
+                    "title": "Local Expert — Rwanda",
+                    "one_liner": "gorilla trekking in Rwanda",
+                }
+            ],
+        )
+        plan = plan_turn(classifier, state)
+
+        step_types = [s.step_type for s in plan.steps]
+        assert StepType.LOCAL_INTEL in step_types
+
+    def test_question_specialist_hints_without_destination_skips_local_intel(self) -> None:
+        # specialist_hints present but no destination → AND gate short-circuits, skip LOCAL_INTEL
+        classifier = _make_classifier(
+            intent="QUESTION",
+            change_type=ChangeType.QUESTION,
+            specialist_hints=["diving"],
+        )
+        plan = plan_turn(classifier, _make_state())
+        step_types = [s.step_type for s in plan.steps]
+        assert StepType.LOCAL_INTEL not in step_types
+        assert StepType.GENERATE_RESPONSE in step_types
 
     def test_question_no_specialist_dispatch(self) -> None:
         classifier = _make_classifier(intent="QUESTION", change_type=ChangeType.QUESTION)
@@ -181,6 +271,28 @@ class TestPlanTurnPlanning:
         assert StepType.GENERATE_RESPONSE in step_types
         # Response is always last
         assert step_types[-1] == StepType.GENERATE_RESPONSE
+
+    def test_initial_plan_splits_tiles_into_hotels_then_activities(self) -> None:
+        """SEARCH_TILES is split into hotels+flights first, activities second."""
+        classifier = _make_classifier(
+            intent="PLANNING",
+            change_type=ChangeType.INITIAL_PLAN,
+            destination="Bali",
+            start_date="2026-03-01",
+            end_date="2026-03-07",
+            specialist_hints=["diving"],
+            activity_categories=["diving"],
+        )
+        state = _make_state()
+        plan = plan_turn(classifier, state)
+
+        tile_steps = [s for s in plan.steps if s.step_type == StepType.SEARCH_TILES]
+        assert len(tile_steps) == 2, "Expected two SEARCH_TILES steps for progressive rendering"
+        assert set(tile_steps[0].params["tile_types"]) <= {"flights", "hotels"}
+        assert tile_steps[1].params["tile_types"] == ["activities"]
+        # First tile step runs parallel with specialists, second is sequential
+        assert tile_steps[0].parallel_with == StepType.DISPATCH_SPECIALISTS
+        assert tile_steps[1].parallel_with is None
 
     def test_destination_only_no_dates_skips_tiles_and_builder(self) -> None:
         """Without dates, tiles and itinerary builder should not run."""
@@ -4139,3 +4251,238 @@ class TestInjectSpecialistTiles:
         )
         _inject_specialist_tiles_into_state(state)
         assert state["tiles"].get("activities") is None or state["tiles"].get("activities") == []
+
+
+# =============================================================================
+# _rehydrate_trimmed_booked_tiles
+# =============================================================================
+
+
+class TestRehydrateTrimmedBookedTiles:
+    """_rehydrate_trimmed_booked_tiles backfills display fields onto booked_tile
+    dicts that were trimmed by session serialization."""
+
+    def _make_activity_tile(self, tile_id: str, **extra: Any) -> Dict[str, Any]:
+        """Build a minimal activity tile dict."""
+        base: Dict[str, Any] = {"id": tile_id, "title": f"Tile {tile_id}"}
+        base.update(extra)
+        return base
+
+    def _make_day_card(self, booked_tile: Dict[str, Any]) -> Dict[str, Any]:
+        """Wrap a booked_tile in a day_card → block structure."""
+        return {"day": 1, "blocks": [{"type": "activity", "booked_tile": booked_tile}]}
+
+    # ------------------------------------------------------------------
+    # Case 1: missing fields get backfilled from matching tile
+    # ------------------------------------------------------------------
+
+    def test_backfills_image_url_and_geo(self) -> None:
+        """booked_tile missing image_url + geo gets both fields from the tile."""
+        tile_id = "abc-123"
+        booked = {"id": tile_id, "title": "Snorkel tour"}
+        tile = self._make_activity_tile(
+            tile_id,
+            image_url="https://example.com/img.jpg",
+            geo={"lat": 1.23, "lng": 4.56},
+        )
+        state = _make_state(
+            day_cards=[self._make_day_card(booked)],
+            tiles={"activities": [tile]},
+        )
+
+        _rehydrate_trimmed_booked_tiles(state)
+
+        assert booked["image_url"] == "https://example.com/img.jpg"
+        assert booked["geo"] == {"lat": 1.23, "lng": 4.56}
+
+    def test_backfills_only_missing_field(self) -> None:
+        """Only the absent field is filled; the present one is untouched."""
+        tile_id = "xyz-777"
+        booked = {
+            "id": tile_id,
+            "title": "Cooking class",
+            "image_url": "https://already.com/img.jpg",
+        }
+        tile = self._make_activity_tile(
+            tile_id,
+            image_url="https://tile.com/other.jpg",
+            geo={"lat": 9.0, "lng": 10.0},
+        )
+        state = _make_state(
+            day_cards=[self._make_day_card(booked)],
+            tiles={"activities": [tile]},
+        )
+
+        _rehydrate_trimmed_booked_tiles(state)
+
+        # image_url already present — must NOT be overwritten
+        assert booked["image_url"] == "https://already.com/img.jpg"
+        # geo was absent — must be filled
+        assert booked["geo"] == {"lat": 9.0, "lng": 10.0}
+
+    # ------------------------------------------------------------------
+    # Case 2: existing values on booked_tile are never overwritten
+    # ------------------------------------------------------------------
+
+    def test_existing_values_not_overwritten(self) -> None:
+        """If booked_tile already has both image_url and geo, neither is touched."""
+        tile_id = "keep-me"
+        booked = {
+            "id": tile_id,
+            "image_url": "https://original.com/photo.jpg",
+            "geo": {"lat": 0.1, "lng": 0.2},
+        }
+        tile = self._make_activity_tile(
+            tile_id,
+            image_url="https://tile.com/different.jpg",
+            geo={"lat": 99.0, "lng": 99.0},
+        )
+        state = _make_state(
+            day_cards=[self._make_day_card(booked)],
+            tiles={"activities": [tile]},
+        )
+
+        _rehydrate_trimmed_booked_tiles(state)
+
+        assert booked["image_url"] == "https://original.com/photo.jpg"
+        assert booked["geo"] == {"lat": 0.1, "lng": 0.2}
+
+    # ------------------------------------------------------------------
+    # Case 3: no-op when tiles are empty or missing "activities" key
+    # ------------------------------------------------------------------
+
+    def test_noop_when_tiles_is_empty_dict(self) -> None:
+        """Empty tiles dict — function returns without error, day_cards unchanged."""
+        tile_id = "t1"
+        booked = {"id": tile_id}
+        state = _make_state(
+            day_cards=[self._make_day_card(booked)],
+            tiles={},
+        )
+
+        _rehydrate_trimmed_booked_tiles(state)  # must not raise
+
+        assert "image_url" not in booked
+        assert "geo" not in booked
+
+    def test_noop_when_tiles_missing_activities_key(self) -> None:
+        """tiles dict without 'activities' key — no error, no mutation."""
+        tile_id = "t2"
+        booked = {"id": tile_id}
+        state = _make_state(
+            day_cards=[self._make_day_card(booked)],
+            tiles={"flights": [], "hotels": []},
+        )
+
+        _rehydrate_trimmed_booked_tiles(state)
+
+        assert "image_url" not in booked
+        assert "geo" not in booked
+
+    def test_noop_when_activities_list_is_empty(self) -> None:
+        """tiles['activities'] is an empty list — no error, no mutation."""
+        tile_id = "t3"
+        booked = {"id": tile_id}
+        state = _make_state(
+            day_cards=[self._make_day_card(booked)],
+            tiles={"activities": []},
+        )
+
+        _rehydrate_trimmed_booked_tiles(state)
+
+        assert "image_url" not in booked
+
+    # ------------------------------------------------------------------
+    # Case 4: no-op when day_cards are empty
+    # ------------------------------------------------------------------
+
+    def test_noop_when_day_cards_is_empty_list(self) -> None:
+        """Empty day_cards — function returns immediately without error."""
+        tile = self._make_activity_tile("t4", image_url="https://example.com/img.jpg")
+        state = _make_state(
+            day_cards=[],
+            tiles={"activities": [tile]},
+        )
+
+        _rehydrate_trimmed_booked_tiles(state)  # must not raise
+
+    def test_noop_when_day_cards_key_absent(self) -> None:
+        """State without day_cards key — no error."""
+        tile = self._make_activity_tile("t5", image_url="https://example.com/img.jpg")
+        state: Dict[str, Any] = {"tiles": {"activities": [tile]}}
+
+        _rehydrate_trimmed_booked_tiles(state)  # must not raise
+
+    # ------------------------------------------------------------------
+    # Case 5: no match on unknown tile ID — nothing patched, no error
+    # ------------------------------------------------------------------
+
+    def test_no_match_on_unknown_id(self) -> None:
+        """booked_tile has an ID that doesn't exist in tiles — no error, no mutation."""
+        booked = {"id": "missing-id", "title": "Mystery activity"}
+        tile = self._make_activity_tile(
+            "real-id-999",
+            image_url="https://example.com/img.jpg",
+            geo={"lat": 5.0, "lng": 6.0},
+        )
+        state = _make_state(
+            day_cards=[self._make_day_card(booked)],
+            tiles={"activities": [tile]},
+        )
+
+        _rehydrate_trimmed_booked_tiles(state)
+
+        assert "image_url" not in booked
+        assert "geo" not in booked
+
+    def test_no_match_when_booked_tile_has_no_id(self) -> None:
+        """booked_tile without an 'id' field — no error, no mutation."""
+        booked = {"title": "No ID tile"}
+        tile = self._make_activity_tile(
+            "some-id",
+            image_url="https://example.com/img.jpg",
+        )
+        state = _make_state(
+            day_cards=[self._make_day_card(booked)],
+            tiles={"activities": [tile]},
+        )
+
+        _rehydrate_trimmed_booked_tiles(state)
+
+        assert "image_url" not in booked
+
+    # ------------------------------------------------------------------
+    # Multi-card / multi-block coverage
+    # ------------------------------------------------------------------
+
+    def test_multiple_cards_multiple_blocks(self) -> None:
+        """Rehydration walks all cards and all blocks within each card."""
+        booked_a = {"id": "id-a"}
+        booked_b = {"id": "id-b"}
+        card1 = {"day": 1, "blocks": [{"type": "activity", "booked_tile": booked_a}]}
+        card2 = {"day": 2, "blocks": [{"type": "activity", "booked_tile": booked_b}]}
+
+        tiles = [
+            self._make_activity_tile("id-a", image_url="https://a.com/img.jpg"),
+            self._make_activity_tile("id-b", image_url="https://b.com/img.jpg"),
+        ]
+        state = _make_state(
+            day_cards=[card1, card2],
+            tiles={"activities": tiles},
+        )
+
+        _rehydrate_trimmed_booked_tiles(state)
+
+        assert booked_a["image_url"] == "https://a.com/img.jpg"
+        assert booked_b["image_url"] == "https://b.com/img.jpg"
+
+    def test_block_without_booked_tile_is_skipped(self) -> None:
+        """Blocks lacking a booked_tile key do not cause errors."""
+        card = {"day": 1, "blocks": [{"type": "free_time"}]}
+        tile = self._make_activity_tile("t6", image_url="https://example.com/img.jpg")
+        state = _make_state(
+            day_cards=[card],
+            tiles={"activities": [tile]},
+        )
+
+        _rehydrate_trimmed_booked_tiles(state)  # must not raise

@@ -14,7 +14,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from datetime import datetime
+from dataclasses import dataclass
+from dataclasses import field as dc_field
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -28,6 +30,19 @@ TRAVELPAYOUTS_BASE = "https://api.travelpayouts.com/aviasales/v3"
 AVIASALES_TIMEOUT = 10.0  # seconds
 _MAX_PROVIDER_RESULTS = 10
 _MAX_TILE_RESULTS = 5
+_FLEX_WINDOW_DAYS = 3  # ±3 days for date flex suggestions
+
+
+@dataclass
+class FlightSearchResult:
+    """Flight tiles plus optional nearby-date pricing for flex suggestions."""
+
+    tiles: list[dict[str, Any]] = dc_field(default_factory=list)
+    nearby_prices: dict[str, float] = dc_field(default_factory=dict)
+    requested_date_price: float | None = None
+    cheapest_date: str | None = None
+    cheapest_price: float | None = None
+
 
 # -- Singleton httpx client ---------------------------------------------------
 _aviasales_client: httpx.AsyncClient | None = None
@@ -105,14 +120,16 @@ async def search_aviasales_flights(
     depart_date: str,
     return_date: str = "",
     currency: str = "usd",
-) -> list[dict[str, Any]]:
-    """Search Aviasales for flights and return tile-compatible dicts.
+) -> FlightSearchResult:
+    """Search Aviasales for flights and return tiles plus optional flex data.
 
     Tries prices_for_dates first, falls back to grouped_prices calendar API.
-    Returns empty list if disabled, no token, or on any error.
+    When grouped_prices is used, preserves nearby-date pricing for flex suggestions.
     """
+    empty = FlightSearchResult()
+
     if not settings.aviasales_enabled or not settings.aviasales_api_token:
-        return []
+        return empty
 
     if not origin or not destination or not depart_date:
         logger.debug(
@@ -121,7 +138,7 @@ async def search_aviasales_flights(
             destination,
             depart_date,
         )
-        return []
+        return empty
 
     token = settings.aviasales_api_token
 
@@ -131,15 +148,18 @@ async def search_aviasales_flights(
     )
 
     # 2. Fallback to grouped_prices (calendar month search)
+    nearby_prices: dict[str, float] = {}
     if not results:
         logger.debug("[Aviasales] No results from prices_for_dates, trying grouped_prices")
-        results = await _search_grouped_prices(origin, destination, depart_date, token, currency)
+        results, nearby_prices = await _search_grouped_prices(
+            origin, destination, depart_date, token, currency
+        )
 
     if not results:
         logger.info(
             "[Aviasales] No flights found for %s -> %s on %s", origin, destination, depart_date
         )
-        return []
+        return empty
 
     unique_results = _dedupe_flight_results(results, origin, destination)
 
@@ -158,7 +178,36 @@ async def search_aviasales_flights(
             tiles.append(tile)
 
     logger.info("[Aviasales] Found %d flights for %s -> %s", len(tiles), origin, destination)
-    return tiles
+
+    # Compute flex summary from calendar data (±3 day window)
+    requested_day = depart_date[:10]
+    requested_price = nearby_prices.get(requested_day)
+    cheapest_date: str | None = None
+    cheapest_price: float | None = None
+    if nearby_prices:
+        try:
+            req_dt = datetime.strptime(requested_day, "%Y-%m-%d")
+            window: dict[str, float] = {}
+            for delta in range(-_FLEX_WINDOW_DAYS, _FLEX_WINDOW_DAYS + 1):
+                check = (req_dt + timedelta(days=delta)).strftime("%Y-%m-%d")
+                if check in nearby_prices:
+                    window[check] = nearby_prices[check]
+            if window:
+                cheapest_date = min(window, key=window.get)  # type: ignore[arg-type]  # dict.get is valid key func
+                cheapest_price = window[cheapest_date]
+        except ValueError:
+            pass
+
+    # nearby_prices contains the full month from grouped_prices;
+    # cheapest_date/cheapest_price are pre-filtered to the ±3 day window.
+    # The consumer (logistics_node) further trims nearby_prices to ±3 days for payload size.
+    return FlightSearchResult(
+        tiles=tiles,
+        nearby_prices=nearby_prices,
+        requested_date_price=requested_price,
+        cheapest_date=cheapest_date,
+        cheapest_price=cheapest_price,
+    )
 
 
 # -- API call helpers ----------------------------------------------------------
@@ -223,8 +272,12 @@ async def _search_grouped_prices(
     depart_date: str,
     token: str,
     currency: str,
-) -> list[dict[str, Any]]:
-    """Call grouped_prices API as fallback (month-level calendar search)."""
+) -> tuple[list[dict[str, Any]], dict[str, float]]:
+    """Call grouped_prices API as fallback (month-level calendar search).
+
+    Returns (results_list, date_price_map). The date_price_map preserves the
+    raw date→price dict for flex suggestions before collapsing to a list.
+    """
     # Extract YYYY-MM from the date
     month_str = depart_date[:7]  # YYYY-MM
 
@@ -248,22 +301,28 @@ async def _search_grouped_prices(
 
         if not data.get("success"):
             logger.debug("[Aviasales] grouped_prices returned success=false")
-            return []
+            return [], {}
 
         # grouped_prices returns {data: {"2026-04-01": {...}, "2026-04-02": {...}}}
         raw = data.get("data", {})
         if isinstance(raw, dict):
+            # Preserve date→price map for flex suggestions
+            date_prices: dict[str, float] = {
+                date_key: entry.get("price", 0)
+                for date_key, entry in raw.items()
+                if isinstance(entry, dict) and entry.get("price")
+            }
             # Convert dict-of-dates to list, sorted by price
             results = list(raw.values())
             results.sort(key=lambda x: x.get("price", float("inf")))
-            return results[:_MAX_PROVIDER_RESULTS]
+            return results[:_MAX_PROVIDER_RESULTS], date_prices
         elif isinstance(raw, list):
-            return raw[:_MAX_PROVIDER_RESULTS]
-        return []
+            return raw[:_MAX_PROVIDER_RESULTS], {}
+        return [], {}
 
     except httpx.TimeoutException:
         logger.warning("[Aviasales] grouped_prices timed out for %s->%s", origin, destination)
-        return []
+        return [], {}
     except httpx.HTTPStatusError as e:
         logger.warning(
             "[Aviasales] grouped_prices HTTP %d for %s->%s",
@@ -271,10 +330,10 @@ async def _search_grouped_prices(
             origin,
             destination,
         )
-        return []
+        return [], {}
     except Exception as e:
         logger.warning("[Aviasales] grouped_prices error: %s", e)
-        return []
+        return [], {}
 
 
 # -- Tile conversion -----------------------------------------------------------

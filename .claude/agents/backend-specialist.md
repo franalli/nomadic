@@ -34,7 +34,7 @@ Before ANY code change, read the relevant SSoT doc:
 ## Critical Invariants (reinforced from CLAUDE.md)
 
 - **Coordinator architecture is law.** `coordinator.execute_turn()` orchestrates classify/dispatch/logistics/builder/response; do not reintroduce direct `create_agent` runtime flow.
-- **TripPlan is the only state SSoT.** No parallel state objects.
+- **PlanDocumentData is the only state SSoT.** No parallel state objects.
 - **No hardcoded world data.** No locations, airports, IATA codes, coordinates, airlines, specialist-to-destination mappings.
 - **All LLM construction via `get_llm_by_model()`** from `llm_factory.py` with `settings.*_model`. No direct `ChatOpenAI()` or `ChatGoogleGenerativeAI()`.
 - **≤8 files per task** without explicit approval.

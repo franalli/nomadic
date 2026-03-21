@@ -1,5 +1,4 @@
 'use client';
-// TODO: DS spacing audit — requires visual QA pass
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 
 import { type KeyboardEvent,useId, useMemo, useState } from 'react';

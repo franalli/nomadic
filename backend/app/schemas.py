@@ -930,7 +930,7 @@ class BookingStatus(BaseModel):
 # =============================================================================
 
 # Canonical UI keys - locked set for type safety
-CanonicalUIKey = Literal["origin", "destination", "dates", "travelers", "budget"]
+CanonicalUIKey = Literal["origin", "destination", "dates", "travelers", "budget", "preferences"]
 
 # Conflict codes - locked enum, frontend renders deterministic copy
 ConflictCode = Literal[

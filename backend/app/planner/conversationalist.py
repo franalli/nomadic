@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _RESPONSE_TEMPERATURE: float = 0.6
-_RESPONSE_MAX_TOKENS: int = 600
+_RESPONSE_MAX_TOKENS: int = 800
 
 
 # ---------------------------------------------------------------------------
@@ -532,9 +532,39 @@ def _build_grounding_block(state: Dict[str, Any]) -> str:
         return ""
 
     lines.append(
-        "- NEVER mention a named activity, hotel, or flight unless it appears above or in the itinerary block"
+        "- NEVER mention a specific bookable tour operator, hotel, or flight unless it appears above or in the itinerary block"
     )
     return "## Grounding Facts\n" + "\n".join(lines)
+
+
+def _build_destination_knowledge_block(
+    state: Dict[str, Any],
+    classifier: "ClassifierOutput",
+) -> str:
+    """Permission block that unlocks parametric destination knowledge for question/exploration turns.
+
+    Only injected for question and destination_change intents. Bookable-entity grounding
+    is still enforced by _VOICE_BASE and _build_grounding_block.
+    """
+    destination = (state.get("trip_plan") or {}).get("destination")
+    if not destination:
+        return ""
+    change_key = classifier.change_type.value
+    if change_key not in ("question", "destination_change"):
+        return ""
+
+    lines = [
+        f"## Destination Knowledge ({destination})",
+        f"You are an expert on {destination}. You may mention by name:",
+        "- Iconic landmarks, parks, and natural features",
+        "- Neighborhoods, local food scenes, and cultural experiences",
+        "- Seasonal considerations, timing advice, and practical logistics",
+        "- General types of activities available at the destination (without naming specific operators or providers)",
+        "When suggesting a bookable experience, frame it as general knowledge "
+        "('gorilla trekking permits in Volcanoes National Park typically cost ~$1,500') "
+        "rather than referencing a specific operator not in the plan.",
+    ]
+    return "\n".join(lines)
 
 
 def _build_outcome_block(state: Dict[str, Any]) -> str:
@@ -817,7 +847,8 @@ _VOICE_BASE: str = """\
 - NEVER hyperlink entity names. Mention them naturally in prose.
 - NEVER repeat back information the user just typed.
 - NEVER repeat any content shown in 'Already Said'. Find a NEW angle, constraint, or highlight.
-- Only mention named activities, hotels, or flights that appear in the itinerary/status/grounding blocks.
+- For bookable items (specific hotels, flights, tour operators), only reference entities from the itinerary/status/grounding blocks.
+- For general destination knowledge (landmarks, neighborhoods, cultural experiences, customs, timing), you may draw on your own expertise.
 - Use natural, confident language. You are an expert, not an assistant.
 - Match the user's energy level. Enthusiastic users get vivid language. Uncertain users get reassurance and clarity. Terse users get equally terse responses.
 - Reference SPECIFIC names, places, and constraints from the specialist data above.
@@ -828,7 +859,7 @@ _VOICE_BASE: str = """\
 
 _VOICE_DESTINATION_SET: str = """\
 ## Voice: Destination Set
-Sentence count: 1-2 MAX.
+Sentence count: 2-3 MAX.
 Lead with the single most distinctive thing about this destination.
 If local expert constraints exist, weave in the most important one naturally.
 Do NOT list activities. Do NOT promise what you'll do next.
@@ -882,11 +913,15 @@ Tone: concise confirmation.\
 
 _VOICE_QUESTION: str = """\
 ## Voice: Answering a Question
-Answer the question directly and specifically using specialist data.
-Then give one actionable follow-up or recommendation.
+Answer the question directly and specifically.
+Use specialist data and travel intelligence when available in the context above.
+When the question goes beyond what is in the specialist data, draw on your knowledge
+of the destination — you are an expert who has been there. Mention specific landmarks,
+neighborhoods, cultural experiences, and local tips by name.
+For bookable items (specific tours, hotels, flights), only reference what appears in plan data.
 Never deflect with "it depends" without a concrete suggestion.
-Sentence count: 2-3 depending on complexity.
-Tone: knowledgeable friend who's been there.\
+Sentence count: 3-5 depending on complexity.
+Tone: knowledgeable friend who's actually been there.\
 """
 
 _VOICE_GREETING: str = """\
@@ -898,14 +933,14 @@ Example: "Hey! Where are we headed?"\
 
 _VOICE_FALLBACK: str = """\
 ## Voice: General
-Sentence count: 2 MAX.
+Sentence count: 2-3 MAX.
 Be specific. Reference actual plan content. Have a point of view.
 Never be generic. If you don't have specialist data, be brief and honest.\
 """
 
 _VOICE_INFEASIBLE_ACTIVITY: str = """\
 ## Voice: Infeasible Activity
-Sentence count: 2-3 MAX.
+Sentence count: 3-4 MAX.
 1. Lead with what's NOT possible and why, in one direct sentence.
 2. Immediately pivot to the best alternative activity or destination.
 3. If the rest of the plan is solid, end with a quick nudge toward it.
@@ -918,16 +953,16 @@ Tone: matter-of-fact expert redirecting to something better.\
 # so the system never relies solely on the LLM to self-regulate.
 # Keys MUST be the exact module-level _VOICE_* constants (looked up by identity).
 _SENTENCE_LIMIT: Dict[str, int] = {
-    _VOICE_DESTINATION_SET: 2,
+    _VOICE_DESTINATION_SET: 3,
     _VOICE_INITIAL_PLAN: 5,
     _VOICE_DATES_SET: 2,
     _VOICE_PLAN_GENERATED: 2,
     _VOICE_ACTIVITY_CHANGE: 2,
     _VOICE_PREFERENCE_CHANGE: 2,
-    _VOICE_QUESTION: 3,
+    _VOICE_QUESTION: 5,
     _VOICE_GREETING: 1,
-    _VOICE_FALLBACK: 2,
-    _VOICE_INFEASIBLE_ACTIVITY: 3,
+    _VOICE_FALLBACK: 3,
+    _VOICE_INFEASIBLE_ACTIVITY: 4,
 }
 _DEFAULT_SENTENCE_LIMIT: int = 3
 
@@ -1112,6 +1147,11 @@ def build_response_context(
     if trip_block:
         system_parts.append(trip_block)
 
+    # 1b. Destination knowledge unlock (question/exploration turns only)
+    dest_knowledge = _build_destination_knowledge_block(state, classifier)
+    if dest_knowledge:
+        system_parts.append(dest_knowledge)
+
     # 2. What the user sees (UI awareness — dynamic based on actual state)
     _day_cards = state.get("day_cards", [])
     _strategy_sections = state.get("strategy_sections", [])
@@ -1254,7 +1294,7 @@ async def generate_response_streaming(
     """Stream the assistant response token by token.
 
     Uses ``settings.synthesizer_planning_model`` via ``get_llm_by_model()``
-    with temperature 0.6 and max 600 tokens.  Enforces a hard sentence
+    with temperature 0.6 and max 800 tokens.  Enforces a hard sentence
     limit derived from the active voice block so the response never
     exceeds the declared maximum even if the LLM overshoots.
     """

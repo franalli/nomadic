@@ -7,6 +7,7 @@
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
+import { trackEvent } from '@/lib/analytics';
 import {
   apiFetch,
   type DayCardsPartialPayload,
@@ -20,6 +21,7 @@ import type {
   ActivitySettings,
   BookingTypes,
   BranchSelections,
+  DateFlexSuggestion,
   DocumentTripInputs,
   DocumentTripInputsPatch,
   FlightSettings,
@@ -773,6 +775,10 @@ type DocumentState = {
   // Stashed activity tiles (Tier 1 suppressed — available for Browse Activities sheet)
   browseableActivities: Array<Record<string, unknown>>;
 
+  // Date flex suggestion (ephemeral, not persisted — cleared on new turn)
+  dateFlexSuggestion: DateFlexSuggestion | null;
+  setDateFlexSuggestion: (flex: DateFlexSuggestion | null) => void;
+
   // Streaming robustness - runId + abort tracking
   currentRunId: string | null;
   abortController: AbortController | null;
@@ -900,6 +906,8 @@ const initialState = {
   _partialVersion: null as number | null,
   // Stashed activity tiles (Tier 1 suppressed — available for Browse Activities sheet)
   browseableActivities: [] as Array<Record<string, unknown>>,
+  // Date flex suggestion (ephemeral — cleared on new turn)
+  dateFlexSuggestion: null as DateFlexSuggestion | null,
   // Enrichment poller cancellation — incremented on each message send
   messageSendNonce: 0,
 };
@@ -2605,6 +2613,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     );
   },
 
+  setDateFlexSuggestion: (flex) => {
+    set({ dateFlexSuggestion: flex });
+  },
+
   mergeTileEnrichment: (payload, generation, tilesReplaced) => {
     const context = payload.context;
     const shouldMergeDayCards =
@@ -2806,6 +2818,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
     // Optimistic update
     set({ preferredTileIds: newSet });
+
+    // Track preference event (only on heart, not un-heart)
+    if (newSet.has(tileId)) {
+      trackEvent('preference_hearted', document?.trip_inputs?.destination, {
+        tile_type: tileType,
+        tile_id: tileId,
+      });
+    }
 
     // Sync to backend — debounce to batch rapid heart toggles into a single PATCH
     if (preferencePatchTimer) clearTimeout(preferencePatchTimer);

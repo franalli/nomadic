@@ -82,15 +82,15 @@ function MobileModeHeaderInner({
   const activePage = useMobileNavStore((s) => s.activePage);
   const mobileHeaderCondensed = useUIStore((s) => s.mobileHeaderCondensed);
 
-  const { tripInputs, dayCards, tiles } = useDocumentStore(
+  const { tripInputs, dayCards, tiles, tripContextId } = useDocumentStore(
     useShallow((s) => ({
       tripInputs: s.document?.trip_inputs,
       dayCards: s.document?.day_cards,
       tiles: s.document?.tiles,
+      tripContextId: s.document?.trip_context_id,
     }))
   );
   const hasDayCards = (dayCards?.length ?? 0) > 0;
-  const tripContextId = useDocumentStore((s) => s.document?.trip_context_id);
   const { user, trips, userLoading, resumeTrip, resumingTripId } = useUserStore(
     useShallow((s) => ({
       user: s.user,

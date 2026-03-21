@@ -3,7 +3,7 @@ import { API_BASE } from '@/lib/config';
 import { debugLog } from '@/lib/debug';
 import { fetchSharedTripClient } from '@/lib/sharedTripApi';
 import { useDocumentStore } from '@/state/documentStore';
-import type { DocumentTripInputs, PlanDocumentData } from '@/types/document';
+import type { DateFlexSuggestion, DocumentTripInputs, PlanDocumentData } from '@/types/document';
 import type {
   DayCard,
   ItineraryAssumptions,
@@ -847,6 +847,10 @@ export type SSEPartialData =
       kind: 'tile_enrichment';
       payload: TileEnrichmentPayload;
       tiles_replaced?: boolean;
+    }
+  | {
+      kind: 'date_flex_suggestion';
+      payload: DateFlexSuggestion;
     };
 
 export interface SSEPartialEvent {

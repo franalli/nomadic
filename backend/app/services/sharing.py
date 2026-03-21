@@ -5,6 +5,7 @@ import string
 from datetime import datetime
 from typing import Any, Dict
 
+from app.placeholders import get_activity_image
 from app.schemas import PlanDocumentData
 
 _ALPHABET = string.ascii_lowercase + string.digits
@@ -24,6 +25,19 @@ def _is_signed_media_proxy_url(value: Any) -> bool:
     return "/api/media/" in value
 
 
+_TILE_TYPE_TO_CATEGORY = {"stay": "hotel", "accommodation": "hotel"}
+
+
+def _public_fallback(image_url: Any, label: str, destination: str) -> str | None:
+    """Replace signed media proxy URLs with public Unsplash placeholders."""
+    if not _is_signed_media_proxy_url(image_url):
+        return image_url
+    if not destination:
+        return None
+    category = _TILE_TYPE_TO_CATEGORY.get(label, label)
+    return get_activity_image(category, destination, category)
+
+
 def build_share_snapshot(doc_data: PlanDocumentData) -> dict:
     """Build an immutable share snapshot from PlanDocumentData."""
     full = doc_data.model_dump()
@@ -38,11 +52,15 @@ def build_share_snapshot(doc_data: PlanDocumentData) -> dict:
         "preferred_tile_ids": full.get("preferred_tile_ids", []),
     }
 
+    trip_inputs = snapshot.get("trip_inputs") or {}
+    destination = trip_inputs.get("destination", "") if isinstance(trip_inputs, dict) else ""
+
     for tile in snapshot.get("tiles", {}).values():
         if not isinstance(tile, dict):
             continue
-        if _is_signed_media_proxy_url(tile.get("image_url")):
-            tile["image_url"] = None
+        tile["image_url"] = _public_fallback(
+            tile.get("image_url"), tile.get("type", "activity"), destination
+        )
 
     for day_card in snapshot.get("day_cards", []):
         if not isinstance(day_card, dict):
@@ -50,13 +68,16 @@ def build_share_snapshot(doc_data: PlanDocumentData) -> dict:
         for block in day_card.get("blocks", []):
             if not isinstance(block, dict):
                 continue
-            if _is_signed_media_proxy_url(block.get("image_url")):
-                block["image_url"] = None
+            block["image_url"] = _public_fallback(
+                block.get("image_url"), block.get("activity_type", "activity"), destination
+            )
             booked_tile = block.get("booked_tile")
-            if isinstance(booked_tile, dict) and _is_signed_media_proxy_url(
-                booked_tile.get("image_url")
-            ):
-                booked_tile["image_url"] = None
+            if isinstance(booked_tile, dict):
+                booked_tile["image_url"] = _public_fallback(
+                    booked_tile.get("image_url"),
+                    booked_tile.get("type", "activity"),
+                    destination,
+                )
 
     return snapshot
 

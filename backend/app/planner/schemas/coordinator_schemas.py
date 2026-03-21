@@ -213,6 +213,10 @@ class ClassifierOutput(BaseModel):
         None,
         description=("Skill/experience level: 'beginner', 'intermediate', 'advanced'."),
     )
+    traveler_style: Optional[str] = Field(
+        None,
+        description="Overall trip style/vibe: adventure, relaxed, cultural, family, luxury, budget, romantic.",
+    )
     reset_budget: bool = Field(
         default=False,
         description="True if user wants to REMOVE/CLEAR budget constraint.",

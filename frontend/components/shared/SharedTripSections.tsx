@@ -141,12 +141,14 @@ export function SharedTripStrategySection({
   );
 }
 
+const WORLD_MAP_CENTER = { lat: 20, lng: 0, zoom: 2 };
+
 export function SharedTripMapSection({
   mapItems,
   mapCenter,
 }: {
   mapItems: MapPOI[];
-  mapCenter: { lat: number; lng: number; zoom: number };
+  mapCenter: { lat: number; lng: number; zoom: number } | null;
 }) {
   if (mapItems.length === 0) {
     return null;
@@ -160,7 +162,7 @@ export function SharedTripMapSection({
           <InteractiveMap
             items={mapItems}
             activeItemId={null}
-            defaultCenter={mapCenter}
+            defaultCenter={mapCenter ?? WORLD_MAP_CENTER}
             className="h-full w-full"
             interactive={false}
             showAttribution={false}

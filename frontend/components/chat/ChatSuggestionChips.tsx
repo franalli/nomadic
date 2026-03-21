@@ -14,6 +14,7 @@ import type {
 } from '@/types/document';
 import type { SheetType } from '@/types/sheets';
 
+import { DateFlexChip } from './DateFlexChip';
 import { handleSuggestionTriggerAction } from './suggestion-actions';
 
 interface ChatSuggestionChipsProps {
@@ -158,7 +159,12 @@ export function ChatSuggestionChips({
   onOpenActivities,
   toast,
 }: ChatSuggestionChipsProps) {
-  if (effectiveSuggestions.length === 0 || isLoading) return null;
+  const dateFlexSuggestion = useDocumentStore((s) => s.dateFlexSuggestion);
+  const tripInputs = useDocumentStore((s) => s.document?.trip_inputs);
+  const showFlex = dateFlexSuggestion && !isLoading && !tripInputs?.date_flex;
+
+  if (effectiveSuggestions.length === 0 && !showFlex) return null;
+  if (isLoading) return null;
 
   // Prefer structured chips if available, fallback to legacy string array
   const chips: SuggestionChip[] = suggestionChips.length > 0
@@ -177,6 +183,17 @@ export function ChatSuggestionChips({
       key={`suggestions-container-${effectiveSuggestions.length}`}
       className="flex gap-2 overflow-x-auto overscroll-x-contain px-2 pb-1 pt-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
     >
+      {showFlex && (
+        <DateFlexChip
+          flex={dateFlexSuggestion}
+          onSendMessage={(msg, opts) => {
+            useDocumentStore.getState().setDateFlexSuggestion(null);
+            onSendMessage(msg, opts);
+          }}
+          tripStartDate={tripInputs?.start_date}
+          tripEndDate={tripInputs?.end_date}
+        />
+      )}
       {chips.map((chip, idx) => {
         const resolvedAction = resolveChipAction(chip);
         const isCta = chip.chip_type === 'cta';

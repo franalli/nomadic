@@ -724,7 +724,6 @@ async def constraint_guard(state: GraphState) -> GraphState:
         end_date=state.trip_plan.end_date,
     )
     # Map violation codes to the constraint rules the builder enforces
-    # TODO: derive from specialist registry when more cross-domain constraints exist
     _violation_to_constraint_rule = {
         "ALTITUDE_AFTER_DIVE": "no_altitude_after_dive",
     }

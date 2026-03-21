@@ -4,6 +4,7 @@ import { Check, Loader2, Share2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
+import { trackEvent } from '@/lib/analytics';
 import { apiFetch } from '@/lib/api';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
@@ -39,6 +40,8 @@ export function ShareTripButton({ className }: ShareTripButtonProps) {
       const shareUrl = typeof data?.url === 'string' ? data.url : null;
       const title = typeof data?.title === 'string' ? data.title : 'Shared Trip';
       if (!shareUrl) throw new Error('Share URL missing');
+
+      trackEvent('trip_shared', null, { slug: shareUrl.split('/').pop() });
 
       if (navigator.share) {
         try {

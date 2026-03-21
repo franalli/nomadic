@@ -18,6 +18,7 @@ import { useToast } from '@/components/ui/toast';
 import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { useMapSync } from '@/hooks/useMapSync';
+import { trackEvent } from '@/lib/analytics';
 import {
   type DayCardsPartialPayload,
   type SpecialistPreviewActivity,
@@ -446,6 +447,8 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
 
   const reconcileTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pendingPlanScrollTimeoutRef = useRef<number | null>(null);
+  const tripCreatedFiredRef = useRef(false);
+  const itineraryGeneratedFiredRef = useRef(false);
   const queueCompletionScroll = useCallback(() => {
     requestAnimationFrame(() => {
       scrollPanelIntoView();
@@ -480,7 +483,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
         actionLoader,
       } = params;
 
-      useDocumentStore.setState({ _specialistPreview: null });
+      useDocumentStore.setState({ _specialistPreview: null, dateFlexSuggestion: null });
 
       return new Promise<'complete' | 'error' | 'stale'>((resolve) => {
         const isStaleRequest = () => activeStreamRequestIdRef.current !== requestId;
@@ -710,6 +713,8 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
                   envelopeGeneration
                 );
                 emitBuilderWarnings(data.payload.warnings);
+              } else if (data.kind === 'date_flex_suggestion') {
+                store.setDateFlexSuggestion(data.payload);
               }
             } catch (partialError) {
               debugLog(
@@ -842,6 +847,30 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               executed_strategy_topic_count: doc.executed_strategy_topics?.length ?? 0,
               pending_strategy_topic_count: doc.pending_strategy_topics?.length ?? 0,
             });
+
+            // Analytics: trip_created (first time strategy is ready with destination)
+            if (
+              !tripCreatedFiredRef.current &&
+              doc.plan_view_state === 'S2_STRATEGY_READY' &&
+              doc.trip_inputs?.destination
+            ) {
+              tripCreatedFiredRef.current = true;
+              trackEvent('trip_created', doc.trip_inputs.destination, {
+                activities: doc.trip_inputs?.activity_settings?.categories,
+                has_budget: !!doc.trip_inputs?.budget,
+              });
+            }
+
+            // Analytics: itinerary_generated (first time day_cards arrive)
+            if (
+              !itineraryGeneratedFiredRef.current &&
+              (doc.day_cards?.length ?? 0) > 0
+            ) {
+              itineraryGeneratedFiredRef.current = true;
+              trackEvent('itinerary_generated', doc.trip_inputs?.destination, {
+                day_count: doc.day_cards?.length ?? 0,
+              });
+            }
 
             if (hasTiles) {
               const rightPanel = document.getElementById('plan-panel');

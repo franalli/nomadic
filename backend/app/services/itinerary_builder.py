@@ -603,7 +603,7 @@ class ItineraryBuilder:
         self._day_preferences: Dict[str, int] = {}
         self._activities_per_day: int = 2
         self._budget: Optional[float] = None
-        self._currency: str = "USD"  # TODO: use for currency-aware price formatting
+        self._currency: str = "USD"
         self._num_days: int = 0
         self._children: int = 0
         # None = no category filter, set() = user explicitly cleared categories.

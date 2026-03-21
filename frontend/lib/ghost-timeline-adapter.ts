@@ -521,15 +521,14 @@ export function extractPOIsFromDayCards(
 
 /**
  * Calculate center point from POIs for map initialization.
- * Returns average of all coordinates, or Dubai default if no POIs.
+ * Returns average of all coordinates, or null if no valid POIs exist.
  */
-export function calculateMapCenter(pois: MapPOI[]): { lat: number; lng: number; zoom: number } {
+export function calculateMapCenter(pois: MapPOI[]): { lat: number; lng: number; zoom: number } | null {
   const validPois = pois
     .map((poi) => _normalizeMapCoordinates(poi.coordinates?.lat, poi.coordinates?.lng))
     .filter((coords): coords is { lat: number; lng: number } => coords !== null);
   if (validPois.length === 0) {
-    // Default: Dubai center
-    return { lat: 25.2048, lng: 55.2708, zoom: 10 };
+    return null;
   }
 
   const avgLat = validPois.reduce((sum, p) => sum + p.lat, 0) / validPois.length;

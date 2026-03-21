@@ -209,6 +209,7 @@ def _canonicalize_applied_updates(fields_changed: List[str]) -> List[str]:
         "activities_per_day": "preferences",
         "activity_categories": "preferences",
         "skill_level": "preferences",
+        "vibe": "preferences",
     }
     canonical: List[str] = []
     for field in fields_changed:
@@ -957,14 +958,23 @@ def plan_turn(
         )
 
     if intent == "QUESTION":
+        # Fetch local intel only when (a) destination is known, (b) the question is
+        # destination-related (question_type set by router, or specialist_hints detected),
+        # and (c) no local_expert section for this destination is already cached.
+        _q_destination = classifier.destination or (state.get("trip_plan") or {}).get("destination")
+        _q_has_local = _has_local_intel_for_destination(state, _q_destination)
+        _q_is_dest_question = bool(
+            classifier.question_type or (classifier.specialist_hints and _q_destination)
+        )
+        q_steps: List[ExecutionStep] = []
+        if _q_destination and _q_is_dest_question and not _q_has_local:
+            q_steps.append(ExecutionStep(step_type=StepType.LOCAL_INTEL))
+        q_steps.append(ExecutionStep(step_type=StepType.GENERATE_RESPONSE))
         return ExecutionPlan(
-            steps=[
-                ExecutionStep(step_type=StepType.SHORT_CIRCUIT, params={"reason": "question"}),
-                ExecutionStep(step_type=StepType.GENERATE_RESPONSE),
-            ],
-            reason="Question — answer without plan changes",
-            estimated_llm_calls=1,
-            estimated_wall_ms=800,
+            steps=q_steps,
+            reason="Question — enrich with local intel if destination-related and not yet cached",
+            estimated_llm_calls=1,  # LOCAL_INTEL Phase B is deferred; only GENERATE_RESPONSE is synchronous
+            estimated_wall_ms=1000 if len(q_steps) > 1 else 800,
         )
 
     # Short-circuit GENERATE_PLAN_NOW when planning artifacts already exist.
@@ -1001,7 +1011,13 @@ def plan_turn(
                 gp_steps.append(
                     ExecutionStep(
                         step_type=StepType.SEARCH_TILES,
-                        params={"tile_types": ["flights", "hotels", "activities"]},
+                        params={"tile_types": ["flights", "hotels"]},
+                    )
+                )
+                gp_steps.append(
+                    ExecutionStep(
+                        step_type=StepType.SEARCH_TILES,
+                        params={"tile_types": ["activities"]},
                     )
                 )
                 gp_steps.append(ExecutionStep(step_type=StepType.BUILD_ITINERARY))
@@ -1137,13 +1153,32 @@ def plan_turn(
         parallel_with = StepType.DISPATCH_SPECIALISTS if dispatch_list else None
         if dispatch_list and change_type in (ChangeType.SWAP_ACTIVITY, ChangeType.ADD_ACTIVITY):
             parallel_with = None  # Force sequential: specialists → tiles
-        steps.append(
-            ExecutionStep(
-                step_type=StepType.SEARCH_TILES,
-                params={"tile_types": tile_types},
-                parallel_with=parallel_with,
+        # Split into hotel-first + activity-follow for progressive rendering:
+        # hotels typically return 3-5s faster than activities.
+        hotel_types = [t for t in tile_types if t in ("flights", "hotels")]
+        activity_types = [t for t in tile_types if t == "activities"]
+        if hotel_types and activity_types:
+            steps.append(
+                ExecutionStep(
+                    step_type=StepType.SEARCH_TILES,
+                    params={"tile_types": hotel_types},
+                    parallel_with=parallel_with,
+                )
             )
-        )
+            steps.append(
+                ExecutionStep(
+                    step_type=StepType.SEARCH_TILES,
+                    params={"tile_types": activity_types},
+                )
+            )
+        else:
+            steps.append(
+                ExecutionStep(
+                    step_type=StepType.SEARCH_TILES,
+                    params={"tile_types": tile_types},
+                    parallel_with=parallel_with,
+                )
+            )
         estimated_wall_ms += 2000
 
     # Itinerary build (after specialists + tiles)
@@ -2330,6 +2365,53 @@ def _merge_doc_settings(
                         sp.pop(key, None)
 
 
+def _rehydrate_trimmed_booked_tiles(state: Dict[str, Any]) -> None:
+    """Backfill display fields onto booked_tile dicts trimmed by session serialization.
+
+    Session state trims booked_tile to _SESSION_BOOKED_TILE_KEYS (excludes
+    image_url, geo) to stay within the 64KB session budget. On non-rebuild turns
+    the trimmed day_cards pass through to the envelope, causing empty cards.
+
+    Fix: rehydrate from activity tiles in the tiles dict, which retain image_url
+    and geo via _SESSION_TILE_KEYS.
+    """
+    day_cards = state.get("day_cards")
+    if not isinstance(day_cards, list) or not day_cards:
+        return
+
+    activity_tiles = (state.get("tiles") or {}).get("activities", [])
+    if not isinstance(activity_tiles, list) or not activity_tiles:
+        return
+
+    tile_by_id: Dict[str, Dict[str, Any]] = {
+        str(t["id"]): t for t in activity_tiles if isinstance(t, dict) and t.get("id")
+    }
+    if not tile_by_id:
+        return
+
+    _REHYDRATE_FIELDS = ("image_url", "geo")
+    patched = 0
+    for card in day_cards:
+        if not isinstance(card, dict):
+            continue
+        for block in card.get("blocks", []):
+            if not isinstance(block, dict):
+                continue
+            booked = block.get("booked_tile")
+            if not isinstance(booked, dict):
+                continue
+            full_tile = tile_by_id.get(str(booked.get("id") or ""))
+            if not full_tile:
+                continue
+            for field in _REHYDRATE_FIELDS:
+                if not booked.get(field) and full_tile.get(field):
+                    booked[field] = full_tile[field]
+                    patched += 1
+
+    if patched:
+        logger.debug("[coordinator] Rehydrated %d booked_tile fields from tiles", patched)
+
+
 def _apply_classifier_to_state(
     state: Dict[str, Any],
     classifier: ClassifierOutput,
@@ -2672,6 +2754,19 @@ def _apply_classifier_to_state(
             )
 
     trip_settings["activity_settings"] = activity_settings
+
+    # Traveler style → trip_plan.vibe
+    if classifier.traveler_style:
+        old_vibe = trip_plan.get("vibe")
+        if old_vibe != classifier.traveler_style:
+            trip_plan["vibe"] = classifier.traveler_style
+            fields_changed.append("vibe")
+            turn_steps.append(
+                {
+                    "type": "vibe",
+                    "summary": f"vibe: {old_vibe} -> {classifier.traveler_style}",
+                }
+            )
 
     # Hotel settings
     hotel_settings = dict(trip_settings.get("hotel_settings", {}))
@@ -4118,6 +4213,10 @@ async def _search_tiles(
         existing_browseable = state.get("persistent_meta", {}).get("browseable_activities", [])
         if existing_browseable:
             turn_meta["browseable_activities"] = existing_browseable
+    # Thread date flex suggestion from logistics metadata to turn_meta
+    date_flex = graph_state.metadata.get("date_flex_suggestion")
+    if isinstance(date_flex, dict):
+        turn_meta["date_flex_suggestion"] = date_flex
     turn_meta["tile_search_summary"] = (
         f"Found {len(merged_tiles.get('flights', []))} flights, "
         f"{len(merged_tiles.get('hotels', []))} hotels, "
@@ -5287,7 +5386,16 @@ async def _execute_step(
         turn_meta = state.get("turn_meta") or {}
         if turn_meta.get("tiles_replaced"):
             partial_data["tiles_replaced"] = True
-        return {"type": "partial", "data": partial_data}
+        tiles_partial = {"type": "partial", "data": partial_data}
+
+        # Emit date flex suggestion as a second partial when available
+        date_flex = turn_meta.get("date_flex_suggestion")
+        if isinstance(date_flex, dict) and date_flex:
+            return [
+                tiles_partial,
+                {"type": "partial", "data": {"kind": "date_flex_suggestion", "payload": date_flex}},
+            ]
+        return tiles_partial
 
     if step_type == StepType.BUILD_ITINERARY:
         # Snapshot tile IDs before build to detect new specialist-injected tiles
@@ -5513,6 +5621,7 @@ async def execute_turn(
 
         # Step 1: Merge document settings
         _merge_doc_settings(state, doc_settings)
+        _rehydrate_trimmed_booked_tiles(state)
 
         # Step 2: Classify
         # Pre-flight: empty/whitespace messages skip the LLM entirely
@@ -5706,7 +5815,7 @@ async def execute_turn(
         # Group parallel steps together
         sequential_groups: List[List[ExecutionStep]] = []
         current_group: List[ExecutionStep] = []
-        seen_parallel_with: set[StepType] = set()
+        seen_parallel_ids: set[int] = set()
 
         for step in plan.steps:
             if step.step_type == StepType.GENERATE_RESPONSE:
@@ -5715,7 +5824,7 @@ async def execute_turn(
 
             if step.parallel_with is not None:
                 # This step runs in parallel with another
-                seen_parallel_with.add(step.step_type)
+                seen_parallel_ids.add(id(step))
                 # Find or create the group containing the parallel target
                 added = False
                 for group in sequential_groups:
@@ -5726,7 +5835,7 @@ async def execute_turn(
                 if not added:
                     current_group.append(step)
             else:
-                if step.step_type in seen_parallel_with:
+                if id(step) in seen_parallel_ids:
                     # Already added to a parallel group
                     continue
                 if current_group:
@@ -5767,7 +5876,7 @@ async def execute_turn(
                     yield _node_status(node_name, "completed", label, icon, duration)
             else:
                 # Parallel group
-                completed_parallel_steps: set[StepType] = set()
+                completed_parallel_ids: set[int] = set()
                 for step in group:
                     label, icon, duration = _step_status_info(step, state, classifier)
                     node_name = _step_node_name(step)
@@ -5787,14 +5896,14 @@ async def execute_turn(
                     if not completed:
                         continue
 
-                    completed_parallel_steps.add(completed_step.step_type)
+                    completed_parallel_ids.add(id(completed_step))
                     label, icon, duration = _step_status_info(completed_step, state, classifier)
                     node_name = _step_node_name(completed_step)
                     if node_name:
                         yield _node_status(node_name, "completed", label, icon, duration)
 
                 for step in group:
-                    if step.step_type in completed_parallel_steps:
+                    if id(step) in completed_parallel_ids:
                         continue
                     label, icon, duration = _step_status_info(step, state, classifier)
                     node_name = _step_node_name(step)
@@ -5943,12 +6052,16 @@ def _step_status_info(
         settings = (state or {}).get("trip_settings", {})
         booking = settings.get("booking_types", {})
         cats = settings.get("activity_settings", {}).get("categories", [])
+        step_tile_types = set(step.params.get("tile_types", []))
         parts: list[str] = []
-        if booking.get("hotels") != "off":
+        if (not step_tile_types or "hotels" in step_tile_types) and booking.get("hotels") != "off":
             parts.append("hotels")
-        if booking.get("flights") not in ("off", None):
+        if (not step_tile_types or "flights" in step_tile_types) and booking.get("flights") not in (
+            "off",
+            None,
+        ):
             parts.append("flights")
-        if cats:
+        if (not step_tile_types or "activities" in step_tile_types) and cats:
             parts.extend(cats[:2])
         search_str = " & ".join(parts) if parts else "options"
         loc = f" in {dest}" if dest else ""

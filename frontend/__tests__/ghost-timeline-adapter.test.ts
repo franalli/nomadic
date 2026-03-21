@@ -159,7 +159,7 @@ describe('extractPOIsFromDayCards memo behavior', () => {
     });
   });
 
-  it('uses default center when POI coordinates are invalid', () => {
+  it('returns null when POI coordinates are invalid', () => {
     const center = calculateMapCenter([
       {
         id: 'bad-poi',
@@ -169,7 +169,7 @@ describe('extractPOIsFromDayCards memo behavior', () => {
       } as MapPOI,
     ]);
 
-    expect(center).toEqual({ lat: 25.2048, lng: 55.2708, zoom: 10 });
+    expect(center).toBeNull();
   });
 
   it('derives type from tile metadata and prefers explicit provenance', () => {

@@ -3,6 +3,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { trackEvent } from '@/lib/analytics';
 import { fetchWithRetry } from '@/lib/api';
 import { debugLog } from '@/lib/debug';
 import { useUserStore } from '@/state/userStore';
@@ -240,6 +241,10 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
       try {
         setIsHydratingSnapshot(true);
         void useUserStore.getState().fetchUser();
+
+        // Track session start
+        const isReturn = getSessionTimestamp() !== null;
+        trackEvent('session_start', null, { is_return: isReturn });
 
         // Debug: Log session state
         debugLog('[useSessionHydration] Session timestamp:', getSessionTimestamp());

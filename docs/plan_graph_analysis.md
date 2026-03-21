@@ -50,7 +50,7 @@ Coordinator-driven trip planning system with deterministic step planning in Pyth
 ### Design Principles
 
 1. **Coordinator-first orchestration** -- `plan_turn()` determines execution order without LLM routing.
-2. **TripPlan is the SSoT** -- core trip fields live in `state["trip_plan"]`; document persistence mirrors this.
+2. **PlanDocumentData is the SSoT** -- core trip fields live in `state["trip_plan"]`; document persistence mirrors this.
 3. **Flights/hotels are data fetchers** -- logistics and tile search run as deterministic steps, not agent personas.
 4. **Domain expertise remains modular** -- Tier 1 specialist planning still uses `vertical_specialist.py`.
 5. **Single response voice** -- `conversationalist.py` streams one final assistant response using current state.
@@ -73,7 +73,7 @@ backend/app/planner/
 ├── specialist_registry.py   # Specialist config SSoT (keywords, constraints, enhancements, flags)
 ├── test_mode.py             # Test mode detection
 #   Frontend mirror: frontend/lib/specialists.ts (colors, icons, keywords, display names)
-├── schemas/                 # Coordinator protocol schemas (Phase 1+)
+├── schemas/                 # Coordinator protocol schemas
 │   ├── __init__.py
 │   └── coordinator_schemas.py  # ChangeType, ChangeClassification, ClassifierOutput, TripBrief, SpecialistDayPlan, SpecialistTransit, SpecialistConstraintOutput, SpecialistPlan, ReplanRequest, StepType, ExecutionStep, ExecutionPlan
 ├── nodes/                   # Domain/library modules called directly by coordinator
@@ -132,10 +132,11 @@ backend/app/planner/
 | `SEARCH_TILES` | `_search_tiles()` | Refresh flights/hotels/activities by change type | `tiles` |
 | `BUILD_ITINERARY` | `_build_itinerary()` | Run pure-Python itinerary builder + store `builder_result` | `day_cards` (enriched payload via `_day_cards_partial_event()` including tiles, strategy_sections, plan_view_state, itinerary context: overview, assumptions, constraint violations, warnings; emits `[]` when the itinerary clears) |
 | `GENERATE_RESPONSE` | `conversationalist.generate_response_streaming()` | Stream final assistant response | token stream |
-| `SHORT_CIRCUIT` | `_short_circuit_message()` and state reset helpers | Deterministic greeting/reset handling; question intent pairs SHORT_CIRCUIT with GENERATE_RESPONSE | none |
+| `SHORT_CIRCUIT` | `_short_circuit_message()` and state reset helpers | Deterministic greeting/reset handling (GREETING emits canned message; RESET sets `_reset_pending` flag) | none |
 
 ### Parallelism Rules
 
+- `plan_turn()` splits `SEARCH_TILES` into two sequential steps — flights+hotels first, activities second — for progressive frontend rendering. Hotels typically return 3-5s faster; splitting lets the UI show them immediately.
 - `DISPATCH_SPECIALISTS` and `SEARCH_TILES` may run in parallel via `_execute_parallel_group()`.
 - `_execute_parallel_group()` now yields `(step, events, completed)` tuples as each parallel task completes via an `asyncio.Queue`, instead of gathering all results with `asyncio.gather`. This means `node_status` completed events fire as each parallel step finishes, not after the whole group. Step results that are async generators (e.g. specialist dispatch) are consumed incrementally -- each yielded event is forwarded to the caller as it arrives.
 - `_dispatch_specialists_parallel()` is now an `AsyncGenerator` that yields `(topic, result)` pairs as each specialist completes (via `asyncio.as_completed`), instead of returning a collected dict. The step executor returns a streaming async generator `_stream_specialist_dispatch_events()` that emits `specialist_preview` and `strategy_sections` partials after each specialist finishes.
@@ -234,6 +235,7 @@ class RouterOutput(BaseModel):
     # Settings extraction
     activities_per_day: Optional[int] = None
     skill_level: Optional[str] = None  # "beginner", "intermediate", "advanced"
+    traveler_style: Optional[str] = None  # "adventure", "relaxed", "cultural", "family", "luxury", "budget", "romantic"
 
     hotel_min_stars: Optional[int] = None
     hotel_style: Optional[str] = None
@@ -253,9 +255,9 @@ class RouterOutput(BaseModel):
     date_auto_adjustments: List[Dict[str, str]] = []
 ```
 
-Recent extraction contract changes:
-- `origin_iata` and `destination_iata` remain on `RouterOutput`, but the extraction prompt now instructs the LLM to leave them `null`; downstream `iata_resolver.py` owns airport resolution.
-- Destination normalization guidance is now generic and structural only. Country-only requests are no longer mapped to hard-coded demo cities in the prompt.
+**Extraction contract notes:**
+- `origin_iata` and `destination_iata` remain on `RouterOutput`, but the extraction prompt instructs the LLM to leave them `null`; downstream `iata_resolver.py` owns airport resolution.
+- Destination normalization guidance is generic and structural only. Country-only requests are not mapped to hard-coded demo cities in the prompt.
 - On full destination replacement, heuristic change classification clears `affects` and treats prior topics as preserved context only, so stale `specialist_hints` do not survive into the next planner run.
 
 ### VerticalSpecialist (`vertical_specialist.py`)
@@ -269,18 +271,17 @@ Domain specialist with LLM-first architecture. 8 specialists (diving, hiking, sk
 - `dispatch_specialist_with_brief()` -- Coordinator bridge: converts `TripBrief` into `generate_specialist_output_llm()` arguments via `_BriefAsTripPlan` adapter. Supports `ReplanRequest` for selective re-dispatch.
 - `build_scheduling_context()` -- Builds a scheduling-context block from a `TripBrief` (reserved days, target day count, hotel zone) appended to the specialist user prompt.
 
-Recent behavior:
-- `_build_specialist_prompt()` now returns `(system, user, max_acts)` and applies category-aware, density-aware capping.
-- `_build_specialist_prompt()` caps specialist `available_days` at 60% of trip duration to preserve room for mixed non-specialist activities.
-- `TripBrief` now flows into `_BriefAsTripPlan` with `activities_per_day` and active `categories` to bias distribution across specialists.
+**Behavior notes:**
+- `_build_specialist_prompt()` returns `(system, user, max_acts)` and applies category-aware, density-aware capping. It caps specialist `available_days` at 60% of trip duration to preserve room for mixed non-specialist activities.
+- `TripBrief` flows into `_BriefAsTripPlan` with `activities_per_day` and active `categories` to bias distribution across specialists.
 - Specialist outputs are additionally capped after parsing so `max_acts` is never exceeded in cacheable payloads.
-- Structured function-calling responses now fail closed: `parsed=None` raises immediately, and `_coerce_llm_specialist_output()` rejects partial payloads that would otherwise validate through default `"feasible"` / empty-list fallbacks.
+- Structured function-calling responses fail closed: `parsed=None` raises immediately, and `_coerce_llm_specialist_output()` rejects partial payloads that would otherwise validate through default `"feasible"` / empty-list fallbacks.
 - Constraint text is anchored to relative wording (for example, "day before departure"), and cached outputs are re-anchored by `_reanchor_constraint_dates()` before merge.
 - "feasible + zero activities" outputs are converted to `caveat` responses and skipped for L2 cache write, preventing stale empty specialist cache entries.
-- Prompt guidance now uses explicit exact bounds (`EXACTLY`) and hard caps (`Do NOT generate more than Y`) to prevent specialist over-generation.
+- Prompt guidance uses explicit exact bounds (`EXACTLY`) and hard caps (`Do NOT generate more than Y`) to prevent specialist over-generation.
 - Safety buffer days are explicitly excluded from the specialist activity-count ceiling in prompt context.
-- `_calculate_activity_days()` now mirrors builder-side short-trip math: trips of 2+ days get a shared `0.8` arrival/departure credit for non-diving specialists, no-fly topics still lose a full day, and altitude buffers only subtract on trips of 4+ days.
-- `SafetyHealth` now includes advisory fields: `advisory_level` (`none`, `caution`, `warning`, `avoid`) and `advisory_reason`.
+- `_calculate_activity_days()` mirrors builder-side short-trip math: trips of 2+ days get a shared `0.8` arrival/departure credit for non-diving specialists, no-fly topics still lose a full day, and altitude buffers only subtract on trips of 4+ days.
+- `SafetyHealth` includes advisory fields: `advisory_level` (`none`, `caution`, `warning`, `avoid`) and `advisory_reason`.
 
 **LLM-first architecture:** Single LLM call generates feasibility + activities + constraints. Falls back to minimal safety constraints if LLM fails (parse error, timeout).
 
@@ -294,11 +295,11 @@ City logistics concierge with Phase A/B architecture.
 
 **Phase B (background):** LLM enrichment fired after DB commit in `streaming.py`. Uses `build_enrichment_closure()`, with module-level `_pending_enrichments` dict, `_pending_lock`, and `_active_destination_enrichments` set for dedupe.
 
-Recent behavior:
-- Local Expert structured output now uses `_LOCAL_EXPERT_FLAT_SCHEMA` (`resolve_schema_refs()` -> `strip_unsupported_schema_keys()` -> `gemini_safe_schema()`) so Gemini-safe function calling avoids nested `$defs` / `$ref` drift.
+**Behavior notes:**
+- Local Expert structured output uses `_LOCAL_EXPERT_FLAT_SCHEMA` (`resolve_schema_refs()` -> `strip_unsupported_schema_keys()` -> `gemini_safe_schema()`) so Gemini-safe function calling avoids nested `$defs` / `$ref` drift.
 - Cache reuse path seeds legacy list reconstruction from prior-turn `constraints_applied`/`content_added` so repeated turns keep stable high-signal Travel Intel density while avoiding duplicate entries.
 - `_append_constraint()` applies fuzzy token-overlap dedupe (>70% overlap) before appending, reducing near-duplicate principles/notes from mixed cache + LLM reuse paths.
-- `local_expert.txt` now explicitly requests travel advisory reasoning (`advisory_level` + `advisory_reason`) so advisory context can be surfaced in plan summaries.
+- `local_expert.txt` explicitly requests travel advisory reasoning (`advisory_level` + `advisory_reason`) so advisory context can be surfaced in plan summaries.
 
 ### LogisticsNode (`logistics_node.py`)
 
@@ -319,6 +320,7 @@ Flight/hotel/activity fetching with safety logic.
 - Experience tiles are stashed into `metadata["browseable_activities"]`, and Google Places backfill now propagates rating/review_count/deeplink when available.
 - When generated Tier 2 tiles are below expected density (`free_days * activities_per_day`), logistics executes a browse fallback using mapped alternative categories, appends successful backfill tiles, and preserves them in browseable activity metadata.
 - `enrich_tiles_with_partners()` (in `services/partner_enrichment.py`) is an optional pre-build enrichment pass for activity tiles. When Viator and/or GYG are enabled, it searches both providers in parallel via `asyncio.gather`, picks the best match per tile (highest rating, lowest price tiebreaker), throttles requests with `asyncio.Semaphore(5)`, and mutates tiles in place with live pricing, ratings, images, affiliate deeplinks, partner/provider metadata.
+- **Date flex suggestion:** When `grouped_prices` fallback is used, Aviasales provider returns a `FlightSearchResult` dataclass containing `tiles`, `nearby_prices` (full month date→price map), `requested_date_price`, `cheapest_date`, and `cheapest_price` (±3-day window). If the cheapest date saves ≥10% vs the requested date and the trip is >7 days out, logistics_node populates `state.metadata["date_flex_suggestion"]` which the coordinator threads to `turn_meta` and emits as a `date_flex_suggestion` SSE partial.
 - Coordinator tile refresh planning now treats `DAY_COUNT` as a full logistics refresh. Activity/preference mutations can also pull flights when the current or upcoming specialist set has no-fly buffers, while `persistent_meta["user_disabled_booking_types"]` prevents those safety refreshes from silently turning flights back on after a user explicitly disabled them.
 
 ### ConstraintGuard (`constraint_guard.py`)
@@ -382,14 +384,8 @@ Coordinator/build path usage -- called from `coordinator._build_itinerary()` and
 Before running phases, the builder validates capacity to detect irreconcilable conflicts early:
 
 ```python
-# Per-specialist capacity check (NOT global buffer subtraction)
-# Short trips (<=3 days) treat arrival/departure as partial scheduling windows.
-usable_days = total_days if total_days <= 3 else total_days - 2
-
-# Diving: must finish 24h before departure if no-fly constraint
-diving_slots = usable_days - buffer_days if nofly_constraint else usable_days
-if len(diving_activities) > diving_slots:
-    auto_truncate(diving_activities, diving_slots)  # Silent trim, no conflict
+# Arrival + departure are partially usable (0.4 day each).
+usable_days = max(0, total_days - 2) + 0.8
 
 # Cross-domain (diving + altitude): trim-before-conflict
 # Only raises BLOCKING conflict when available_after_buffer < 2
@@ -402,9 +398,14 @@ if available_after_buffer >= 2:
 else:
     conflict("Cannot fit diving + buffer + altitude in trip")
 
+# Diving: must finish 24h before departure if no-fly constraint
+diving_slots = int(usable_days - buffer_days) if nofly_constraint else int(usable_days)
+if len(diving_activities) > diving_slots:
+    auto_truncate(diving_activities, diving_slots)  # Silent trim, no conflict
+
 # Total capacity: activities can share days via interleaving.
-# On short trips, anchor days contribute partial capacity instead of being dropped entirely.
-max_capacity = usable_days * MAX_BLOCKS_PER_DAY  # 3 blocks/day
+# activities_per_day caps per-day density alongside MAX_BLOCKS_PER_DAY.
+max_capacity = int(usable_days * min(MAX_BLOCKS_PER_DAY, activities_per_day))
 if total_activity_days > max_capacity:
     auto_truncate_proportionally()  # Silent trim, no conflict
 ```
@@ -445,17 +446,17 @@ If a block already carries partner deeplink/image data (Viator or GYG), Google P
 
 **Cross-Domain Trim Math:** For a trip with diving + altitude activities and a 24h buffer:
 
-| Trip | Usable | After buffer | Dive slots | Altitude slots | Result        |
-| ---- | ------ | ------------ | ---------- | -------------- | ------------- |
-| 3d   | 3      | 2            | 1          | 1              | Trimmed via partial-day bookends |
-| 4d   | 2      | 1            | --         | --             | Real conflict |
-| 5d   | 3      | 2            | 1          | 1              | Trimmed       |
-| 7d   | 5      | 4            | 2          | 2              | Trimmed       |
-| 9d   | 7      | 6            | 3          | 3              | Trimmed       |
+| Trip | Usable (max(0,N-2)+0.8) | After buffer (1d) | Dive slots | Altitude slots | Result        |
+| ---- | ------------------------ | ----------------- | ---------- | -------------- | ------------- |
+| 3d   | 1.8                      | 0.8               | --         | --             | Real conflict (< 2) |
+| 4d   | 2.8                      | 1.8               | --         | --             | Real conflict (< 2) |
+| 5d   | 3.8                      | 2.8               | 1          | 1              | Trimmed       |
+| 7d   | 5.8                      | 4.8               | 2          | 2              | Trimmed       |
+| 9d   | 7.8                      | 6.8               | 3          | 3              | Trimmed       |
 
 **Two-Layer No-Fly Enforcement:**
 
-1. **Phase 2b (Count):** Truncates diving activity count to fit available slots (`diving_slots = usable_days - buffer_days`)
+1. **Phase 2b (Count):** Truncates diving activity count to fit available slots (`diving_slots = int(usable_days - buffer_days)`)
 2. **Phase 6.5 (Inline Display):** Tags the last dive block with a `no_fly_buffer` inline constraint badge when within 2 days of departure. Phase 4 (`_inject_safety_buffers`) no longer inserts standalone "No-Fly Day" buffer cards -- the constraint is shown as an inline badge on the relevant dive activity instead.
 
 **Cross-Domain Clustering (Phase 4 -- `no_altitude_after_dive`):**
@@ -810,7 +811,7 @@ Two parallel serialization paths:
 
 ## Specialist Domain Knowledge
 
-> **SSoT:** All specialist configuration (keywords, constraints, enhancements, flags, backfill affinity) lives in `backend/app/planner/specialist_registry.py`. Top destinations and activities are LLM-generated per prompt file -- no hardcoded destination lists. Tier 2 is open-ended (no fixed validation set). `display_name(category)` provides canonical display names. `backfill_affinity_tags` drives complementary category selection for free-day backfill. `TIER2_BROWSE_CATEGORIES` is the canonical generic Tier 2 browse/fill-day rotation used when the user has not specified explicit categories. Adding a specialist requires: 1) add entry to `SPECIALIST_REGISTRY`, 2) update `_EXPECTED_SPECIALISTS`, 3) create `prompts/specialists/{topic}.txt`.
+> **SSoT:** All specialist configuration (keywords, constraints, enhancements, flags, backfill affinity) lives in `backend/app/planner/specialist_registry.py`. Top destinations and activities are LLM-generated per prompt file -- no hardcoded destination lists. Tier 2 is open-ended (no fixed validation set). `SpecialistConfig.display_name` provides canonical display names per specialist. `backfill_affinity_tags` drives complementary category selection for free-day backfill. `TIER2_BROWSE_CATEGORIES` is the canonical generic Tier 2 browse/fill-day rotation used when the user has not specified explicit categories. Adding a specialist requires: 1) add entry to `SPECIALIST_REGISTRY`, 2) update `_EXPECTED_SPECIALISTS`, 3) create `prompts/specialists/{topic}.txt`.
 
 **Fill-Day Validation:** `validate_fill_day_placement(target_day, specialist_type, day_cards, total_days, has_departure_flight)` checks placement against registry constraints: no-fly buffer proximity to departure, cross-domain forward adjacency, and cross-domain reverse adjacency. Returns `FillDayRejection(code, reason, suggestion)` or `None` if valid.
 
@@ -1150,17 +1151,39 @@ backend/app/prompts/
 
 1. **Persona** -- destination-aware (with local culture/style hints) or generic persona block
 2. Trip context block (`_build_trip_context_block`)
-3. **"What the User Sees Right Now"** -- rendered dynamically when `day_cards` or `strategy_sections` exist in state, including day/activity counts and visible hotel/itinerary context while avoiding direct UI description
-4. Specialist findings (`_build_specialist_findings_block`)
-5. Itinerary status (`_build_itinerary_status_block`)
-6. Outcome (`_build_outcome_block`) for mutation turns (add/remove/settings/date/spatial/preference/logistics changes), including optional budget usage summary from candidate tiles
-7. Turn context (`_build_turn_context_block`)
-8. Diff block (`_build_diff_block`) with top-tracked `trip_plan`/`trip_settings` field deltas for change-aware responses
-9. Grounding Facts (`_build_grounding_block`) with tile refresh summary, builder placement/conflict/warning facts, infeasible or omitted requested categories, and a curated list of named entities that are safe to mention from current state
-10. **Already-Said dedup block** with recent assistant replies (last 6 messages filtered, up to 3 shown), to prevent repetitive responses
-11. **Hard rules** (`_VOICE_BASE`) + intent-specific voice block with per-intent sentence limits (enforced by `_enforce_sentence_limit()`)
+3. **Destination knowledge unlock** (`_build_destination_knowledge_block`) -- injected only for `question` and `destination_change` intents. Gives the LLM explicit permission to use parametric destination knowledge (landmarks, neighborhoods, cultural experiences) while keeping bookable-entity grounding intact.
+4. **"What the User Sees Right Now"** -- rendered dynamically when `day_cards` or `strategy_sections` exist in state, including day/activity counts and visible hotel/itinerary context while avoiding direct UI description
+5. Specialist findings (`_build_specialist_findings_block`)
+6. Itinerary status (`_build_itinerary_status_block`)
+7. Outcome (`_build_outcome_block`) for mutation turns (add/remove/settings/date/spatial/preference/logistics changes), including optional budget usage summary from candidate tiles
+8. Turn context (`_build_turn_context_block`)
+9. Diff block (`_build_diff_block`) with top-tracked `trip_plan`/`trip_settings` field deltas for change-aware responses
+10. Grounding Facts (`_build_grounding_block`) with tile refresh summary, builder placement/conflict/warning facts, infeasible or omitted requested categories, and bookable entities safe to mention (specific tour operators, hotels, flights only — general destination knowledge is unrestricted)
+11. **Already-Said dedup block** with recent assistant replies (last 6 messages filtered, up to 3 shown), to prevent repetitive responses
+12. **Hard rules** (`_VOICE_BASE`) + intent-specific voice block with per-intent sentence limits (enforced by `_enforce_sentence_limit()`)
 
-This keeps the final assistant turn aligned with what the backend just applied, prevents repetition, and adds an explicit anti-hallucination guard: named hotels, flights, and activities must come from itinerary/status/grounding facts instead of free generation.
+This keeps the final assistant turn aligned with what the backend just applied, prevents repetition, and adds an anti-hallucination guard for bookable entities (hotels, flights, tour operators must come from grounding facts). For question/exploration turns, the destination knowledge block explicitly unlocks the LLM's parametric knowledge about landmarks, neighborhoods, and cultural experiences.
+
+**Voice blocks and sentence limits** (`_VOICE_*`, `_SENTENCE_LIMIT`, `_enforce_sentence_limit`):
+
+| Voice Block | Sentence Limit | Used For |
+| --- | --- | --- |
+| `_VOICE_GREETING` | 1 | Greeting / casual |
+| `_VOICE_PLAN_GENERATED` | 2 | Plan rebuild / add activity |
+| `_VOICE_ACTIVITY_CHANGE` | 2 | Remove / swap / spatial / day count |
+| `_VOICE_PREFERENCE_CHANGE` | 2 | Preference / settings / logistics |
+| `_VOICE_DATES_SET` | 2 | Date confirmation |
+| `_VOICE_DESTINATION_SET` | 3 | Destination set / changed |
+| `_VOICE_FALLBACK` | 3 | Unmatched change types |
+| `_VOICE_INFEASIBLE_ACTIVITY` | 4 | Impossible activity redirect |
+| `_VOICE_QUESTION` | 5 | Destination questions (unlocks world knowledge) |
+| `_VOICE_INITIAL_PLAN` | 5 | First plan reveal |
+
+`_RESPONSE_MAX_TOKENS` is 800. The sentence enforcer hard-cuts the stream at the limit regardless of token budget.
+
+**QUESTION intent execution plan:** QUESTION no longer uses `SHORT_CIRCUIT`. Instead, `plan_turn()` conditionally prepends `LOCAL_INTEL` when a destination exists, the question is destination-related (`classifier.question_type` or `specialist_hints`), and no local expert section is cached for that destination. Otherwise it runs `GENERATE_RESPONSE` only.
+
+**Booked-tile rehydration** (`_rehydrate_trimmed_booked_tiles`): Runs at turn start (after `_merge_doc_settings`, before CLASSIFY). Backfills `image_url` and `geo` onto session-trimmed `booked_tile` dicts from the full activity tiles dict, preventing empty cards on non-rebuild turns.
 
 ---
 
@@ -1209,7 +1232,7 @@ The coordinator also respects `cancel_event` -- if set (e.g. client disconnect),
 | --- | --- | --- |
 | `node_status` | `{node, status, label, icon_key, estimated_duration_ms}` | Coordinator step progress mapped to legacy node/tool names. `topic` and `stage` are now populated by the coordinator on specialist dispatch events (not just tolerated optional extras). Completed events fire as each parallel step finishes rather than after the whole group. |
 | `token` | `string` | Response text streamed from `conversationalist.generate_response_streaming()` |
-| `partial` | `{kind: "trip_inputs"\|"specialist_preview"\|"strategy_sections"\|"tiles"\|"day_cards"\|"tile_enrichment", payload: any, ...}` | Progressive render from coordinator step outputs. `specialist_preview` surfaces lightweight specialist highlights plus the current authoritative `strategy_sections`, and the frontend defers the immediately following compatibility `strategy_sections` merge by one animation frame so the preview can paint without an immediate duplicate merge. `day_cards` partials now carry enriched payloads via `_day_cards_partial_payload()` (tiles, strategy_sections, plan_view_state, itinerary context: overview, assumptions, constraint violations, warnings). `tile_enrichment` is a new post-response kind emitted after pending itinerary enrichment completes but before `complete`; it carries the enriched day_cards + tiles with `day_cards_changed` and `tiles_changed` boolean flags so the frontend can selectively re-render only what changed. If day_cards or tiles changed, dedicated `day_cards` and `tiles` partials follow immediately after the `tile_enrichment` partial. |
+| `partial` | `{kind: "trip_inputs"\|"specialist_preview"\|"strategy_sections"\|"tiles"\|"day_cards"\|"tile_enrichment"\|"date_flex_suggestion", payload: any, ...}` | Progressive render from coordinator step outputs. `date_flex_suggestion` is emitted alongside tiles when Aviasales grouped_prices found a cheaper nearby date (≥10% savings). `specialist_preview` surfaces lightweight specialist highlights plus the current authoritative `strategy_sections`, and the frontend defers the immediately following compatibility `strategy_sections` merge by one animation frame so the preview can paint without an immediate duplicate merge. `day_cards` partials now carry enriched payloads via `_day_cards_partial_payload()` (tiles, strategy_sections, plan_view_state, itinerary context: overview, assumptions, constraint violations, warnings). `tile_enrichment` is a new post-response kind emitted after pending itinerary enrichment completes but before `complete`; it carries the enriched day_cards + tiles with `day_cards_changed` and `tiles_changed` boolean flags so the frontend can selectively re-render only what changed. If day_cards or tiles changed, dedicated `day_cards` and `tiles` partials follow immediately after the `tile_enrichment` partial. |
 | `feasibility_warning` | `{topic, status, reason, alternative}` | Coordinator feasibility signal. Forwarded by `generate_sse()` as a public SSE event for frontend toast display. |
 | `complete` | `{document, session_state, version, updated_at, ...}` | Public SSE payload built in `generate_sse()` after `apply_planner_update()`, wrapping/normalizing coordinator `_build_envelope()` output |
 | `error` | `{message}` | Error information |
@@ -1277,7 +1300,7 @@ The `search_tiles` tool (via logistics_node) and `tile_service/service.py` both 
 
 Hotel deeplinks from `google_places_provider.py` now prefer a Booking.com search URL assembled from tile context (`name`, destination, dates, travelers). When present, optional `settings.booking_affiliate_aid` is appended as `aid`; Google Travel / Google Maps links are still computed and preserved in tile metadata as fallback context (`meta.booking_deeplink`, `meta.maps_deeplink`).
 
-`aviasales_provider.py` now keeps up to 10 provider rows per request, dedupes logically identical itineraries by a stable SHA1 fingerprint (carrier, flight number, airports, times, transfers, durations), then emits up to 5 unique tiles. The fingerprint also drives stable hashed `tile.id` / `partner_product_id` values so duplicate provider rows collapse onto one booking surface.
+`aviasales_provider.py` returns a `FlightSearchResult` dataclass (tiles + optional flex pricing). It keeps up to 10 provider rows per request, dedupes logically identical itineraries by a stable SHA1 fingerprint (carrier, flight number, airports, times, transfers, durations), then emits up to 5 unique tiles. The fingerprint also drives stable hashed `tile.id` / `partner_product_id` values so duplicate provider rows collapse onto one booking surface. When the `grouped_prices` fallback is used, the provider also captures the full month's date→price map and identifies the cheapest date within a ±3-day window for date flex suggestions.
 
 Media proxy URL signing is now centralized in `backend/app/config.py:get_media_signing_secret()`.
 Both `google_places_provider.py` and `main.py` resolve the secret through the same fallback order:
@@ -1347,7 +1370,7 @@ INITIATED -> PENDING_PAYMENT -> HOLD -> CONFIRMED
 | `planner` | `execute_turn`, `build_trip_state_summary`, `restore_graph_state`, `state_to_session_state`, `trip_plan_to_trip_inputs`, hashing helpers |
 | `planner.state` | `GraphState`, `TripPlan`, `TripSegment`, `ItineraryBlock`, `SpecialistConstraint`, `SpecialistStateOutput` |
 | `planner.state.agent_state` | `NomadicAgentState` |
-| `planner.hashing` | `stable_hash`, `stable_hash_short`, `canonicalize_destinations`, `make_cache_key` |
+| `planner.hashing` | `stable_hash`, `stable_hash_short`, `canonicalize_destinations`, `make_cache_key`, `field_hash` |
 | `planner.coordinator` | `execute_turn`, `plan_turn`, `_build_envelope`, `_compute_coordinator_s3_state` |
 | `planner.schemas.coordinator_schemas` | `ChangeType`, `ChangeClassification`, `ClassifierOutput`, `TripBrief`, `SpecialistDayPlan`, `SpecialistTransit`, `SpecialistConstraintOutput`, `SpecialistPlan`, `ReplanRequest`, `StepType`, `ExecutionStep`, `ExecutionPlan` |
 

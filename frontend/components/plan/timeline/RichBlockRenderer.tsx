@@ -307,6 +307,11 @@ export function RichBlockRenderer({
   }
 
   // 4. ACTIVITY LAYER - Rich activity cards
+  const blockTitle = block.summary || block.booked_tile?.title;
+  if (!blockTitle && !block.activity_type && !block.is_buffer /* Defensive: buffers handled above */) {
+    return null;
+  }
+
   const isBooked = mode === 'booking'
     ? (!!block.booked_tile || !!(block.id && savedTileIds?.has(block.id)))
     : (block.preference_status === 'user_preferred' || !!(block.id && savedTileIds?.has(block.id)));
@@ -332,7 +337,6 @@ export function RichBlockRenderer({
       mode={mode}
       preferenceStatus={preferenceStatus}
       alternativeTileId={block.alternative_tile_id}
-      // TODO: Wire up switch handler when we have tile replacement API
       onSwitchToAlternative={undefined}
       onRemove={onRemoveBlock && block.id ? () => onRemoveBlock(block.id!, dayNumber) : undefined}
       isRemovable={!block.is_buffer && !['arrival', 'departure', 'check-in', 'check-out'].includes(block.activity_type)}

@@ -136,6 +136,18 @@ class TileClick(Base, TimestampMixin):
     request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
 
+class TripEvent(Base, TimestampMixin):
+    """Lightweight analytics events for trip planning funnel tracking."""
+
+    __tablename__ = "trip_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, index=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(48), index=True, nullable=False)
+    destination: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    metadata_: Mapped[Optional[Dict]] = mapped_column("metadata", JSON, nullable=True)
+
+
 class ChatMessage(Base, TimestampMixin):
     __tablename__ = "chat_messages"
 

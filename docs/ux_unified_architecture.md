@@ -185,7 +185,7 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 | No Destination | Hidden | Hidden |
 
 **Map Content:**
-- Map centered on POIs via `calculateMapCenter()` (zoom derived from POI spread)
+- Map centered on POIs via `calculateMapCenter()` (zoom derived from POI spread); returns `null` when no valid POIs exist
 - Falls back to the first hotel tile with valid `geo` coordinates when no POIs are available
 - Final fallback is the global default center used by `PlanFullDensityView` (`lat: 20, lng: 0, zoom: 2`)
 - **POI Pins:** Activity markers from `extractPOIsFromDayCards()` with fallback to `extractPOIsFromSections()` in `ghost-timeline-adapter.ts`
@@ -713,28 +713,22 @@ if has_niche_specialist:
 
 **Rationale:** When a diving specialist is active, showing "Night market" or "Sunrise ridge" creates expectation mismatch. But if a user selects both diving AND cooking, cooking tiles (matched via `tags` on curated tiles or keyword fallback on mock tiles) should survive — only the Tier 1 categories are handled by specialists. This two-tier approach gives specialists ownership of their domain while preserving Tier 2 experience tiles.
 
-### Empty Specialist Card Filtering
+### Infeasible Specialist Card Filtering
 
-**Problem:** When a specialist (e.g., skiing) runs but returns no useful content for a destination (e.g., Bali), an empty card appears in the UI. This looks broken.
+**Problem:** When a specialist (e.g., skiing) runs but the destination is infeasible or has caveats (e.g., Bali), showing the card in the strategy surface creates confusion.
 
-**Solution:** Filter specialist cards on **output** (content_added), not **input** (specialist requested). This is destination-agnostic and handles every case.
+**Solution:** Filter specialist sections by `feasibility_status` in `useStrategyStageOrchestration`. Sections with `feasibility_status === 'infeasible'` or `feasibility_status === 'caveat'` are excluded from `fullModeSections`. Toast notifications are shown for newly infeasible sections.
 
-**Location:** density-driven strategy rendering path (`StrategyStageRenderer` / `PlanFullDensityView` / `StrategyHero*`)
+**Location:** `useStrategyStageOrchestration.ts` — `specialistData` memo
 
 ```typescript
-// Filter out domain specialists with no content (e.g., skiing in tropical destinations)
-const strategy_sections = rawStrategySections.filter((section) => {
-  // Always show general/local_expert sections (they have context even without activities)
-  const isGeneralType = ['general', 'local_expert'].includes(section.specialist_type || '');
-  if (isGeneralType) return true;
-  // For niche specialists, only show if they returned content
-  return section.content_added && section.content_added.length > 0;
-});
+// Filter out infeasible/caveat specialist sections
+const fullModeSections = (viewModel.strategy_sections ?? []).filter(
+  s => s.feasibility_status !== 'infeasible' && s.feasibility_status !== 'caveat'
+);
 ```
 
-**Why frontend filtering?** A backend hardcoded `SKIING_EXCLUDED_DESTINATIONS` set creates a maintenance trap — silently fails for any destination not in the list. Frontend filter on output works everywhere.
-
-**Verify:** Search "Bali hiking and skiing" → skiing card should NOT appear (no skiing content for Bali).
+**Why feasibility filtering?** Backend constraint evaluation determines feasibility at the domain level (e.g., skiing infeasible in Bali), making `feasibility_status` the authoritative signal. The frontend surfaces the reason via toast so users understand why a specialist was dropped.
 
 ### Inline Constraints Display (S3 View)
 
@@ -971,12 +965,16 @@ We do not swap `SetupView` for `PlanView`. We use a single **`StrategyStageRende
 // StrategyStageRenderer delegates to density-specific views via useStrategyStageOrchestration:
 function StrategyStageRenderer({ state, viewModel, ... }) {
   const o = useStrategyStageOrchestration({ state, viewModel, ... });
+  const hasPartialItinerary = (o.effectiveDayCards?.length ?? 0) > 0;
 
-  const { isShowingMirrorLoader, density: immediateDensity, tripDuration } = o.displayLogic;
-  if (isShowingMirrorLoader || immediateDensity === 'ghost') return <PlanMirrorLoader tripDuration={tripDuration} />;
+  // shouldUsePlanMirrorLoader() gate:
+  //   - Returns false when hasPartialItinerary (progressive content should render)
+  //   - Returns true when isShowingMirrorLoader || density === 'ghost'
+  //   - Returns true when generation active with empty/bridge density
+  if (shouldUsePlanMirrorLoader({ ... })) return <PlanMirrorLoader tripDuration={tripDuration} />;
   if (immediateDensity === 'empty' || immediateDensity === 'bridge') return null;
   // default: full density
-  return <PlanFullDensityView ... />;
+  return <PlanFullDensityView ... timelineVariant={computeTimelineVariant(state, hasPartialItinerary)} />;
 }
 ```
 
@@ -1601,8 +1599,8 @@ plan_documents.document (JSONB)
 │   └── [day_card]
 │       ├── day_number: int
 │       ├── date: string
-│       ├── title: string                   # "Arrival Day"
-│       ├── subtitle?: string              # Explanatory context (e.g., buffer_reason)
+│       ├── label: string                   # "Arrival + light activity"
+│       ├── subtitle?: string              # Client-side only, computed from blocks
 │       └── blocks: List[Block]             # Activities, logistics
 ├── can_expand_to_itinerary: bool           # ✅ PERSISTED
 │
@@ -1729,7 +1727,7 @@ useSessionHydration() runs
 | `FullDensityTimeline` | Composes the mobile inline map and `PlanTimelineSection` for `PlanFullDensityView`. Mobile map renders when `!isDesktop && hasItineraryContent && (fullModePOIs.length > 0 \|\| hasDestinationCenter)` at `h-[clamp(220px,35vh,300px)]`. |
 | `BookingSummary` | Supplemental booking-links panel rendered by `PlanFullDensityView` under the timeline. Shows deduped booking links for stays (`tiles`), booked flights (`day_cards`), and mapped itinerary activities in Stage 3 states, and rebuilds hotel search URLs from current trip inputs when richer Booking.com / Google Travel search params are available. |
 | `PlanDensityViews` | Density loading view (`PlanMirrorLoader`) only. |
-| `shouldUsePlanMirrorLoader()` | Gate function in `StrategyStageRenderer.tsx` for showing the mirror/loading state. Returns `false` when `hasPartialItinerary` is true (progressive content should render instead of loader). Returns `true` when `isShowingMirrorLoader \|\| density === 'ghost'` or when generation is active with `empty`/`bridge` density. |
+| `shouldUsePlanMirrorLoader()` | Gate function in `StrategyStageRenderer.tsx` for showing the mirror/loading state. Returns `false` when `hasPartialItinerary` is true (progressive content should render instead of loader). Also returns `false` when `hasTiles && isPlanGenerationActive` so arriving hotel/activity tiles break the loader early and show real content. Returns `true` when `isShowingMirrorLoader \|\| density === 'ghost'` or when generation is active with `empty`/`bridge` density. |
 | `PlanTimelineSection` | Timeline section for full-density view -- handles DnD wrapping (`ItineraryDndWrapper`, `DraggableBlock`, `DroppableDay`), skeleton loading, regeneration overlay, and wraps `TimelineThread` in `ErrorBoundary` for crash isolation. Shows `TimelineSkeleton` during expanding itinerary OR when itinerary content is expected but `day_cards` haven't arrived yet (`showSkeletonTimeline`). Shows a loading overlay on existing real itinerary during regeneration (`showLoadingOverlay`). Disables timeline interactions (`pointer-events-none`, `opacity-25`) during regen OR itinerary expansion. |
 | `TimelineBlockList` | Renders one day’s timeline blocks, splitting compact vs full variants and injecting optional DnD/slot render-props for drag/drop and free-day actions. Free-day buffer exclusion chips are derived only from that day’s `bufferBlocks` plus the selected categories (via `useTimelineBufferLogic`), so unrelated `day_cards` mutations do not fan out rerenders across the full timeline subtree. |
 | `TimelineDayCard` | Composes a day header, day-level constraints, and block list for one day in both compact and full timeline modes. |
@@ -1765,7 +1763,8 @@ useSessionHydration() runs
 | `ChatMessageList` | Scrollable message list renderer — owns scroll container div and all message rendering. |
 | `ChatInputHandler` | Thin wrapper around `ChatInputBar` converting ChatPanel-level callbacks to form-submit signatures. Extracted from ChatPanel. |
 | `ChatSuggestionBar` | Thin wrapper around `ChatSuggestionChips` for ChatPanel integration. Extracted from ChatPanel. Forwards trigger-action callbacks including `onConfirmReset` (`confirm_reset` target). |
-| `ChatSuggestionChips` | Renders the actual suggestion-chip reel. Keeps chips in a single horizontal overflow row (never wrapped), resolves actions from structured chip metadata (`action_type`, `action_target`, `chip_type`, `category`) with category/text fallbacks for legacy chips, and treats `date_prompt` / `date_contextual` chips as executable send-message prompts instead of opening the date sheet. |
+| `ChatSuggestionChips` | Renders the actual suggestion-chip reel. Keeps chips in a single horizontal overflow row (never wrapped), resolves actions from structured chip metadata (`action_type`, `action_target`, `chip_type`, `category`) with category/text fallbacks for legacy chips, and treats `date_prompt` / `date_contextual` chips as executable send-message prompts instead of opening the date sheet. Also renders an optional `DateFlexChip` when `dateFlexSuggestion` is set and the user hasn't already opted into `date_flex`. |
+| `DateFlexChip` | Chip in the suggestion reel offering a cheaper nearby departure date from Aviasales grouped_prices. Shows savings amount/percentage and formats the alternative date range. On click, sends a date-change message and clears the suggestion. |
 | `ChatMessageRenderer` | Renders individual chat messages: user bubbles and assistant bubbles with markdown/specialist deep links/streaming pulse/retry button and color-marked activity mentions. |
 | `computeTimelineVariant(state, hasPartialItinerary?)` | Maps PlanViewState to TimelineVariant (see table below). Returns `'draft'` when `hasPartialItinerary` is true even if `plan_view_state` hasn't reached S3. |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
@@ -1825,8 +1824,9 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 | PlanViewState | TimelineVariant | Badge |
 | --- | --- | --- |
 | Itinerary-ready states (`P3_FINALIZED`, legacy `S3_ITINERARY_READY`) | `real` | None (finalized itinerary) |
+| Any state when `hasPartialItinerary` is true (day_cards exist but state not yet S3_ITINERARY_READY) | `draft` | None (partial itinerary override — takes precedence over state-based mapping below) |
 | Editing or strategy-ready states (`P3_EDITING`, legacy `S3_EDITING`, `P1_ENRICHED`, legacy `S2_STRATEGY_READY`) | `draft` | None (no badge — draft variant is distinguished by timeline styling only) |
-| All others (`S0_*`, `S1_*`, `S2_BLOCKED`, `S3_BLOCKED`, `S3_PARTIAL_CONFLICT`) | `ghost` | "Specialist Preview" (emerald) |
+| All others (`S0_*`, `S1_*`, `S2_BLOCKED`, `S3_BLOCKED`, `S3_PARTIAL_CONFLICT` without day_cards) | `ghost` | "Specialist Preview" (emerald) |
 
 **Invariant:** Regeneration is triggered via chat auto-regen, preference auto-regen, or the Build Itinerary CTA. Neither `draft` nor `real` variants display a badge — only `ghost` shows "Specialist Preview".
 
@@ -2808,7 +2808,7 @@ The `no_altitude_after_dive` constraint is emitted by the diving specialist but 
 **Component Files:**
 ```
 frontend/components/plan/timeline/
-├── RichBlockRenderer.tsx           # Smart block router + logistics image resolver (booked tile/id/preferred/title-match/placeholder)
+├── RichBlockRenderer.tsx           # Smart block router + logistics image resolver (booked tile/id/preferred/title-match/placeholder); empty-block guard returns null when no summary/title/activity_type
 ├── useTimelineFillDay.ts           # Fill-day state + handler hook (per-day mutex, cooldown, generation guards; extracted from TimelineThread)
 ├── ...                             # DragPreviewCard, DraggableBlock, DroppableDay, FreeDayDropSlot, etc.
 └── blocks/
@@ -2897,7 +2897,8 @@ This section documents the mode-aware tile components used for suggestions and b
 
 | Component | Mode | Purpose | Location |
 |-----------|------|---------|----------|
-| `SuggestionCard` | PLANNING | AI-recommended tiles with reasoning | `components/plan/tiles/SuggestionCard.tsx` |
+| `SuggestionCard` | PLANNING | AI-recommended tiles with reasoning (vertical stack) | `components/plan/tiles/SuggestionCard.tsx` |
+| `TileRailCard` | PLANNING | Compact horizontal rail card for Stays and Flights sections | `components/plan/tiles/TileRailCard.tsx` |
 | `TileCard` | BOOKING | Tile details + single external deeplink action | `components/tiles/TileCard.tsx` |
 
 #### B. SuggestionCard (PLANNING Mode)

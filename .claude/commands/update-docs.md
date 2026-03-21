@@ -259,3 +259,4 @@ Read the `## 🎯 Current Sprint` section in `CLAUDE.md`.
 - If no docs need updating (e.g., test-only changes, comment edits), say so and stop.
 - Max 6 doc files modified per run. If more are affected, prioritize by: plan_graph_analysis > data-contracts > ux_unified_architecture > design-system > repo_structure > agents/CLAUDE.md.
 - Code is truth. Fix docs to match code, never the reverse.
+- **Favor brevity and simplicity**: write the minimum prose needed to convey the fact. Prefer concise phrases and tight tables over paragraphs. Never pad, restate, or narrate — a reader should be able to scan, not read. Complete coverage matters more than polish: every changed fact should be captured, but each fact needs only one sentence.

@@ -1,6 +1,5 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
@@ -44,7 +43,6 @@ export function SharedTripView({
   initialData = null,
   initialError = null,
 }: SharedTripViewProps) {
-  const router = useRouter();
   const { toast } = useToast();
   const [data, setData] = useState<SharedTripData | null>(initialData);
   const [error, setError] = useState<string | null>(initialError);
@@ -94,7 +92,7 @@ export function SharedTripView({
       }
 
       toast('Trip copied to your workspace', { type: 'success' });
-      router.push('/');
+      window.location.href = '/';
     } catch {
       toast('Could not copy trip', { type: 'error' });
       setIsForking(false);

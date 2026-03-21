@@ -69,7 +69,7 @@ export function usePlanFullDensityData({
   const mapCenter = useMemo(
     () =>
       fullModeMapItems.length > 0
-        ? calculateMapCenter(fullModeMapItems)
+        ? (calculateMapCenter(fullModeMapItems) ?? DEFAULT_MAP_CENTER)
         : destinationCenter ?? DEFAULT_MAP_CENTER,
     [destinationCenter, fullModeMapItems]
   );

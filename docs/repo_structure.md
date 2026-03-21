@@ -70,7 +70,7 @@ Python FastAPI application with a coordinator-driven trip planner.
 backend/
 ├── app/
 │   ├── __init__.py
-│   ├── analytics_routes.py     # Analytics API routes (extracted from main.py)
+│   ├── analytics_routes.py     # Analytics API routes: tile clicks + funnel event tracking (extracted from main.py)
 │   ├── auth.py                 # Google OAuth exchange + session-to-user linking helpers
 │   ├── config.py               # Application configuration
 │   ├── crud_document.py        # Document CRUD operations
@@ -218,7 +218,8 @@ backend/
 │       ├── c1f8e8bf9d21_chat_messages_table.py
 │       ├── c4b7e1a29d3f_add_runtime_state_table.py  # Shared runtime leases + spend counters
 │       ├── 0347ceb87559_add_response_cache_table.py  # Specialist LLM cache
-│       └── add_cache_type_column.py                  # cache_type column for multi-tier caching
+│       ├── add_cache_type_column.py                  # cache_type column for multi-tier caching
+│       └── d5e8f3b14a7c_add_trip_events.py           # trip_events analytics table
 │
 ├── scripts/
 │   └── check_ssot_violations.py  # SSOT validation script
@@ -363,6 +364,7 @@ frontend/
 │   │   ├── ChatSkeleton.tsx
 │   │   ├── ChatSuggestionBar.tsx     # Thin wrapper around ChatSuggestionChips for ChatPanel integration
 │   │   ├── ChatSuggestionChips.tsx   # Suggestion chips rendering (extracted from ChatPanel)
+│   │   ├── DateFlexChip.tsx         # Date flex suggestion chip (cheaper nearby departure date)
 │   │   ├── MobileChatInput.tsx
 │   │   ├── SmartLoader.tsx
 │   │   ├── chatMessageProcessing.ts  # Pure chat-message sanitizing/splitting utilities
@@ -432,7 +434,6 @@ frontend/
 │   │   ├── BookingSummary.tsx                # Grouped booking-links summary for bookable stays/flights/activities
 │   │   ├── BrowseActivitiesSheet.tsx  # Bottom sheet for browsing categorized activity tiles (Tier 1 free days)
 │   │   ├── PdfExportButton.tsx               # Export generated itinerary to PDF
-│   │   ├── ChipGroup.helpers.ts            # ChipGroup helper utilities
 │   │   ├── ChipGroup.tsx
 │   │   ├── ChipScrollContainer.tsx        # Shared horizontal chip wrapper (carousel-safe)
 │   │   ├── FullDensityTimeline.tsx       # Activity timeline container used by full-density view
@@ -450,10 +451,7 @@ frontend/
 │   │   ├── PlanHeader.tsx
 │   │   ├── PlanTimelineSection.tsx         # Timeline section with DnD wiring for full-density view
 │   │   ├── pdf/                            # PDF export rendering subtree
-│   │   │   ├── TripPdfDocument.tsx          # @react-pdf renderer for itinerary output
-│   │   │   ├── TripPdfSections.tsx          # PDF sections extracted from TripPdfDocument
-│   │   │   └── TripPdfStyles.ts             # PDF styling constants
-│   │   ├── nextStepBarUtils.ts             # NextStepBar utilities
+│   │   │   └── TripPdfDocument.tsx          # @react-pdf renderer for itinerary output
 │   │   ├── planStateHelpers.ts
 │   │   ├── SetupCoreChip.tsx               # Setup core chip component
 │   │   ├── ShareTripButton.tsx             # Share-link CTA for itinerary surfaces
@@ -483,41 +481,26 @@ frontend/
 │   │   ├── booking/
 │   │   │   ├── BookingDrawer.tsx
 │   │   │   ├── CategorySection.tsx
-│   │   │   ├── CategorySectionTile.tsx         # Individual tile within CategorySection
 │   │   │   └── CheckoutSidebar.tsx
 │   │   │
 │   │   ├── modals/
-│   │   │   ├── AlternativesModal.helpers.ts    # AlternativesModal helper utilities
-│   │   │   ├── AlternativesModal.tsx
-│   │   │   ├── AlternativesModalContent.tsx    # AlternativesModal content (extracted from AlternativesModal)
-│   │   │   ├── AlternativesModalOptionCard.tsx # Option card for AlternativesModal
-│   │   │   └── AlternativesModalThumbnail.tsx  # Thumbnail for AlternativesModal
+│   │   │   └── AlternativesModal.tsx
 │   │   │
 │   │   ├── sheets/             # Bottom sheets
-│   │   │   ├── ActivitiesSheet.helpers.ts      # ActivitiesSheet helper utilities
 │   │   │   ├── ActivitiesSheet.tsx
 │   │   │   ├── ActivitiesSheetContent.tsx      # Activity sheet form/section rendering
-│   │   │   ├── ActivitiesSheetFooter.tsx       # Activities sheet footer
 │   │   │   ├── BaseSheet.shared.tsx            # Shared BaseSheet utilities/types
 │   │   │   ├── BaseSheet.tsx
 │   │   │   ├── BaseSheetDesktopDialog.tsx      # Desktop dialog variant of BaseSheet
 │   │   │   ├── BaseSheetMobileSheet.tsx        # Mobile sheet variant of BaseSheet
 │   │   │   ├── BudgetSheet.tsx
-│   │   │   ├── BudgetSheetControls.tsx         # Budget sheet form controls
 │   │   │   ├── DatesSheet.tsx
-│   │   │   ├── DatesSheet.utils.ts             # DatesSheet utility functions
-│   │   │   ├── DatesSheetDialog.tsx            # Dates sheet dialog content
 │   │   │   ├── DestinationSheet.tsx
 │   │   │   ├── FlightsSheet.tsx
-│   │   │   ├── FlightsSheetControls.tsx        # Flights sheet form controls
 │   │   │   ├── GatingBlocker.tsx     # Shared gate-check blocker (gates array, used by Flights/Stays/Activities sheets)
-│   │   │   ├── LocationSheetParts.tsx          # Location sheet parts (shared by Origin/Destination)
 │   │   │   ├── OriginSheet.tsx
-│   │   │   ├── SheetFooterActions.tsx          # Shared sheet footer action buttons
 │   │   │   ├── StaysSheet.tsx
-│   │   │   ├── StaysSheetFields.tsx            # Stays sheet form fields
 │   │   │   ├── TravelersSheet.tsx
-│   │   │   ├── TravelersSheetControls.tsx      # Travelers sheet form controls
 │   │   │   └── TripSettingsSheet.tsx
 │   │   │
 │   │   ├── stages/             # Stage-specific views
@@ -540,7 +523,8 @@ frontend/
 │   │   ├── tiles/
 │   │   │   ├── SuggestionCard.tsx
 │   │   │   ├── SuggestionCardContent.tsx
-│   │   │   └── suggestionCardSections.tsx      # SuggestionCard sections (extracted)
+│   │   │   ├── suggestionCardSections.tsx      # SuggestionCard sections (extracted)
+│   │   │   └── TileRailCard.tsx               # Compact horizontal rail card for Stays/Flights tiles
 │   │   │
 │   │   └── timeline/
 │   │       ├── DragPreviewCard.tsx     # Ghost card shown in DragOverlay during block drag
@@ -549,26 +533,21 @@ frontend/
 │   │       ├── FreeDayDropSlot.tsx     # Drop zone inside FreeDayCard (via freeDayDropSlot render prop)
 │   │       ├── InlineDatePrompt.tsx
 │   │       ├── ItineraryDndWrapper.tsx # DndContext root; orchestrates validate/apply-arrangement flow
-│   │       ├── RichBlockRenderer.helpers.ts    # RichBlockRenderer helper utilities
 │   │       ├── RichBlockRenderer.tsx   # Smart block router: logistics → safety → ghost → activity (extracted from TimelineThread)
 │   │       ├── TimelineSkeleton.tsx
 │   │       ├── useTimelineFillDay.ts   # Fill-day state + handler hook (extracted from TimelineThread)
 │   │       └── blocks/
-│   │           ├── ActivityCardActionParts.tsx     # Action parts extracted from ActivityCardActions
 │   │           ├── ActivityCardActions.tsx
 │   │           ├── ActivityCardMeta.helpers.ts     # ActivityCardMeta helper utilities
 │   │           ├── ActivityCardMeta.tsx
 │   │           ├── ActivityCardPhoto.tsx
 │   │           ├── ActivityMiniCard.tsx
 │   │           ├── FreeDayCard.tsx
-│   │           ├── FreeDayCardSections.tsx         # FreeDayCard sections
 │   │           ├── GhostSlot.tsx
 │   │           ├── HoldToDeleteButton.tsx          # Press-and-hold circular progress delete button
 │   │           ├── LogisticsBlock.tsx
-│   │           ├── LogisticsBlockParts.tsx         # LogisticsBlock parts
 │   │           ├── PreferenceAttributionBadge.tsx  # "You preferred this" badge
 │   │           ├── SafetyBlock.tsx
-│   │           ├── activityMiniCardTheme.ts       # Activity mini card theme constants
 │   │           └── types.ts
 │   │
 │   ├── providers/
@@ -631,6 +610,7 @@ frontend/
 │
 ├── lib/                        # Utility functions
 │   ├── animation-config.ts     # Progressive disclosure timing constants
+│   ├── analytics.ts            # Frontend event tracking helper (trackEvent → /api/analytics/event)
 │   ├── api.ts                  # API client
 │   ├── config.ts               # Shared backend URL constant for RSC + client fetches
 │   ├── contentPolicyGuard.ts   # Content policy validation
@@ -697,6 +677,7 @@ frontend/
 │
 ├── __tests__/                  # Frontend tests
 │   ├── anti-fragmentation.test.tsx
+│   ├── chat-panel-layout.test.ts          # Chat panel layout helper tests
 │   ├── chat-suggestion-actions.test.ts
 │   ├── constraint-states.test.tsx
 │   ├── browse-activities-cache.test.ts
@@ -709,6 +690,7 @@ frontend/
 │   ├── itinerary-generation-dedupe.test.tsx
 │   ├── LandingHelpers.test.ts          # Landing helper keyword/diff tests
 │   ├── landing-derived.test.tsx
+│   ├── landing-plan-density.test.ts    # Plan density view state derivation tests
 │   ├── map-error-boundary.test.ts
 │   ├── map-helpers.test.ts             # InteractiveMap helper hook tests
 │   ├── booking-links.test.tsx          # Booking deeplink label and rewrite tests
@@ -716,16 +698,21 @@ frontend/
 │   ├── booking-summary.test.tsx        # Stage-3 booking-links summary coverage
 │   ├── logistics-block-sizing.test.tsx # Timeline logistics block thumbnail/CTA layout tests
 │   ├── plan-copy.test.tsx
+│   ├── plan-timeline-section.test.tsx    # PlanTimelineSection rendering tests
 │   ├── placeholders.test.ts
 │   ├── rich-block-renderer.test.tsx
 │   ├── suggestion-card-sizing.test.tsx # Suggestion card compact-thumbnail layout tests
 │   ├── split-render-surfaces.test.tsx  # Split render surfaces component extraction tests
 │   ├── strategy-stage-orchestration.test.ts  # StrategyStage orchestration helper tests
+│   ├── strategy-stage-renderer-loading.test.ts  # StrategyStageRenderer loading state tests
 │   ├── streaming.test.ts
 │   ├── tileHelpers.test.ts             # Tile helper utility tests
+│   ├── timeline-skeleton-preview.test.tsx  # Timeline skeleton preview rendering tests
+│   ├── timeline-skeleton.test.tsx      # Timeline skeleton rendering tests
 │   ├── useBranchManager.test.tsx       # Immediate plan-result apply + missing-flight refresh timing tests
 │   ├── useChatScrolling.test.tsx       # Forced bottom-settle and user-scroll cancellation tests
 │   ├── useChatSend.optimistic-extension.test.tsx  # Optimistic extension rollback tests for chat send
+│   ├── useChatSse.test.tsx               # SSE connection manager tests
 │   ├── useTripInputsWithFallback.test.tsx  # Trip-input fallback subscription behavior tests
 │   ├── userStore.test.ts               # Auth/recent-trips store tests
 │   └── travel-intel.test.ts
@@ -790,7 +777,7 @@ docs/
 
 ## Key Architectural Notes
 
-1. **TripPlan is SSoT** - All trip state flows through `TripPlan` schema
+1. **PlanDocumentData is SSoT** - All trip state flows through `PlanDocumentData` schema
 2. **Coordinator Architecture** - `coordinator.execute_turn()` plans deterministic step execution around `classify`, optional parallel `dispatch_specialists` + `search_tiles`, then `local_intel` / `build_itinerary`, and final response generation. See `plan_graph_analysis.md`.
 3. **Design Tokens** - Frontend uses tokens from `design-system.md`
 4. **StrategyStageRenderer** - Single renderer adapts to data density (see `ux_unified_architecture.md`)

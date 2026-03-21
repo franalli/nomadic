@@ -3196,7 +3196,7 @@ async def fetch_tiles_for_branch(
     )
 
     with spend_guard_scope(session_id):
-        tiles_response = search_tiles(tiles_request)
+        tiles_response = await asyncio.to_thread(search_tiles, tiles_request)
 
     _debug_info("TILES", f"search_tiles returned {len(tiles_response.tiles)} tiles")
     for t in tiles_response.tiles:
@@ -3294,7 +3294,7 @@ async def refresh_tiles(
 
     # Fetch fresh tiles (cache will miss due to changed settings hash)
     with spend_guard_scope(session_id):
-        tiles_response = search_tiles(tiles_request)
+        tiles_response = await asyncio.to_thread(search_tiles, tiles_request)
 
     # Update document with new tiles
     if tiles_response.tiles:

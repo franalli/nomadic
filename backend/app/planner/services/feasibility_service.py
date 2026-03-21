@@ -9,6 +9,7 @@ Extracted from vertical_specialist.py to reduce node file size.
 import asyncio
 from typing import Tuple
 
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 from app.config import settings
@@ -72,7 +73,7 @@ Rules:
 
 Be strict."""
 
-        result = await structured_llm.ainvoke(prompt)
+        result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
         if isinstance(result, dict) and "parsed" in result:
             parsed = result["parsed"]
             if parsed is None:

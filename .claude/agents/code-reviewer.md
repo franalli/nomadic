@@ -34,7 +34,7 @@ You review against the project's documented invariants. You NEVER modify files â
 
 - [ ] **Coordinator architecture preserved.** `coordinator.execute_turn()` remains the orchestration path; no reintroduction of `create_agent` runtime flow.
 - [ ] **ItineraryBuilder remains a service**, not an agent tool with its own LLM calls.
-- [ ] **TripPlan is the only state SSoT.** No parallel state objects created.
+- [ ] **PlanDocumentData is the only state SSoT.** No parallel state objects created.
 - [ ] **Coordinator step planning is deterministic.** `plan_turn()` and `_execute_step()` map classifier output to the expected step sequence.
 - [ ] **Response-only no-op turns stay cheap.** `execute_turn()` may preview `plan_turn()` before feasibility work and should skip geographic feasibility I/O when the provisional plan is `[GENERATE_RESPONSE]`.
 - [ ] **ConstraintGuard is mostly deterministic.** One known LLM exception: `check_route_constraint()` â†’ `validate_place_exists()` (via `validation_cache.py`, LLM-backed with TTL). All other guard checks are pure Python.

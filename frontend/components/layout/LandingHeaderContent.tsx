@@ -4,6 +4,7 @@ import { Compass, Loader2, LogIn, RotateCcw } from 'lucide-react';
 import { memo, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
+import { ShareTripButton } from '@/components/plan/ShareTripButton';
 import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { Button } from '@/components/ui/button';
 import type { ToastType } from '@/components/ui/toast';
@@ -129,6 +130,7 @@ export const LandingHeaderContent = memo(function LandingHeaderContent({
       )}
 
       <div className="flex items-center gap-2 shrink-0 ml-auto">
+        {hasItineraryContent && !isGenerating && <ShareTripButton />}
         {user ? (
           <LandingHeaderUserMenu
             user={user}

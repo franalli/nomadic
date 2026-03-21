@@ -16,6 +16,18 @@ type LegalPageProps = {
   cta?: ReactNode;
 };
 
+const HEADER_INITIAL = { opacity: 0, y: 24 };
+const FADE_UP_ANIMATE = { opacity: 1, y: 0 };
+const HEADER_TRANSITION = { duration: 0.45, ease: 'easeOut' as const };
+const HEADER_VIEWPORT = { once: true, amount: 0.5 };
+
+const SECTION_INITIAL = { opacity: 0, y: 28 };
+const SECTION_VIEWPORT = { once: true, amount: 0.35 };
+
+const CTA_INITIAL = { opacity: 0, y: 28 };
+const CTA_TRANSITION = { duration: 0.45, ease: 'easeOut' as const };
+const CTA_VIEWPORT = { once: true, amount: 0.25 };
+
 export function LegalPage({ title, description, updated, sections, cta }: LegalPageProps) {
   return (
     <main className="bg-bg">
@@ -23,10 +35,10 @@ export function LegalPage({ title, description, updated, sections, cta }: LegalP
         <div className="max-w-4xl space-y-12">
           <motion.header
             className="space-y-2"
-            initial={{ opacity: 0, y: 24 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45, ease: 'easeOut' }}
-            viewport={{ once: true, amount: 0.5 }}
+            initial={HEADER_INITIAL}
+            whileInView={FADE_UP_ANIMATE}
+            transition={HEADER_TRANSITION}
+            viewport={HEADER_VIEWPORT}
           >
             <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Nomadic</p>
             <h1 className="text-3xl font-semibold text-foreground">{title}</h1>
@@ -41,10 +53,10 @@ export function LegalPage({ title, description, updated, sections, cta }: LegalP
               <motion.section
                 key={section.title}
                 className="space-y-4 rounded-2xl bg-card/90 p-6 shadow-sm ring-1 ring-border"
-                initial={{ opacity: 0, y: 28 }}
-                whileInView={{ opacity: 1, y: 0 }}
+                initial={SECTION_INITIAL}
+                whileInView={FADE_UP_ANIMATE}
                 transition={{ duration: 0.45, ease: 'easeOut', delay: index * 0.08 }}
-                viewport={{ once: true, amount: 0.35 }}
+                viewport={SECTION_VIEWPORT}
               >
                 <h2 className="text-xl font-semibold text-foreground">{section.title}</h2>
                 <div className="space-y-4 leading-relaxed text-text-soft">{section.body}</div>
@@ -55,10 +67,10 @@ export function LegalPage({ title, description, updated, sections, cta }: LegalP
           {cta ? (
             <motion.div
               className="rounded-2xl border border-dashed border-border bg-card/80 p-6 text-foreground"
-              initial={{ opacity: 0, y: 28 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.45, ease: 'easeOut' }}
-              viewport={{ once: true, amount: 0.25 }}
+              initial={CTA_INITIAL}
+              whileInView={FADE_UP_ANIMATE}
+              transition={CTA_TRANSITION}
+              viewport={CTA_VIEWPORT}
             >
               {cta}
             </motion.div>

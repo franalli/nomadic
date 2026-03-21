@@ -43,13 +43,21 @@ export function shouldUsePlanMirrorLoader({
   density,
   isPlanGenerationActive,
   hasPartialItinerary = false,
+  hasTiles = false,
 }: {
   isShowingMirrorLoader: boolean;
   density: DataDensity;
   isPlanGenerationActive: boolean;
   hasPartialItinerary?: boolean;
+  hasTiles?: boolean;
 }): boolean {
   if (hasPartialItinerary) {
+    return false;
+  }
+
+  // Tiles arriving mid-generation break the loader early —
+  // show real hotel/activity content instead of skeleton shimmer.
+  if (hasTiles && isPlanGenerationActive) {
     return false;
   }
 
@@ -132,6 +140,7 @@ export function StrategyStageRenderer({
       density: immediateDensity,
       isPlanGenerationActive: generation?.active === true,
       hasPartialItinerary,
+      hasTiles: o.displayLogic.hasTiles,
     })) {
       return <PlanMirrorLoader tripDuration={tripDuration} />;
     }

@@ -22,7 +22,7 @@ import asyncio
 import logging
 import math
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 from urllib.parse import quote
 
@@ -39,7 +39,7 @@ from app.planner.hashing import stable_hash
 from app.planner.services.iata_resolver import resolve_iata_codes
 from app.planner.state.graph_state import GraphState
 from app.planner.state.typed_meta import get_trip_settings
-from app.services.aviasales_provider import search_aviasales_flights
+from app.services.aviasales_provider import FlightSearchResult, search_aviasales_flights
 from app.services.task_tracker import track as _track_task
 from app.tile_service.mock_provider import MockActivityProvider, MockHotelProvider
 from app.tile_service.models import SearchContext
@@ -622,7 +622,7 @@ async def logistics_node(state: GraphState) -> GraphState:
 
     state.metadata["flight_search_possible"] = can_search_flights
 
-    aviasales_task: asyncio.Task[list[dict[str, Any]]] | None = None
+    aviasales_task: asyncio.Task[FlightSearchResult] | None = None
     if can_search_flights and settings.aviasales_enabled and origin_code and dest_code:
         depart_date = plan.start_date or plan.end_date or ""
         return_date = plan.end_date or ""
@@ -636,7 +636,7 @@ async def logistics_node(state: GraphState) -> GraphState:
                 except Exception:
                     pass
 
-        async def _fetch_aviasales_tiles() -> list[dict[str, Any]]:
+        async def _fetch_aviasales_tiles() -> FlightSearchResult:
             try:
                 return await search_aviasales_flights(
                     origin=origin_code,
@@ -647,7 +647,7 @@ async def logistics_node(state: GraphState) -> GraphState:
                 )
             except Exception as e:
                 logger.warning(f"[Logistics] Aviasales search failed: {e}")
-                return []
+                return FlightSearchResult()
 
         aviasales_task = asyncio.create_task(_fetch_aviasales_tiles())
 
@@ -738,8 +738,10 @@ async def logistics_node(state: GraphState) -> GraphState:
     aviasales_tiles: list[dict] = []
 
     # 1. Try Aviasales real-time search first
+    aviasales_result: FlightSearchResult | None = None
     if aviasales_task is not None:
-        aviasales_tiles = await aviasales_task
+        aviasales_result = await aviasales_task
+        aviasales_tiles = aviasales_result.tiles
 
     if aviasales_tiles:
         # Aviasales tiles are already in final tile format — skip raw processing loop.
@@ -913,6 +915,46 @@ async def logistics_node(state: GraphState) -> GraphState:
                 "LOGISTICS",
                 f"Removed {unsafe_count} unsafe flight(s) (no-fly buffer < 24h)",
             )
+
+    # 3b. Date flex suggestion — surface cheaper nearby dates when savings >= 10%
+    # Skip if user already opted into flexible dates (frontend also gates this)
+    user_date_flex = trip_inputs.get("date_flex")
+    if (
+        not user_date_flex
+        and aviasales_result is not None
+        and aviasales_result.cheapest_date
+        and aviasales_result.cheapest_price is not None
+        and aviasales_result.requested_date_price is not None
+        and aviasales_result.cheapest_date != depart_date[:10]
+        and aviasales_result.cheapest_price < aviasales_result.requested_date_price * 0.9
+    ):
+        # Only suggest for trips > 7 days out
+        try:
+            days_out = (
+                datetime.strptime(depart_date[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                - datetime.now(timezone.utc)
+            ).days
+        except ValueError:
+            days_out = 0
+        if days_out > 7:
+            savings = aviasales_result.requested_date_price - aviasales_result.cheapest_price
+            # Limit nearby_prices to ±3 day window for payload size
+            req_dt = datetime.strptime(depart_date[:10], "%Y-%m-%d")
+            window_prices = {
+                k: v
+                for k, v in aviasales_result.nearby_prices.items()
+                if abs((datetime.strptime(k, "%Y-%m-%d") - req_dt).days) <= 3
+            }
+            state.metadata["date_flex_suggestion"] = {
+                "cheapest_date": aviasales_result.cheapest_date,
+                "cheapest_price": aviasales_result.cheapest_price,
+                "requested_date": depart_date[:10],
+                "requested_price": aviasales_result.requested_date_price,
+                "savings": round(savings, 2),
+                "savings_pct": round(savings / aviasales_result.requested_date_price * 100),
+                "currency": (plan.currency or "USD").upper(),
+                "nearby_prices": window_prices,
+            }
 
     # 4. STORE IN STATE - Write to state.tiles["flights"] for frontend display
     state.tiles["flights"] = processed_options
