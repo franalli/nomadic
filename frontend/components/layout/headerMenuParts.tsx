@@ -10,7 +10,7 @@ const HEADER_MENU_ITEM_CLASS = 'flex w-full min-h-11 items-center gap-2 rounded-
 const HEADER_MENU_FOCUS_CLASS = 'rounded-lg outline-none focus-visible:ring-1 focus-visible:ring-white/20';
 const RECENT_TRIP_BASE_CLASS = 'w-full text-left transition-colors disabled:pointer-events-none disabled:opacity-50';
 
-export const HEADER_MENU_ACTION_CLASS = cn(
+const HEADER_MENU_ACTION_CLASS = cn(
   HEADER_MENU_ITEM_CLASS,
   'hover:bg-zinc-100 dark:hover:bg-white/10 disabled:pointer-events-none disabled:opacity-50'
 );

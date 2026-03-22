@@ -1,7 +1,7 @@
 'use client';
 
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   FALLBACK_TIMEOUT_MS,
@@ -226,7 +226,7 @@ export function useActionLoader(
     };
   }, [clearAllTimers]);
 
-  return {
+  return useMemo(() => ({
     isVisible,
     loaderState,
     title,
@@ -234,5 +234,5 @@ export function useActionLoader(
     startLoading,
     onTangibleOutput,
     reset,
-  };
+  }), [isVisible, loaderState, title, subtext, startLoading, onTangibleOutput, reset]);
 }

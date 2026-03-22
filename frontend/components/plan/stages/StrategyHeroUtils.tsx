@@ -29,7 +29,7 @@ export const ICON_MAP: Record<string, React.ComponentType<{ className?: string }
   Waves, Mountain, Snowflake, Bike, Sailboat, Binoculars, Building, Sparkles,
 };
 
-export function getTopicIcon(specialistType: string): React.ComponentType<{ className?: string }> {
+function getTopicIcon(specialistType: string): React.ComponentType<{ className?: string }> {
   const config = getSpecialistConfig(specialistType);
   if (config) return ICON_MAP[config.icon] || Sparkles;
   if (specialistType === 'local_expert') return Building;
@@ -50,7 +50,7 @@ export function getTopicLabel(specialistType: string): string {
 }
 
 // Generic fallback image (specialist-specific hero images come from backend hero_image field)
-export const GENERIC_FALLBACK_IMAGE =
+const GENERIC_FALLBACK_IMAGE =
   'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?q=80&w=2021&auto=format&fit=crop';
 
 // Accordion icon Tailwind classes keyed by specialist type (component-local UI)

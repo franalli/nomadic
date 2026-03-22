@@ -463,9 +463,11 @@ async def test_logistics_derives_inclusive_aviasales_return_date_from_trip_durat
         return "AMS", "DPS"
 
     async def _fake_search_aviasales_flights(**kwargs):
+        from app.services.aviasales_provider import FlightSearchResult
+
         captured["depart_date"] = kwargs["depart_date"]
         captured["return_date"] = kwargs["return_date"]
-        return []
+        return FlightSearchResult()
 
     monkeypatch.setattr(settings, "aviasales_enabled", True)
     monkeypatch.setattr(

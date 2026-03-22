@@ -3,7 +3,7 @@ import { isFlightType, isHotelType } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
 import type { Tile } from '@/types/tile';
 
-export type AmenityIconLabel = {
+type AmenityIconLabel = {
   icon: string;
   label: string;
 };
@@ -163,7 +163,7 @@ function getSearchParamTravelerCount(
   return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : null;
 }
 
-export function isDirectBookingHotelSearchUrl(tile: TileWithTypeAndDeeplink): boolean {
+function isDirectBookingHotelSearchUrl(tile: TileWithTypeAndDeeplink): boolean {
   if (!isHotelType(tile.type || '')) return false;
 
   const parsedUrl = parseUrl(tile.deeplink_url);
@@ -192,7 +192,7 @@ function isGoogleMapsUrl(tile: TileWithTypeAndDeeplink): boolean {
   return isGoogleHostname(hostname) && parsedUrl.pathname.toLowerCase().startsWith('/maps');
 }
 
-export function getEffectiveHotelBookingDeeplink(
+function getEffectiveHotelBookingDeeplink(
   tile: HotelDeeplinkTile,
   tripInputs?: TripInputDeeplinkContext | null
 ): string {
@@ -243,7 +243,7 @@ export function getEffectiveHotelBookingDeeplink(
   return effectiveUrl.toString();
 }
 
-export function getEffectiveGoogleHotelDeeplink(
+function getEffectiveGoogleHotelDeeplink(
   tile: HotelDeeplinkTile,
   tripInputs?: TripInputDeeplinkContext | null
 ): string {

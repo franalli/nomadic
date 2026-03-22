@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { useCallback, useMemo, useState } from 'react';
 
 import { SPRING_CONFIG } from '@/lib/animation-config';
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 // Animation constants (hoisted to avoid new object refs per render)
@@ -37,7 +38,7 @@ export function DroppableDay({ dayNumber, children }: DroppableDayProps) {
           isOver && [
             'ring-1 ring-emerald-500/25 dark:ring-emerald-500/20',
             'bg-emerald-500/[0.04] dark:bg-emerald-500/[0.03]',
-            'shadow-[inset_0_0_20px_-8px_rgba(16,185,129,0.15)]',
+            DS.shadow.dropTargetInset,
           ],
           !isOver && isDragActive && [
             'ring-1 ring-zinc-300/50 dark:ring-white/10',

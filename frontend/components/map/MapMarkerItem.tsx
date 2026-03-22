@@ -94,8 +94,8 @@ export const MapMarkerItem = memo(function MapMarkerItem({
             'flex items-center justify-center rounded-full shadow-xl border-2 transition-all',
             isActive ? 'w-10 h-10 border-white' : 'w-8 h-8 border-white/80',
             isActive
-              ? 'ring-2 ring-emerald-300/85 shadow-[0_0_16px_rgba(16,185,129,0.45)]'
-              : isHovered && 'ring-2 ring-emerald-400/80 shadow-[0_0_12px_rgba(16,185,129,0.35)]',
+              ? `ring-2 ring-emerald-300/85 ${DS.glowClass.markerActive}`
+              : isHovered && `ring-2 ring-emerald-400/80 ${DS.glowClass.markerHover}`,
             isDimmed && 'grayscale'
           )}
           style={{ backgroundColor: markerBg }}

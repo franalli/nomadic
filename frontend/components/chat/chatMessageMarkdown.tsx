@@ -52,6 +52,16 @@ function findBlockByEntityName(entityName: string, dayCards?: DayCard[]): string
   return undefined;
 }
 
+const _topicStyleCache = new Map<string, React.CSSProperties>();
+function getTopicStyle(type: string): React.CSSProperties {
+  let s = _topicStyleCache.get(type);
+  if (!s) {
+    s = { '--topic-color': getSpecialistColorRgb(type) } as React.CSSProperties;
+    _topicStyleCache.set(type, s);
+  }
+  return s;
+}
+
 const MARKDOWN_COMPONENTS = {
   p: ({ children }: { children?: React.ReactNode }) => (
     <p className="mb-4 last:mb-0 leading-relaxed">{children}</p>
@@ -100,7 +110,7 @@ const MARKDOWN_COMPONENTS = {
         return (
           <span
             className="activity-mention font-medium"
-            style={{ '--topic-color': getSpecialistColorRgb(specialistType) } as React.CSSProperties}
+            style={getTopicStyle(specialistType)}
           >
             {children}
           </span>
@@ -111,7 +121,7 @@ const MARKDOWN_COMPONENTS = {
         <button
           type="button"
           className="activity-mention inline cursor-pointer border-0 bg-transparent p-0 font-medium text-inherit hover:underline"
-          style={{ '--topic-color': getSpecialistColorRgb(specialistType) } as React.CSSProperties}
+          style={getTopicStyle(specialistType)}
           data-specialist={specialistType}
           aria-label="Scroll to activity"
           onClick={() => {
@@ -133,6 +143,7 @@ const MARKDOWN_COMPONENTS = {
       return (
         <button
           type="button"
+          aria-label={`View ${specialistType} specialist`}
           onClick={() => {
             window.dispatchEvent(
               new CustomEvent('specialist-navigate', {

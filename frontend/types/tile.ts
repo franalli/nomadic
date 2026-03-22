@@ -21,6 +21,9 @@ export type Tile = {
   /** Price basis: 'per_night', 'per_person', 'per_trip', etc. */
   price_basis?: string;
   is_estimate_only?: boolean;
+  /** Canonical deeplink field (backend SSoT) */
+  deeplink?: string;
+  /** Backward-compat alias emitted by backend computed_field */
   deeplink_url: string;
   rating?: number;
   review_count?: number;

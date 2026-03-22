@@ -1,34 +1,21 @@
 'use client';
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
-/**
- * DatesSheet
- *
- * Premium date picker - clean, headless design.
- * Deep glass material with emerald accents.
- * Pills as header, floating close button.
- */
 
-
-import { addDays } from 'date-fns/addDays';
 import { differenceInDays } from 'date-fns/differenceInDays';
 import { format } from 'date-fns/format';
-import { isBefore } from 'date-fns/isBefore';
-import { startOfDay } from 'date-fns/startOfDay';
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
-import { DateRange } from 'react-day-picker';
+import type { DateRange } from 'react-day-picker';
 import { createPortal } from 'react-dom';
 
-import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import { useToast } from '@/components/ui/toast';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
+import { DATE_PRESETS, type DatePreset } from './datePresets';
+import { CalendarSection, FooterActions, PresetPillRow } from './DatesSheetParts';
 
 interface DatesSheetProps {
   open: boolean;
@@ -38,39 +25,6 @@ interface DatesSheetProps {
   onSave: (startDate: Date, endDate: Date) => void;
 }
 
-// Quick presets
-const DATE_PRESETS = [
-  { label: 'This Weekend', getDates: () => getThisWeekend() },
-  { label: 'Next Weekend', getDates: () => getNextWeekend() },
-  { label: '1 Week', getDates: () => getWeekFromNow(1) },
-  { label: '2 Weeks', getDates: () => getWeekFromNow(2) },
-];
-
-function getThisWeekend(): { from: Date; to: Date } {
-  const today = startOfDay(new Date());
-  const dayOfWeek = today.getDay();
-  const daysUntilSaturday = (6 - dayOfWeek + 7) % 7 || 7;
-  const saturday = addDays(today, daysUntilSaturday);
-  const sunday = addDays(saturday, 1);
-  return { from: saturday, to: sunday };
-}
-
-function getNextWeekend(): { from: Date; to: Date } {
-  const thisWeekend = getThisWeekend();
-  return { from: addDays(thisWeekend.from, 7), to: addDays(thisWeekend.to, 7) };
-}
-
-function getWeekFromNow(weeks: number): { from: Date; to: Date } {
-  const today = startOfDay(new Date());
-  const from = addDays(today, 1);
-  const to = addDays(from, weeks * 7 - 1);
-  return { from, to };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Animation Constants (hoisted to avoid new object refs per render)
-// ─────────────────────────────────────────────────────────────────────────────
-
 const BACKDROP_INITIAL = { opacity: 0 };
 const BACKDROP_ANIMATE = { opacity: 1 };
 const BACKDROP_EXIT = { opacity: 0 };
@@ -79,10 +33,6 @@ const MODAL_INITIAL = { opacity: 0, scale: 0.95, y: 10 };
 const MODAL_ANIMATE = { opacity: 1, scale: 1, y: 0 };
 const MODAL_EXIT = { opacity: 0, scale: 0.95, y: 10 };
 const MODAL_TRANSITION = { type: 'spring' as const, damping: 30, stiffness: 400 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Component
-// ─────────────────────────────────────────────────────────────────────────────
 
 function DatesSheetInner({
   open,
@@ -97,12 +47,8 @@ function DatesSheetInner({
   const [activePreset, setActivePreset] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
 
-  // SSR safety
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => { setMounted(true); }, []);
 
-  // Initialize from props when opened
   useEffect(() => {
     if (open) {
       if (startDate && endDate) {
@@ -114,7 +60,6 @@ function DatesSheetInner({
     }
   }, [open, startDate, endDate]);
 
-  // Close on escape
   useEffect(() => {
     if (!open) return;
     const handleEscape = (e: KeyboardEvent) => {
@@ -124,31 +69,18 @@ function DatesSheetInner({
     return () => document.removeEventListener('keydown', handleEscape);
   }, [open, onOpenChange]);
 
-  // Prevent body scroll
   useEffect(() => {
-    if (open) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
-    return () => {
-      document.body.style.overflow = '';
-    };
+    document.body.style.overflow = open ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
   }, [open]);
 
-  // Computed values
   const nights = range?.from && range?.to ? differenceInDays(range.to, range.from) : 0;
-  const days = nights + 1;
-
-  // Format duration display
   const durationDisplay = (() => {
     if (!range?.from || !range?.to) return 'Select dates';
-    const fromStr = format(range.from, 'MMM d');
-    const toStr = format(range.to, 'MMM d');
-    return `${fromStr} — ${toStr} (${days} Day${days !== 1 ? 's' : ''})`;
+    const days = nights + 1;
+    return `${format(range.from, 'MMM d')} — ${format(range.to, 'MMM d')} (${days} Day${days !== 1 ? 's' : ''})`;
   })();
 
-  // Handle save
   const handleSave = useCallback(() => {
     if (!range?.from || !range?.to) return;
     onSave(range.from, range.to);
@@ -156,27 +88,23 @@ function DatesSheetInner({
     onOpenChange(false);
   }, [range, onSave, toast, onOpenChange]);
 
-  // Handle preset click
-  const handlePreset = useCallback((preset: (typeof DATE_PRESETS)[0]) => {
+  const handlePreset = useCallback((preset: DatePreset) => {
     const { from, to } = preset.getDates();
     setRange({ from, to });
     setActivePreset(preset.label);
   }, []);
 
-  // Handle calendar select
   const handleSelect = useCallback((newRange: DateRange | undefined) => {
     setRange(newRange);
     setActivePreset(null);
   }, []);
 
-  // Handle clear
   const handleClear = useCallback(() => {
     setRange(undefined);
     setActivePreset(null);
   }, []);
 
-  const canSave = range?.from && range?.to;
-  const today = startOfDay(new Date());
+  const canSave = !!(range?.from && range?.to);
 
   if (!mounted) return null;
 
@@ -184,7 +112,6 @@ function DatesSheetInner({
     <AnimatePresence>
       {open && (
         <>
-          {/* Backdrop */}
           <motion.div
             initial={BACKDROP_INITIAL}
             animate={BACKDROP_ANIMATE}
@@ -194,7 +121,6 @@ function DatesSheetInner({
             onClick={() => onOpenChange(false)}
           />
 
-          {/* THE GLASS MONOLITH */}
           <div
             className="fixed inset-0 z-[1201] flex items-center justify-center p-4"
             onClick={(e) => e.target === e.currentTarget && onOpenChange(false)}
@@ -205,21 +131,17 @@ function DatesSheetInner({
               exit={MODAL_EXIT}
               transition={MODAL_TRANSITION}
               className={cn(
-                // SIZE & SHAPE
                 'relative max-w-2xl w-full',
                 'p-0 gap-0 overflow-hidden',
                 'rounded-2xl',
-                // MATERIAL: White Paper (Light) / Deep Glass (Dark)
                 'bg-white/95 dark:bg-zinc-950/95',
                 'backdrop-blur-xl',
                 'border border-zinc-200 dark:border-white/10',
                 'shadow-soft',
-                // Mobile
                 !isDesktop && 'max-w-[95vw]'
               )}
               onClick={(e) => e.stopPropagation()}
             >
-              {/* FLOATING CLOSE BUTTON */}
               <button
                 type="button"
                 onClick={() => onOpenChange(false)}
@@ -235,106 +157,28 @@ function DatesSheetInner({
                 <X className="w-5 h-5" />
               </button>
 
-              {/* ═══════════════════════════════════════════════════════════════ */}
-              {/* SECTION 1: HEADER + QUICK SELECTORS */}
-              {/* ═══════════════════════════════════════════════════════════════ */}
               <div className="pt-6 px-6 pb-4 border-b border-zinc-100 dark:border-white/5">
-                {/* Header */}
-                <h2 className={cn(DS.text.label, 'mb-4')}>
-                  Timeline
-                </h2>
-                {/* Quick Select Pills - High Contrast Wireframe Look */}
-                <div className="flex flex-wrap gap-2">
-                  {DATE_PRESETS.map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() => handlePreset(preset)}
-                      className={cn(
-                        `px-3 py-1.5 rounded-lg ${DS.textSize.micro} font-bold uppercase tracking-wide`,
-                        'transition-all duration-200',
-                        activePreset === preset.label
-                          // Selected: Solid Black (Light) / Solid White (Dark)
-                          ? 'bg-zinc-900 text-white border-2 border-transparent dark:bg-white dark:text-black dark:border-transparent shadow-md'
-                          // Unselected: White with border
-                          : cn(
-                              'bg-white border-2 border-zinc-200 dark:border-2 dark:border-white/15',
-                              'dark:bg-white/5',
-                              'text-zinc-600 dark:text-zinc-400',
-                              'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900 dark:hover:border-white/40 dark:hover:bg-white/10 dark:hover:text-white'
-                            )
-                      )}
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* ═══════════════════════════════════════════════════════════════ */}
-              {/* SECTION 2: CALENDAR BODY */}
-              {/* ═══════════════════════════════════════════════════════════════ */}
-              <div
-                className={cn(
-                  'p-6 w-full flex justify-center',
-                  !isDesktop && 'overflow-x-auto'
-                )}
-              >
-                <CalendarComponent
-                  mode="range"
-                  selected={range}
-                  onSelect={handleSelect}
-                  numberOfMonths={isDesktop ? 2 : 1}
-                  disabled={(date) => isBefore(date, today)}
-                  className="p-0"
+                <h2 className={cn(DS.text.label, 'mb-4')}>Timeline</h2>
+                <PresetPillRow
+                  presets={DATE_PRESETS}
+                  activePreset={activePreset}
+                  onPreset={handlePreset}
                 />
               </div>
 
-              {/* ═══════════════════════════════════════════════════════════════ */}
-              {/* SECTION 3: FOOTER */}
-              {/* ═══════════════════════════════════════════════════════════════ */}
-              <div className={cn(
-                'p-4 px-6 flex items-center justify-between',
-                'border-t border-zinc-100 dark:border-white/5',
-                'bg-zinc-50/50 dark:bg-zinc-950/50'
-              )}>
-                {/* Selection Display */}
-                <div className="flex flex-col">
-                  <span className={cn(DS.text.label, 'mb-0.5')}>
-                    Selection
-                  </span>
-                  <span className="text-sm font-bold text-zinc-900 dark:text-white tracking-wide">
-                    {durationDisplay}
-                  </span>
-                </div>
+              <CalendarSection
+                range={range}
+                onSelect={handleSelect}
+                isDesktop={isDesktop}
+              />
 
-                {/* Actions */}
-                <div className="flex gap-2 items-center">
-                  {range && (
-                    <button
-                      type="button"
-                      onClick={handleClear}
-                      className={cn(
-                        'px-4 py-2 text-xs font-bold transition-colors',
-                        'text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white'
-                      )}
-                    >
-                      Clear
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleSave}
-                    disabled={!canSave}
-                    className={cn(
-                      canSave ? DS.actions.primary : DS.actions.primaryDisabled,
-                      'px-6 py-2.5 text-xs uppercase tracking-widest active:scale-95'
-                    )}
-                  >
-                    Apply Dates
-                  </button>
-                </div>
-              </div>
+              <FooterActions
+                durationDisplay={durationDisplay}
+                canSave={canSave}
+                hasRange={!!range}
+                onClear={handleClear}
+                onSave={handleSave}
+              />
             </motion.div>
           </div>
         </>

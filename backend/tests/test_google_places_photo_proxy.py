@@ -5,11 +5,30 @@ from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main_module
 from app.db import get_async_db
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def _disable_spend_guard(monkeypatch):
+    """Bypass spend guard DB operations in unit tests (including app lifespan)."""
+    monkeypatch.setattr("app.config.settings.spend_guard_enabled", False)
+    _dummy_snapshot = {
+        "enabled": False,
+        "global_spend_usd": 0.0,
+        "session_count": 0,
+        "provider_spend_usd": {},
+        "sessions": {},
+    }
+    monkeypatch.setattr(
+        "app.services.spend_guard.get_spend_guard_snapshot", lambda: _dummy_snapshot
+    )
+    monkeypatch.setattr("app.services.spend_guard.flush_spend_state", lambda: None)
+
 
 PHOTO_NAME = "places/ChIJx/photos/AbCd_123"
 

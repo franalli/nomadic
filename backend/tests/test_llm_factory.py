@@ -19,6 +19,14 @@ import pytest
 
 from app.planner.llm_factory import get_llm_by_model
 
+
+@pytest.fixture(autouse=True)
+def _mock_spend_guard():
+    """Bypass spend guard DB operations in unit tests."""
+    with patch("app.planner.llm_factory.reserve_llm_spend_or_raise"):
+        yield
+
+
 # Patch targets at the source modules (lazy imports inside function body)
 _OPENAI_TARGET = "langchain_openai.ChatOpenAI"
 _GEMINI_TARGET = "langchain_google_genai.ChatGoogleGenerativeAI"

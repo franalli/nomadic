@@ -131,8 +131,8 @@ export function StrategyHeroAccordion({
             <div className="space-y-2">
               <h4 className={cn(DS.text.label, 'flex items-center gap-1.5')}><AlertCircle className="w-3 h-3" />{getConstraintSectionLabel(topic)}</h4>
               <div className="flex flex-wrap gap-1.5">
-                {constraints.map((c, i) => (
-                  <span key={i} className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-md', `${DS.textSize.mini} font-medium`,
+                {constraints.map((c) => (
+                  <span key={c.rule} className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-md', `${DS.textSize.mini} font-medium`,
                     c.type === 'safety' || c.type?.includes('safety')
                       ? 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700/50'
                       : 'bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-700/50'
@@ -150,7 +150,7 @@ export function StrategyHeroAccordion({
                 <h4 className={cn(DS.text.label, 'flex items-center gap-1.5')}><Info className="w-3 h-3" />Key Principles</h4>
                 <ul className="space-y-1.5">
                   {uniquePrinciples.slice(0, 4).map((principle, i) => (
-                    <li key={i} className="flex items-start gap-2 text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                    <li key={`${principle}-${i}`} className="flex items-start gap-2 text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
                       <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />{principle}
                     </li>
                   ))}
@@ -163,7 +163,7 @@ export function StrategyHeroAccordion({
               <h4 className={cn(DS.text.label, 'flex items-center gap-1.5')}><Sparkles className="w-3 h-3" />Recommendations</h4>
               <div className="space-y-2">
                 {section.content_added.slice(0, 3).map((item, i) => (
-                  <div key={i} className="flex gap-2 items-start p-2 rounded-lg bg-zinc-100/50 dark:bg-white/[0.02] border border-zinc-100 dark:border-white/5">
+                  <div key={`${item.title}-${i}`} className="flex gap-2 items-start p-2 rounded-lg bg-zinc-100/50 dark:bg-white/[0.02] border border-zinc-100 dark:border-white/5">
                     {item.image_url && (
                       <div className="relative w-12 h-12 rounded-md overflow-hidden shrink-0 bg-zinc-200 dark:bg-zinc-800">
                         <Image src={item.image_url} alt={item.title} fill className="object-cover" sizes="48px" />

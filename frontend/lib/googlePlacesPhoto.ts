@@ -27,21 +27,6 @@ export function normalizeGooglePlacesPhotoName(value: unknown): string | undefin
   return trimmed;
 }
 
-export function buildGooglePlacesPhotoProxyUrl(
-  photoName: unknown,
-  options?: GooglePlacesPhotoOptions
-): string | undefined {
-  const normalized = normalizeGooglePlacesPhotoName(photoName);
-  if (!normalized) return undefined;
-
-  const params = new URLSearchParams({
-    name: normalized,
-    max_width: String(clampDimension(options?.maxWidth, 320)),
-    max_height: String(clampDimension(options?.maxHeight, 240)),
-  });
-  return `${API_BASE}/api/media/google-places-photo?${params.toString()}`;
-}
-
 function signedPhotoCacheKey(photoName: string, width: number, height: number): string {
   return `${photoName}|${width}|${height}`;
 }

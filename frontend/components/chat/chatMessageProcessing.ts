@@ -75,7 +75,7 @@ export const EMPTY_VISIBLE_MESSAGES: VisibleMessage[] = [];
  * when the content contains multiple paragraphs or is long enough to
  * benefit from visual chunking.
  */
-export function splitMessageIfNeeded(m: VisibleMessage): VisibleMessage[] {
+function splitMessageIfNeeded(m: VisibleMessage): VisibleMessage[] {
   if (m.role !== 'assistant') return [m];
   const paragraphs = m.content.split(/\n\n+/).filter((p) => p.trim().length > 0);
   if (paragraphs.length > 1) {

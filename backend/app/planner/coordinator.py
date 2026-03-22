@@ -1011,13 +1011,7 @@ def plan_turn(
                 gp_steps.append(
                     ExecutionStep(
                         step_type=StepType.SEARCH_TILES,
-                        params={"tile_types": ["flights", "hotels"]},
-                    )
-                )
-                gp_steps.append(
-                    ExecutionStep(
-                        step_type=StepType.SEARCH_TILES,
-                        params={"tile_types": ["activities"]},
+                        params={"tile_types": ["flights", "hotels", "activities"]},
                     )
                 )
                 gp_steps.append(ExecutionStep(step_type=StepType.BUILD_ITINERARY))
@@ -1153,32 +1147,16 @@ def plan_turn(
         parallel_with = StepType.DISPATCH_SPECIALISTS if dispatch_list else None
         if dispatch_list and change_type in (ChangeType.SWAP_ACTIVITY, ChangeType.ADD_ACTIVITY):
             parallel_with = None  # Force sequential: specialists → tiles
-        # Split into hotel-first + activity-follow for progressive rendering:
-        # hotels typically return 3-5s faster than activities.
-        hotel_types = [t for t in tile_types if t in ("flights", "hotels")]
-        activity_types = [t for t in tile_types if t == "activities"]
-        if hotel_types and activity_types:
-            steps.append(
-                ExecutionStep(
-                    step_type=StepType.SEARCH_TILES,
-                    params={"tile_types": hotel_types},
-                    parallel_with=parallel_with,
-                )
+        # Single SEARCH_TILES step with all tile_types — logistics_node.py
+        # already runs hotels + activities concurrently via asyncio.gather,
+        # so splitting into sequential steps only adds overhead.
+        steps.append(
+            ExecutionStep(
+                step_type=StepType.SEARCH_TILES,
+                params={"tile_types": tile_types},
+                parallel_with=parallel_with,
             )
-            steps.append(
-                ExecutionStep(
-                    step_type=StepType.SEARCH_TILES,
-                    params={"tile_types": activity_types},
-                )
-            )
-        else:
-            steps.append(
-                ExecutionStep(
-                    step_type=StepType.SEARCH_TILES,
-                    params={"tile_types": tile_types},
-                    parallel_with=parallel_with,
-                )
-            )
+        )
         estimated_wall_ms += 2000
 
     # Itinerary build (after specialists + tiles)
@@ -4251,17 +4229,9 @@ async def _run_local_intel(
         return None
 
     try:
-        from app.planner.nodes.expert_constraints import _get_constraints_as_list
         from app.planner.services.section_builder import build_local_expert_section
 
-        constraint_list = _get_constraints_as_list(destination)
-        warning_constraints = [c for c in constraint_list if c["severity"] == "warning"]
-
-        if warning_constraints:
-            joined = " & ".join(list({c["type"] for c in warning_constraints})[:2])
-            one_liner = f"{destination}: review {joined} requirements before your trip"
-        else:
-            one_liner = f"Your adventure in {destination}"
+        one_liner = f"Your adventure in {destination}"
 
         # Gallery images
         from app.data.demo_curation import DEMO_MANIFEST
@@ -4272,27 +4242,19 @@ async def _run_local_intel(
         if not gallery:
             gallery = get_destination_gallery(destination)
 
-        constraints_applied = [
-            {
-                "rule": c["desc"],
-                "type": c["type"],
-                "severity": c["severity"],
-                "reason": c["desc"],
-            }
-            for c in constraint_list
-        ]
+        constraints_applied: list[dict] = []
 
         section = build_local_expert_section(
             destination=destination,
             one_liner=one_liner,
-            bullets=[c["desc"] for c in constraint_list[:3]],
+            bullets=[],
             must_dos=[],
             logistics_notes=[],
             constraints_applied=constraints_applied,
             content_added=[],
             gallery_images=gallery,
             travel_intelligence={},
-            principles=[c["desc"] for c in warning_constraints[:4]],
+            principles=[],
         )
 
         # Propagate local-expert constraints to session state so they
@@ -5958,10 +5920,36 @@ async def execute_turn(
             if assistant_message:
                 yield {"type": "token", "data": assistant_message}
 
-        pre_enrichment_day_cards_hash = stable_hash(state.get("day_cards", []))
-        pre_enrichment_tiles_payload = _flatten_tiles_payload(state.get("tiles", {}))
-        pre_enrichment_tiles_hash = stable_hash(pre_enrichment_tiles_payload)
+        # Append user + assistant messages to state messages
+        state.setdefault("messages", []).append(HumanMessage(content=user_message))
+        state["messages"].append(AIMessage(content=assistant_message))
 
+        # Step 7: Await unsplash prefetch (if running), refresh enrichment, build envelope
+        # Emit the complete envelope FIRST without blocking on partner enrichment.
+        # The enrichment task (started during BUILD_ITINERARY) runs concurrently
+        # and its results are applied via follow-up partials below.
+        await _cleanup_unsplash_task(cancel=False, timeout=2.0)
+        await _refresh_enrichment_states(state, session_id)
+
+        pre_enrichment_day_cards_hash = stable_hash(state.get("day_cards", []))
+        pre_enrichment_tiles_hash = stable_hash(_flatten_tiles_payload(state.get("tiles", {})))
+
+        envelope = _build_envelope(state, user_message, session_id, assistant_message)
+
+        wall_ms = int((time.monotonic() - wall_start) * 1000)
+        logger.info(
+            "[coordinator] Turn complete: %s (%d ms)",
+            plan.reason,
+            wall_ms,
+        )
+
+        yield {"type": "complete", "data": envelope}
+
+        # Non-blocking enrichment: await the background partner enrichment
+        # task AFTER the complete envelope has been emitted.  streaming.py
+        # continues to iterate the generator after capturing the complete
+        # event, so any follow-up partials are forwarded to the client
+        # before the SSE complete payload is flushed.
         await _await_pending_itinerary_enrichment(state)
 
         post_enrichment_day_cards = state.get("day_cards", [])
@@ -5996,24 +5984,6 @@ async def execute_turn(
             if turn_meta.get("tiles_replaced"):
                 tiles_partial_data["tiles_replaced"] = True
             yield {"type": "partial", "data": tiles_partial_data}
-
-        # Append user + assistant messages to state messages
-        state.setdefault("messages", []).append(HumanMessage(content=user_message))
-        state["messages"].append(AIMessage(content=assistant_message))
-
-        # Step 7: Await unsplash prefetch (if running), refresh enrichment, build envelope
-        await _cleanup_unsplash_task(cancel=False, timeout=2.0)
-        await _refresh_enrichment_states(state, session_id)
-        envelope = _build_envelope(state, user_message, session_id, assistant_message)
-
-        wall_ms = int((time.monotonic() - wall_start) * 1000)
-        logger.info(
-            "[coordinator] Turn complete: %s (%d ms)",
-            plan.reason,
-            wall_ms,
-        )
-
-        yield {"type": "complete", "data": envelope}
 
     except Exception as exc:
         await _cleanup_unsplash_task(cancel=True)

@@ -1,54 +1,32 @@
 'use client';
 
 /**
- * UnifiedChipRow - "Cockpit" Layout
- *
- * Three-row semantic layout for trip inputs. All controls above chat input.
- *
- * Layout:
- * +----------------------------------------------------+
- * | ROW 1: [ Destination ] [ Origin ] [ Dates ]        |  <- Trip params (h-8, 32px)
- * | ROW 2: [ Travelers ] [ Budget (opt) ]              |  <- Travelers   (h-8, 32px)
- * | ROW 3: [ Flights ] [ Stays ] [ Activities ]        |  <- Booking types (h-9, 36px)
- * +----------------------------------------------------+
- *
- * Design Rules:
- * - Row 1-2: h-8 compact pills, monochrome glass (grey -> white when filled)
- * - Row 3: h-9 primary touch targets, emerald glow when active
- * - Semantic grouping: "what you're planning" vs "what we'll search for"
- * - "Cockpit" aesthetic - all instruments readable at >=380px panel width
+ * UnifiedChipRow - "Cockpit" layout: three-row semantic trip-input chips.
+ * Row 1-2: core params (destination, origin, dates, travelers, budget).
+ * Row 3: booking modules (flights, stays, activities).
  */
 
 import {
   Calendar,
   DollarSign,
-  Hotel,
   MapPin,
   Plane,
-  Ticket,
   Users,
 } from 'lucide-react';
 import { memo, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { useIsDesktop } from '@/hooks/useIsDesktop';
-import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
-import { type ActivitySettings, type BookingTypes, type FlightSettings, type HotelSettings, isBookingEnabled } from '@/types/document';
+import { type ActivitySettings, type BookingTypes, type FlightSettings, type HotelSettings } from '@/types/document';
 import type { ViewMode } from '@/types/plan-envelope';
 
-import type { ModuleState } from './ChipGroup';
 import {
-  getFlightChipSummary,
-  getHotelChipSummary,
   inferCategoriesFromDayCards,
-  isActivityCustom,
-  isFlightCustom,
-  isHotelCustom,
-  ModuleChip,
   SetupCoreChip,
 } from './ChipGroup';
 import { ChipScrollContainer } from './ChipScrollContainer';
+import { BookingModulesRow, getActivitiesState, getFlightState, getStaysState } from './unifiedChipRowHelpers';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -129,23 +107,9 @@ function UnifiedChipRowInner({
   const isBookingMode = mode === 'booking';
 
   // Determine module chip states (tri-state: suggested or on = enabled)
-  const getFlightState = (): ModuleState => {
-    if (!isBookingEnabled(bookingTypes.flights)) return 'off';
-    return isFlightCustom(flightSettings) ? 'on-custom' : 'on-default';
-  };
-
-  const getStaysState = (): ModuleState => {
-    if (!isBookingEnabled(bookingTypes.hotels)) return 'off';
-    return isHotelCustom(hotelSettings) ? 'on-custom' : 'on-default';
-  };
-
-  const getActivitiesState = (): ModuleState => {
-    if (!isBookingEnabled(bookingTypes.activities)) return 'off';
-    return isActivityCustom(activitySettings, inferredActivityCategories) ? 'on-custom' : 'on-default';
-  };
-  const flightState = getFlightState();
-  const staysState = getStaysState();
-  const activitiesState = getActivitiesState();
+  const flightState = getFlightState(bookingTypes, flightSettings);
+  const staysState = getStaysState(bookingTypes, hotelSettings);
+  const activitiesState = getActivitiesState(bookingTypes, activitySettings, inferredActivityCategories);
 
   // Check if travelers has been modified from default
   const isTravelersDefault = travelers === '1 adult';
@@ -203,45 +167,18 @@ function UnifiedChipRowInner({
       )}
 
       {/* ROW 3: BOOKING TYPES (What We Search For) */}
-      <div className={cn(
-        'flex items-center gap-2',
-        isMobile && 'overflow-x-auto no-scrollbar -mx-4 px-4 py-1',
-        !isMobile && 'flex-wrap justify-center py-0.5'
-      )}>
-        <ModuleChip
-          icon={Plane}
-          label="Flights"
-          state={flightState}
-          summary={getFlightChipSummary(flightSettings)}
-          onClick={onOpenFlights}
-          isMobile={isMobile}
-          disabled={isBookingMode}
-          showCompletionCheckWhenOn={false}
-        />
-
-        <ModuleChip
-          icon={Hotel}
-          label="Stays"
-          state={staysState}
-          summary={getHotelChipSummary(hotelSettings)}
-          onClick={onOpenStays}
-          isMobile={isMobile}
-          disabled={isBookingMode}
-          showCompletionCheckWhenOn={false}
-        />
-
-        <ModuleChip
-          icon={Ticket}
-          label="Activities"
-          badge={undefined}
-          state={activitiesState}
-          summary={null}
-          onClick={onOpenActivities}
-          isMobile={isMobile}
-          disabled={isBookingMode}
-          showCompletionCheckWhenOn={false}
-        />
-      </div>
+      <BookingModulesRow
+        isMobile={isMobile}
+        isBookingMode={isBookingMode}
+        flightState={flightState}
+        staysState={staysState}
+        activitiesState={activitiesState}
+        flightSettings={flightSettings}
+        hotelSettings={hotelSettings}
+        onOpenFlights={onOpenFlights}
+        onOpenStays={onOpenStays}
+        onOpenActivities={onOpenActivities}
+      />
     </div>
   );
 }

@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { useToast } from '@/components/ui/toast';
-import { apiFetch, fetchSharedTrip } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
+import { fetchSharedTrip } from '@/lib/api-streaming';
 import { calculateMapCenter, extractPOIsFromDayCards, type MapPOI } from '@/lib/ghost-timeline-adapter';
 import type { DayCard, StrategySection } from '@/types/plan-envelope';
 
@@ -108,6 +110,7 @@ export function SharedTripView({
   }
 
   return (
+    <ErrorBoundary label="Shared trip">
     <div className="min-h-screen bg-zinc-950 text-white">
       <SharedTripHeader
         title={data.title}
@@ -128,5 +131,6 @@ export function SharedTripView({
         </section>
       </main>
     </div>
+    </ErrorBoundary>
   );
 }

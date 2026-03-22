@@ -244,8 +244,11 @@ def test_create_and_get_shared_trip_snapshot():
     assert get_response.status_code == 200
     shared = get_response.json()
     assert shared["slug"] == payload["slug"]
-    assert shared["snapshot"]["tiles"]["tile-1"]["image_url"] is None
-    assert shared["snapshot"]["day_cards"][0]["blocks"][0]["image_url"] is None
+    # Signed proxy URLs should be replaced with public fallbacks (Unsplash or None)
+    tile_img = shared["snapshot"]["tiles"]["tile-1"]["image_url"] or ""
+    assert "/api/media/" not in tile_img
+    block_img = shared["snapshot"]["day_cards"][0]["blocks"][0]["image_url"] or ""
+    assert "/api/media/" not in block_img
 
 
 def test_create_shared_trip_retries_on_slug_conflict(monkeypatch):

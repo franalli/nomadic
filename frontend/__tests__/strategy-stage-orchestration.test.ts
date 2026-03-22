@@ -87,7 +87,7 @@ describe('buildDayCardsFingerprint', () => {
     const base = [
       makeDayCard(1, 'dive-1', {
         coordinates: { lat: -8.67, lng: 115.21 },
-        activity_provenance: 'itinerary',
+        activity_provenance: 'ai_suggested',
         duration: '2 hours',
         intensity: 'moderate',
         price_level: 2,
@@ -126,6 +126,11 @@ describe('buildDayCardsFingerprint', () => {
       makeDayCard(1, 'dive-1', {
         coordinates: { lat: -8.67, lng: 115.21 },
         booked_tile: {
+          id: 'tile-1',
+          type: 'activity',
+          title: 'Nature Walk',
+          currency: 'USD',
+          deeplink_url: 'https://example.com/tile-1',
           category: 'spa',
           tags: ['park'],
           map_type: 'nature',

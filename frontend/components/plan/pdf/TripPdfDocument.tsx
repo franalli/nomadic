@@ -1,181 +1,8 @@
-import { Document, Link, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
+import { Document, Link, Page, Text, View } from '@react-pdf/renderer';
 
 import type { PdfActivityLink, PdfBlockData, PdfDaySection, PdfHotelLink, TripPdfData } from '@/lib/pdfData';
 
-// ---------------------------------------------------------------------------
-// Monochrome palette — @react-pdf/renderer uses its own StyleSheet,
-// not Tailwind/DS tokens. Only black/grey values; zero color in the PDF.
-//
-// IMPORTANT: Never use textTransform in @react-pdf/renderer — it interacts
-// badly with letterSpacing, inserting spaces inside words. Always use
-// .toUpperCase() in JS. Never use unicode symbols (emoji, ℹ, ↗) — Helvetica
-// doesn't have those glyphs and they render as garbage.
-// ---------------------------------------------------------------------------
-
-const BLACK = '#18181b';     // zinc-900 — titles, names, headings
-const MID = '#71717a';       // zinc-500 — labels, metadata, constraints
-const LIGHT = '#a1a1aa';     // zinc-400 — period labels, intensity, footer
-const DARK_GREY = '#52525b'; // zinc-600 — underlined link text
-const RULE = '#d4d4d8';      // zinc-300 — horizontal rules
-
-// ---------------------------------------------------------------------------
-// Styles — no textTransform anywhere, no letterSpacing > 1
-// ---------------------------------------------------------------------------
-
-const s = StyleSheet.create({
-  // Page
-  page: {
-    padding: 40,
-    fontFamily: 'Helvetica',
-    fontSize: 10,
-    color: BLACK,
-  },
-  footer: {
-    position: 'absolute',
-    bottom: 30,
-    left: 40,
-    right: 40,
-    textAlign: 'center',
-    fontSize: 7,
-    color: LIGHT,
-  },
-
-  // Header
-  brand: {
-    fontSize: 8,
-    letterSpacing: 1,
-    color: MID,
-    marginBottom: 8,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-  },
-  subtitle: {
-    fontSize: 10,
-    color: MID,
-    marginTop: 3,
-    marginBottom: 12,
-  },
-  rule: {
-    borderBottomWidth: 1,
-    borderBottomColor: RULE,
-    marginBottom: 14,
-  },
-
-  // Days
-  dayHeader: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    letterSpacing: 1,
-    marginTop: 14,
-  },
-  dayMeta: {
-    fontSize: 8,
-    color: LIGHT,
-    marginBottom: 6,
-  },
-  dashedRule: {
-    borderBottomWidth: 0.5,
-    borderBottomColor: RULE,
-    borderBottomStyle: 'dashed',
-    marginTop: 10,
-    marginBottom: 10,
-  },
-
-  // Blocks
-  blockWrap: {
-    marginBottom: 8,
-  },
-  periodLabel: {
-    fontSize: 7,
-    letterSpacing: 0.5,
-    color: LIGHT,
-    marginBottom: 1,
-  },
-  specialistLabel: {
-    fontSize: 7,
-    fontWeight: 'bold',
-    letterSpacing: 1,
-    color: MID,
-    marginBottom: 1,
-  },
-  blockName: {
-    fontSize: 11,
-    fontWeight: 'bold',
-    marginBottom: 1,
-  },
-  blockMeta: {
-    fontSize: 9,
-    color: MID,
-    marginBottom: 2,
-  },
-  constraintInline: {
-    fontSize: 8,
-    color: MID,
-    paddingLeft: 8,
-    fontStyle: 'italic',
-    marginBottom: 6,
-  },
-  bufferWrap: {
-    marginBottom: 4,
-  },
-  bufferBlock: {
-    fontSize: 10,
-    color: MID,
-    fontStyle: 'italic',
-    marginBottom: 6,
-  },
-
-  // Venue Links
-  venueLinksWrap: {
-    marginTop: 16,
-  },
-  sectionTitle: {
-    fontSize: 9,
-    fontWeight: 'bold',
-    letterSpacing: 1,
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  linksSubHeader: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    marginBottom: 4,
-    marginTop: 8,
-  },
-  venueRow: {
-    marginBottom: 8,
-  },
-  venueNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  venueName: {
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  venueDetail: {
-    fontSize: 9,
-    color: MID,
-  },
-  venueLink: {
-    fontSize: 7,
-    color: DARK_GREY,
-    textDecoration: 'underline',
-    marginBottom: 8,
-  },
-});
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Clean duration: "4.0h" → "4h", "6.0h" → "6h" */
-function cleanDuration(d: string | null): string | null {
-  if (!d) return null;
-  return d.replace(/\.0h$/, 'h');
-}
+import { cleanDuration, s } from './tripPdfStyles';
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -227,7 +54,7 @@ function BlockRow({ block }: { block: PdfBlockData }) {
       {metaParts ? <Text style={s.blockMeta}>{metaParts}</Text> : null}
       {block.hotelName ? <Text style={s.blockMeta}>{'Stay: '}{block.hotelName}</Text> : null}
       {block.constraintNotes.map((note, i) => (
-        <Text key={i} style={s.constraintInline}>
+        <Text key={`${note}-${i}`} style={s.constraintInline}>
           {'-- '}{note}
         </Text>
       ))}
@@ -256,7 +83,7 @@ function DaySection({ day, isFirst }: { day: PdfDaySection; isFirst: boolean }) 
         </Text>
       ) : null}
       {day.blocks.map((block, i) => (
-        <BlockRow key={i} block={block} />
+        <BlockRow key={`${block.summary}-${i}`} block={block} />
       ))}
     </View>
   );
@@ -303,16 +130,16 @@ function VenueLinks({ hotels, activities }: { hotels: PdfHotelLink[]; activities
       {hotels.length > 0 ? (
         <>
           <Text style={s.linksSubHeader}>Hotels</Text>
-          {hotels.map((h, i) => (
-            <HotelLinkRow key={i} hotel={h} />
+          {hotels.map((h) => (
+            <HotelLinkRow key={h.url} hotel={h} />
           ))}
         </>
       ) : null}
       {activities.length > 0 ? (
         <>
           <Text style={s.linksSubHeader}>Activities</Text>
-          {activities.map((a, i) => (
-            <ActivityLinkRow key={i} activity={a} />
+          {activities.map((a) => (
+            <ActivityLinkRow key={a.url} activity={a} />
           ))}
         </>
       ) : null}

@@ -265,7 +265,8 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
     const hasDatesLocal = hasDates;
     const hasTilesLocal = effectiveTiles && Object.keys(effectiveTiles).length > 0;
     const density = computeDataDensity(state, viewModel.strategy_sections, effectiveTiles, hasDates);
-    const isShowingMirrorLoader = generating && hasDatesLocal && !hasTilesLocal;
+    const hasDayCardsLocal = (effectiveDayCards?.length ?? 0) > 0;
+    const isShowingMirrorLoader = generating && hasDatesLocal && !hasDayCardsLocal;
     let tripDuration = effectiveTripInputs?.trip_duration ?? 3;
     if (effectiveTripInputs?.start_date && effectiveTripInputs?.end_date) {
       const start = new Date(effectiveTripInputs.start_date);
@@ -274,7 +275,8 @@ export function useStrategyStageOrchestration(input: UseOrchestrationInput) {
       if (diffDays > 0) tripDuration = diffDays;
     }
     return { hasDates: hasDatesLocal, hasTiles: hasTilesLocal, density, isShowingMirrorLoader, tripDuration };
-  }, [state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs, generating, hasDates]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- effectiveDayCards?.length is captured by dayCardsFingerprint
+  }, [state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs, generating, hasDates, dayCardsFingerprint]);
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => setStableDensity(displayLogic.density));

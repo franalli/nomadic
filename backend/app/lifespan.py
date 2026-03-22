@@ -210,10 +210,10 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     logger.info("[Shutdown] Closed Google Places sync HTTP client")
 
     # 5d. Close photo proxy HTTP client
-    from app.main import _photo_proxy_client
+    from app.http_clients import photo_proxy_client
 
-    if _photo_proxy_client is not None and not _photo_proxy_client.is_closed:
-        await _photo_proxy_client.aclose()
+    if photo_proxy_client is not None and not photo_proxy_client.is_closed:
+        await photo_proxy_client.aclose()
         logger.info("[Shutdown] Closed photo proxy HTTP client")
 
     # 6. Clear pending enrichments dict

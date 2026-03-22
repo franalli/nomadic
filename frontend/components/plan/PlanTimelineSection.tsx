@@ -32,6 +32,11 @@ const FADE_INITIAL = { opacity: 0 } as const;
 const FADE_VISIBLE = { opacity: 1 } as const;
 const FADE_EXIT = { opacity: 0 } as const;
 const SKELETON_TRANSITION = { duration: 0.2 } as const;
+const TIMELINE_REVEAL_TRANSITION = {
+  duration: REVEAL_TIMING.TIMELINE_FADE / 1000,
+  delay: REVEAL_TIMING.TIMELINE_DELAY / 1000,
+  ease: [0.4, 0, 0.2, 1],
+} as const;
 const TIMELINE_LOADING_ROWS = [1, 2] as const;
 
 interface PlanTimelineSectionProps {
@@ -61,7 +66,7 @@ function TimelineLoadingState({ overlay = false }: { overlay?: boolean }): React
       )}
     >
       {TIMELINE_LOADING_ROWS.map((i) => (
-        <div key={i} className="space-y-2">
+        <div key={`skeleton-row-${i}`} className="space-y-2">
           <div className="h-6 w-24 rounded bg-zinc-200/50 dark:bg-zinc-700/50" />
           <div className="h-20 rounded-lg bg-zinc-200/50 dark:bg-zinc-700/50" />
           <div className="h-20 rounded-lg bg-zinc-200/50 dark:bg-zinc-700/50" />
@@ -103,7 +108,7 @@ export function PlanTimelineSection({
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to remove block';
       debugLog('[removeBlock] error:', msg);
-      toast(msg.includes('VERSION_CONFLICT') ? 'Version conflict — please retry' : 'Could not update timeline — try again', { type: 'error' });
+      toast(msg === 'VERSION_CONFLICT' ? 'Version conflict — please retry' : 'Could not update timeline — try again', { type: 'error' });
     }
   }, [removeBlock, toast]);
 
@@ -141,7 +146,7 @@ export function PlanTimelineSection({
           initial={FADE_INITIAL}
           animate={FADE_VISIBLE}
           exit={FADE_EXIT}
-          transition={{ duration: REVEAL_TIMING.TIMELINE_FADE / 1000, delay: REVEAL_TIMING.TIMELINE_DELAY / 1000, ease: [0.4, 0, 0.2, 1] }}
+          transition={TIMELINE_REVEAL_TRANSITION}
           id="timeline-section"
           className="relative px-4 py-4"
         >

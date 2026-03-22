@@ -143,8 +143,13 @@ class Settings(BaseSettings):
     google_places_enrichment_cache_ttl_hours: int = 720  # 30 days — venue data is stable
     # IATA resolver L2 cache TTL
     iata_cache_ttl_hours: int = 720  # 30 days
+    geocode_cache_ttl_hours: int = 24
     # Max activities to enrich per call (caps Google Places API spend)
     google_places_enrichment_cap: int = 3
+    # Enrichment concurrency and retry tuning
+    google_places_enrichment_max_parallel: int = 4
+    google_places_enrichment_retry_attempts: int = 2
+    google_places_enrichment_retry_base_ms: int = 250
     # Wipe L2 (PostgreSQL) on session reset — for local dev/testing only
     # Set CLEAR_L2_ON_RESET=true in .env; leave unset in production
     clear_l2_on_session_reset: bool = Field(default=False, validation_alias="CLEAR_L2_ON_RESET")

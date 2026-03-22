@@ -21,8 +21,15 @@ vi.mock('@/lib/api', async () => {
   return {
     ...actual,
     clearSessionLocalStorage: apiMocks.clearSessionLocalStorage,
-    refreshTiles: apiMocks.refreshTiles,
     resetSession: apiMocks.resetSession,
+  };
+});
+
+vi.mock('@/lib/api-document', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/api-document')>('@/lib/api-document');
+  return {
+    ...actual,
+    refreshTiles: apiMocks.refreshTiles,
   };
 });
 
@@ -183,6 +190,7 @@ function buildGraphResponse(
         children: 0,
         activity_settings: {
           ...DEFAULT_TRIP_INPUTS.activity_settings,
+          skill_level: DEFAULT_TRIP_INPUTS.activity_settings?.skill_level ?? null,
           categories: ['diving'],
         },
       },

@@ -1,95 +1,22 @@
 'use client';
 
-import { ExternalLink } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
 import { getEffectiveTileDeeplinkUrl } from '@/components/tiles/tileHelpers';
 import { DS } from '@/lib/design-system';
-import { formatPrice, formatTilePrice } from '@/lib/format-utils';
+import { formatTilePrice } from '@/lib/format-utils';
 import { cn } from '@/lib/utils';
 import { useDocumentTripInputs } from '@/state/documentStore';
-import type { DayBlock, DayCard, PlanViewState } from '@/types/plan-envelope';
+import type { DayCard, PlanViewState } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
-const VISIBLE_STATES: Set<PlanViewState> = new Set([
-  'S3_ITINERARY_READY',
-  'S3_EDITING',
-  'P3_FINALIZED',
-  'P3_EDITING',
-]);
-
-const PRICE_LEVEL_LABELS: Record<number, string> = {
-  0: 'Free',
-  1: '$',
-  2: '$$',
-  3: '$$$',
-  4: '$$$$',
-};
-
-interface VenueLinkRowProps {
-  href: string;
-  price?: string | null;
-  title: string;
-}
-
-interface VenueLinkRowData extends VenueLinkRowProps {
-  dedupeKey: string;
-  id: string;
-}
-
-function formatActivityPrice(block: DayBlock): string | null {
-  if (block.booked_tile) {
-    const bookedTilePrice = formatTilePrice(block.booked_tile);
-    if (bookedTilePrice) return bookedTilePrice;
-  }
-
-  if (block.price_estimate != null && block.price_estimate > 0) {
-    return `~${formatPrice(block.price_estimate)}`;
-  }
-
-  if (
-    block.price_level != null &&
-    Object.prototype.hasOwnProperty.call(PRICE_LEVEL_LABELS, block.price_level)
-  ) {
-    return PRICE_LEVEL_LABELS[block.price_level];
-  }
-
-  return null;
-}
-
-function VenueLinkRow({ href, price, title }: VenueLinkRowProps) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={cn(
-        'group flex items-center justify-between gap-3 px-4 py-2.5',
-        'border-b border-zinc-200/70 transition-colors last:border-b-0',
-        'hover:bg-zinc-50/80 dark:border-white/5 dark:hover:bg-white/[0.03]',
-      )}
-    >
-      <span className="min-w-0 flex-1 truncate text-sm text-emerald-600 transition-colors group-hover:text-emerald-500 dark:text-emerald-400 dark:group-hover:text-emerald-300">
-        {title}
-      </span>
-      <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400">
-        {price ? <span>{price}</span> : null}
-        <ExternalLink className="h-3 w-3 shrink-0" />
-      </span>
-    </a>
-  );
-}
-
-function dedupeVenueRows(rows: VenueLinkRowData[]): VenueLinkRowData[] {
-  const seen = new Set<string>();
-
-  return rows.filter((row) => {
-    if (seen.has(row.dedupeKey)) return false;
-    seen.add(row.dedupeKey);
-    return true;
-  });
-}
+import {
+  dedupeVenueRows,
+  formatActivityPrice,
+  VenueLinkSection,
+  VISIBLE_STATES,
+} from './BookingSummaryParts';
 
 interface BookingSummaryProps {
   tiles: Record<string, Tile>;
@@ -214,65 +141,13 @@ export function BookingSummary({
         ) : null}
       </div>
 
-      {hotelRows.length > 0 && (
-        <div>
-          <div className="px-4 pt-3 pb-1">
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
-              Stays
-            </span>
-          </div>
-          <div>
-            {hotelRows.map((row) => (
-              <VenueLinkRow
-                key={row.id}
-                href={row.href}
-                price={row.price}
-                title={row.title}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {flightRows.length > 0 && (
-        <div className={cn(hotelRows.length > 0 && 'border-t border-zinc-200/70 dark:border-white/5')}>
-          <div className="px-4 pt-3 pb-1">
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
-              Flights
-            </span>
-          </div>
-          <div>
-            {flightRows.map((row) => (
-              <VenueLinkRow
-                key={row.id}
-                href={row.href}
-                price={row.price}
-                title={row.title}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {activityRows.length > 0 && (
-        <div className={cn((hotelRows.length > 0 || flightRows.length > 0) && 'border-t border-zinc-200/70 dark:border-white/5')}>
-          <div className="px-4 pt-3 pb-1">
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
-              Activities
-            </span>
-          </div>
-          <div>
-            {activityRows.map((row) => (
-              <VenueLinkRow
-                key={row.id}
-                href={row.href}
-                price={row.price}
-                title={row.title}
-              />
-            ))}
-          </div>
-        </div>
-      )}
+      <VenueLinkSection label="Stays" rows={hotelRows} showBorder={false} />
+      <VenueLinkSection label="Flights" rows={flightRows} showBorder={hotelRows.length > 0} />
+      <VenueLinkSection
+        label="Activities"
+        rows={activityRows}
+        showBorder={hotelRows.length > 0 || flightRows.length > 0}
+      />
 
       <p
         className={cn(

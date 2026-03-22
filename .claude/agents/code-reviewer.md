@@ -122,7 +122,7 @@ You review against the project's documented invariants. You NEVER modify files â
 - [ ] No files modified outside the stated task scope
 - [ ] No gratuitous refactors piggybacking on feature work
 - [ ] Parallel work zones respected (backend session not touching frontend, vice versa)
-- [ ] `schemas.py`, `specialist_schemas.py`, and `schemas/coordinator_schemas.py` changes coordinated if both sessions active
+- [ ] `schemas.py` and `schemas/coordinator_schemas.py` changes coordinated if both sessions active
 
 ### 10. Caching Safety
 

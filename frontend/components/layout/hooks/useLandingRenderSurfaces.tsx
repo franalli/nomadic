@@ -1,22 +1,20 @@
 'use client';
 
 import type { RefObject } from 'react';
-import { useMemo } from 'react';
 
-import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
-import { MobileChatInput } from '@/components/chat/MobileChatInput';
+import type { ChatPanelHandle } from '@/components/chat/ChatPanel';
 import type { PlanResultPayload } from '@/components/layout/hooks/useBranchManager';
-import { LandingHeaderContent } from '@/components/layout/LandingHeaderContent';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
-import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
-import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
-import { formatDateForDisplay } from '@/lib/utils';
 import type { AuthUser, UserTripSummary } from '@/state/userStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { DestinationCard, PlanState, PlanViewModel, PlanViewState } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
+
+import { useHeaderAndMobileContent } from './useHeaderAndMobileContent';
+import { usePlannerContent } from './usePlannerContent';
+import { usePlanViewContent } from './usePlanViewContent';
 
 interface UseLandingRenderSurfacesArgs {
   chatPanelRef: RefObject<ChatPanelHandle | null>;
@@ -93,277 +91,95 @@ interface UseLandingRenderSurfacesArgs {
   hasPlan: boolean;
 }
 
-export function useLandingRenderSurfaces({
-  chatPanelRef,
-  chatKey,
-  selectedBranchId,
-  handlePlanResultWithReceipt,
-  handleGeneratePlanStartWithSnapshot,
-  requestAutoExpandItinerary,
-  hasBranchesReady,
-  readyToGenerate,
-  isGenerating,
-  planState,
-  handleUserMessageSubmit,
-  tripInputs,
-  hasStartDate,
-  hasEndDate,
-  hasDestination,
-  hasDates,
-  bookingTypes,
-  flightSettings,
-  hotelSettings,
-  activitySettings,
-  handleUpdateBookingTypes,
-  handleUpdateFlightSettings,
-  handleUpdateHotelSettings,
-  handleUpdateActivitySettings,
-  planViewState,
-  isFraming,
-  openSheet,
-  destinationCard,
-  destinationImageUrl,
-  handleStartNewSession,
-  generation,
-  canGeneratePlan,
-  fallbackTitle,
-  handleBuildPlan,
-  handleExpandToItinerary,
-  handleFinalizePlan,
-  isFinalizing,
-  preferredTileIds,
-  handleSaveTilePreference,
-  isCommitting,
-  hasEverHadPlan,
-  isRegenerating,
-  handleSelectNights,
-  handleOpenGearActivities,
-  handleOpenGearStays,
-  handleOpenGearFlights,
-  planViewModel,
-  tiles,
-  hasItineraryContent,
-  showHeaderPills,
-  user,
-  otherTrips,
-  resumingTripId,
-  userLoading,
-  handleNewTrip,
-  handleLogin,
-  handleLogout,
-  resumeTrip,
-  addToast,
-  isResettingSession,
-  isDesktop,
-  handleMobileSend,
-  handleMobileStopStreaming,
-  hasPlan,
-}: UseLandingRenderSurfacesArgs) {
-  const plannerContent = useMemo(
-    () => (
-      <ErrorBoundary label="Chat">
-        <ChatPanel
-          ref={chatPanelRef}
-          key={chatKey}
-          selectedBranchId={selectedBranchId}
-          onPlanResult={handlePlanResultWithReceipt}
-          onGeneratePlanStart={handleGeneratePlanStartWithSnapshot}
-          onAutoExpandItinerary={requestAutoExpandItinerary}
-          fullHeight={false}
-          hasBranches={hasBranchesReady}
-          readyToGenerate={readyToGenerate}
-          isGenerating={isGenerating}
-          planState={planState}
-          onUserMessageSubmit={handleUserMessageSubmit}
-          destination={tripInputs.destination ?? undefined}
-          origin={tripInputs.origin ?? undefined}
-          dateRange={
-            hasStartDate && hasEndDate
-              ? `${formatDateForDisplay(tripInputs.start_date)} - ${formatDateForDisplay(tripInputs.end_date)}`
-              : hasStartDate
-                ? `${formatDateForDisplay(tripInputs.start_date)} → ?`
-                : undefined
-          }
-          budget={tripInputs.budget != null ? `$${tripInputs.budget.toLocaleString()}` : undefined}
-          hasDestination={hasDestination}
-          hasDates={hasDates}
-          tripInputs={tripInputs}
-          bookingTypes={bookingTypes}
-          flightSettings={flightSettings}
-          hotelSettings={hotelSettings}
-          activitySettings={activitySettings}
-          onUpdateBookingTypes={handleUpdateBookingTypes}
-          onUpdateFlightSettings={handleUpdateFlightSettings}
-          onUpdateHotelSettings={handleUpdateHotelSettings}
-          onUpdateActivitySettings={handleUpdateActivitySettings}
-          planViewState={planViewState ?? undefined}
-          isFraming={isFraming}
-          onOpenSheet={openSheet}
-          destinationImageUrl={destinationCard?.image_url ?? destinationImageUrl}
-          onConfirmReset={handleStartNewSession}
-        />
-      </ErrorBoundary>
-    ),
-    [
-      activitySettings,
-      bookingTypes,
-      chatKey,
-      chatPanelRef,
-      destinationCard,
-      destinationImageUrl,
-      flightSettings,
-      handleGeneratePlanStartWithSnapshot,
-      handlePlanResultWithReceipt,
-      handleStartNewSession,
-      handleUpdateActivitySettings,
-      handleUpdateBookingTypes,
-      handleUpdateFlightSettings,
-      handleUpdateHotelSettings,
-      handleUserMessageSubmit,
-      hasBranchesReady,
-      hasDates,
-      hasDestination,
-      hasEndDate,
-      hasStartDate,
-      hotelSettings,
-      isFraming,
-      isGenerating,
-      openSheet,
-      planState,
-      planViewState,
-      readyToGenerate,
-      requestAutoExpandItinerary,
-      selectedBranchId,
-      tripInputs,
-    ]
-  );
-
+export function useLandingRenderSurfaces(args: UseLandingRenderSurfacesArgs) {
   const isExpandingItinerary =
-    generation?.active === true && generation.stage === 'itinerary';
+    args.generation?.active === true && args.generation.stage === 'itinerary';
 
-  const planViewContent = useMemo(
-    () => (
-      <ErrorBoundary label="Plan View">
-        <StrategyStageRenderer
-          state={planViewState ?? 'P0_MINIMAL'}
-          viewModel={planViewModel}
-          destinationCard={destinationCard ?? undefined}
-          tiles={tiles}
-          generation={generation}
-          canGeneratePlan={canGeneratePlan}
-          fallbackTitle={fallbackTitle}
-          hasDates={hasDates}
-          isExpandingItinerary={isExpandingItinerary}
-          onBuildPlan={handleBuildPlan}
-          onExpandToItinerary={handleExpandToItinerary}
-          onFinalizePlan={handleFinalizePlan}
-          isFinalizing={isFinalizing}
-          savedTileIds={preferredTileIds}
-          onSaveTile={handleSaveTilePreference}
-          tripInputs={tripInputs}
-          isCommitting={isCommitting}
-          onOpenSheet={openSheet}
-          hasEverHadPlan={hasEverHadPlan}
-          isRegenerating={isRegenerating}
-          onSelectNights={handleSelectNights}
-          onOpenActivitySettings={handleOpenGearActivities}
-          onOpenStaysSettings={handleOpenGearStays}
-          onOpenFlightsSettings={handleOpenGearFlights}
-        />
-      </ErrorBoundary>
-    ),
-    [
-      canGeneratePlan,
-      destinationCard,
-      fallbackTitle,
-      generation,
-      handleBuildPlan,
-      handleExpandToItinerary,
-      handleFinalizePlan,
-      handleOpenGearActivities,
-      handleOpenGearFlights,
-      handleOpenGearStays,
-      handleSaveTilePreference,
-      handleSelectNights,
-      hasDates,
-      hasEverHadPlan,
-      isCommitting,
-      isExpandingItinerary,
-      isFinalizing,
-      isRegenerating,
-      openSheet,
-      planViewModel,
-      planViewState,
-      preferredTileIds,
-      tiles,
-      tripInputs,
-    ]
-  );
+  const plannerContent = usePlannerContent({
+    chatPanelRef: args.chatPanelRef,
+    chatKey: args.chatKey,
+    selectedBranchId: args.selectedBranchId,
+    handlePlanResultWithReceipt: args.handlePlanResultWithReceipt,
+    handleGeneratePlanStartWithSnapshot: args.handleGeneratePlanStartWithSnapshot,
+    requestAutoExpandItinerary: args.requestAutoExpandItinerary,
+    hasBranchesReady: args.hasBranchesReady,
+    readyToGenerate: args.readyToGenerate,
+    isGenerating: args.isGenerating,
+    planState: args.planState,
+    handleUserMessageSubmit: args.handleUserMessageSubmit,
+    tripInputs: args.tripInputs,
+    hasStartDate: args.hasStartDate,
+    hasEndDate: args.hasEndDate,
+    hasDestination: args.hasDestination,
+    hasDates: args.hasDates,
+    bookingTypes: args.bookingTypes,
+    flightSettings: args.flightSettings,
+    hotelSettings: args.hotelSettings,
+    activitySettings: args.activitySettings,
+    handleUpdateBookingTypes: args.handleUpdateBookingTypes,
+    handleUpdateFlightSettings: args.handleUpdateFlightSettings,
+    handleUpdateHotelSettings: args.handleUpdateHotelSettings,
+    handleUpdateActivitySettings: args.handleUpdateActivitySettings,
+    planViewState: args.planViewState,
+    isFraming: args.isFraming,
+    openSheet: args.openSheet,
+    destinationImageUrl: args.destinationImageUrl,
+    handleStartNewSession: args.handleStartNewSession,
+    destinationCard: args.destinationCard,
+  });
 
-  const headerContent = useMemo(
-    () => (
-      <LandingHeaderContent
-        tiles={tiles}
-        tripInputs={tripInputs}
-        dayCards={planViewModel.day_cards}
-        openSheet={openSheet}
-        isGenerating={isGenerating}
-        hasItineraryContent={hasItineraryContent}
-        showHeaderPills={showHeaderPills}
-        user={user}
-        otherTrips={otherTrips}
-        resumingTripId={resumingTripId}
-        userLoading={userLoading}
-        handleNewTrip={handleNewTrip}
-        handleLogin={handleLogin}
-        handleLogout={handleLogout}
-        handleStartNewSession={handleStartNewSession}
-        resumeTrip={resumeTrip}
-        addToast={addToast}
-        isResettingSession={isResettingSession}
-      />
-    ),
-    [
-      addToast,
-      handleLogin,
-      handleLogout,
-      handleNewTrip,
-      handleStartNewSession,
-      hasItineraryContent,
-      isGenerating,
-      isResettingSession,
-      openSheet,
-      otherTrips,
-      planViewModel.day_cards,
-      resumingTripId,
-      resumeTrip,
-      showHeaderPills,
-      tiles,
-      tripInputs,
-      user,
-      userLoading,
-    ]
-  );
+  const planViewContent = usePlanViewContent({
+    planViewState: args.planViewState,
+    planViewModel: args.planViewModel,
+    destinationCard: args.destinationCard,
+    tiles: args.tiles,
+    generation: args.generation,
+    canGeneratePlan: args.canGeneratePlan,
+    fallbackTitle: args.fallbackTitle,
+    hasDates: args.hasDates,
+    isExpandingItinerary,
+    handleBuildPlan: args.handleBuildPlan,
+    handleExpandToItinerary: args.handleExpandToItinerary,
+    handleFinalizePlan: args.handleFinalizePlan,
+    isFinalizing: args.isFinalizing,
+    preferredTileIds: args.preferredTileIds,
+    handleSaveTilePreference: args.handleSaveTilePreference,
+    tripInputs: args.tripInputs,
+    isCommitting: args.isCommitting,
+    openSheet: args.openSheet,
+    hasEverHadPlan: args.hasEverHadPlan,
+    isRegenerating: args.isRegenerating,
+    handleSelectNights: args.handleSelectNights,
+    handleOpenGearActivities: args.handleOpenGearActivities,
+    handleOpenGearStays: args.handleOpenGearStays,
+    handleOpenGearFlights: args.handleOpenGearFlights,
+  });
 
-  const mobileInput = useMemo(() => {
-    if (isDesktop) return undefined;
-    return (
-      <MobileChatInput
-        onSend={handleMobileSend}
-        onStop={handleMobileStopStreaming}
-        isProcessing={isGenerating}
-        hasDestination={hasDestination}
-        hasPlan={hasPlan}
-      />
-    );
-  }, [
-    handleMobileSend,
-    handleMobileStopStreaming,
-    hasDestination,
-    hasPlan,
-    isDesktop,
-    isGenerating,
-  ]);
+  const { headerContent, mobileInput } = useHeaderAndMobileContent({
+    tiles: args.tiles,
+    tripInputs: args.tripInputs,
+    dayCards: args.planViewModel.day_cards,
+    openSheet: args.openSheet,
+    isGenerating: args.isGenerating,
+    hasItineraryContent: args.hasItineraryContent,
+    showHeaderPills: args.showHeaderPills,
+    user: args.user,
+    otherTrips: args.otherTrips,
+    resumingTripId: args.resumingTripId,
+    userLoading: args.userLoading,
+    handleNewTrip: args.handleNewTrip,
+    handleLogin: args.handleLogin,
+    handleLogout: args.handleLogout,
+    handleStartNewSession: args.handleStartNewSession,
+    resumeTrip: args.resumeTrip,
+    addToast: args.addToast,
+    isResettingSession: args.isResettingSession,
+    isDesktop: args.isDesktop,
+    handleMobileSend: args.handleMobileSend,
+    handleMobileStopStreaming: args.handleMobileStopStreaming,
+    hasDestination: args.hasDestination,
+    hasPlan: args.hasPlan,
+  });
 
   return {
     plannerContent,

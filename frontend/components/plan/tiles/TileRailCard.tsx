@@ -10,7 +10,7 @@ import {
   isPartnerDeeplinkUrl,
 } from '@/components/tiles/tileHelpers';
 import { trackEvent } from '@/lib/analytics';
-import { trackDeeplinkClick } from '@/lib/api';
+import { trackDeeplinkClick } from '@/lib/api-streaming';
 import { DS } from '@/lib/design-system';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn, isFlightType } from '@/lib/utils';
@@ -48,18 +48,18 @@ export function TileRailCard({ tile, isSaved, onSave, onDetailsClick }: TileRail
         'border-zinc-200 bg-white/90 shadow-card transition-all duration-150',
         'hover:border-zinc-300 hover:shadow-soft',
         'dark:border-white/10 dark:bg-white/5 dark:hover:border-white/20 dark:hover:bg-white/10',
-        isHotel ? 'w-[180px] md:w-[220px]' : 'w-[164px] md:w-[200px]',
+        isHotel ? DS.tileRail.hotelWidth : DS.tileRail.activityWidth,
       )}
       onClick={() => onDetailsClick?.(tile)}
     >
       {/* Suggested badge */}
-      <span className="absolute top-1.5 left-1.5 z-10 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider bg-emerald-500/90 text-white">
+      <span className={cn("absolute top-1.5 left-1.5 z-10 rounded px-1.5 py-0.5 font-bold uppercase tracking-wider bg-emerald-500/90 text-white", DS.textSize.nano)}>
         Suggested
       </span>
 
       {/* Image area */}
       {isHotel && (
-        <div className="relative h-[72px] w-full overflow-hidden">
+        <div className={cn('relative w-full overflow-hidden', DS.tileRail.imageHeight)}>
           <Image
             src={imageUrl}
             alt={tile.title || 'Hotel image'}

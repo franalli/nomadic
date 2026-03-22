@@ -22,6 +22,7 @@ import type { HotelSettings } from '@/types/document';
 
 import { BaseSheet } from './BaseSheet';
 import { GatingBlocker } from './GatingBlocker';
+import { AmenitiesSection, StarRatingSection } from './StaysSheetParts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -43,25 +44,6 @@ interface StaysSheetProps {
   onOpenDestination?: () => void;
   onOpenDates?: () => void;
 }
-
-// Star rating options
-const STAR_OPTIONS = [
-  { value: 0, label: 'Any' },
-  { value: 3, label: '3★+' },
-  { value: 4, label: '4★+' },
-  { value: 5, label: '5★' },
-];
-
-// Amenity options
-const AMENITY_OPTIONS = [
-  { value: 'wifi', label: 'WiFi' },
-  { value: 'pool', label: 'Pool' },
-  { value: 'parking', label: 'Parking' },
-  { value: 'gym', label: 'Gym' },
-  { value: 'spa', label: 'Spa' },
-  { value: 'breakfast', label: 'Breakfast' },
-  { value: 'pet_friendly', label: 'Pet friendly' },
-];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
@@ -198,79 +180,14 @@ function StaysSheetInner({
             !localEnabled && 'opacity-50 cursor-not-allowed pointer-events-none'
           )}
         >
-          {/* Star rating */}
-          <div>
-            <h3 className={cn(DS.text.label, 'mb-2')}>
-              Minimum stars
-            </h3>
-            <div className="flex gap-2">
-              {STAR_OPTIONS.map((option) => {
-                const isSelected = localSettings.min_stars === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => handleStarChange(option.value)}
-                    className={cn(
-                      'flex-1 px-3 py-2.5 rounded-lg text-sm font-medium',
-                      'transition-all duration-150',
-                      isSelected
-                        // Selected: Solid Black (maximum contrast)
-                        ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
-                        // Tactile: Crisp border, snap-to-black hover
-                        // Inactive: Glass Fill - visible buttons
-                      : cn(
-                          'bg-white border-2 border-zinc-200 text-zinc-600',
-                          'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                          // Dark: Glass substance
-                          'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
-                          'dark:hover:bg-white/10 dark:hover:text-white dark:hover:border-white/40'
-                        )
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Amenities */}
-          <div>
-            <h3 className={cn(DS.text.label, 'mb-2')}>
-              Preferred amenities
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {AMENITY_OPTIONS.map((option) => {
-                const isSelected = (localSettings.amenities || []).includes(option.value);
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => toggleAmenity(option.value)}
-                    className={cn(
-                      'px-4 py-2.5 rounded-lg text-sm font-medium',
-                      'transition-all duration-150',
-                      isSelected
-                        // Selected: Solid Black (maximum contrast)
-                        ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
-                        // Tactile: Crisp border, snap-to-black hover
-                        // Inactive: Glass Fill - visible buttons
-                      : cn(
-                          'bg-white border-2 border-zinc-200 text-zinc-600',
-                          'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                          // Dark: Glass substance
-                          'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
-                          'dark:hover:bg-white/10 dark:hover:text-white dark:hover:border-white/40'
-                        )
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <StarRatingSection
+            minStars={localSettings.min_stars ?? 0}
+            onChange={handleStarChange}
+          />
+          <AmenitiesSection
+            amenities={localSettings.amenities || []}
+            onToggle={toggleAmenity}
+          />
         </div>
       </div>
     </BaseSheet>

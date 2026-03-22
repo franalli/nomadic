@@ -6,7 +6,7 @@
  * Data-driven via envelope.generation, not state-inferred.
  */
 
-import type { GenerationState, PlanViewState } from '@/types/plan-envelope';
+import type { GenerationState, PlanState, PlanViewState } from '@/types/plan-envelope';
 import { normalizePlanViewState } from '@/types/plan-envelope';
 
 // Re-export for convenience
@@ -123,6 +123,11 @@ export function isMultiSpecialistTrip(executedTopics: string[] | undefined): boo
  * IMPORTANT: Returns action type based on state alone. NextStepBar handles
  * validation gating (disabled state + messaging).
  */
+/** True when the coordinator is actively resolving the plan. */
+export function isResolving(state: PlanState | string | undefined | null): boolean {
+  return state === 'RESOLVING';
+}
+
 export function getNextAction(
   state: PlanViewState,
   generation?: GenerationState | null,

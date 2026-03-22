@@ -2543,42 +2543,6 @@ def _calculate_diving_safety(flight_time_str: str) -> tuple[str, bool]:
         return f"⚠️ Risky: Only {int(buffer_hours)}h buffer", False
 
 
-def _curated_to_flight_tiles(curated_flights: List[Dict], date_str: str) -> List[Dict]:
-    """
-    Convert curated flight data to flight tile dict format consumed by the UI.
-
-    Curated flights have: carrier_code, carrier_name, departure_time, duration, price
-    Curated values are normalized to the same tile shape as mock and API-derived flights.
-    """
-    try:
-        base_date = date_str[:10] if date_str else "2026-03-20"
-    except Exception:
-        base_date = "2026-03-20"
-
-    result = []
-    for flight in curated_flights:
-        result.append(
-            {
-                "id": flight.get("id", f"curated_{flight.get('carrier_code')}"),
-                "price": {"total": str(flight.get("price", 0))},
-                "itineraries": [
-                    {
-                        "segments": [
-                            {
-                                "carrierCode": flight.get("carrier_code", "EK"),
-                                "departure": {
-                                    "at": f"{base_date}T{flight.get('departure_time', '12:00')}:00"
-                                },
-                                "duration": flight.get("duration", "PT6H"),
-                            }
-                        ]
-                    }
-                ],
-            }
-        )
-    return result
-
-
 def _get_mock_flights(date_str: str) -> List[Dict]:
     """
     Mock flight data for non-curated destinations.

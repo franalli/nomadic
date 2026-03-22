@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
 import { useUndoStack } from '@/hooks/useUndoStack';
-import { applyArrangement, validateArrangement } from '@/lib/api';
+import { applyArrangement, validateArrangement } from '@/lib/api-document';
 import { showMutationToast } from '@/lib/showMutationToast';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DayBlock } from '@/types/plan-envelope';

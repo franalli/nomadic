@@ -70,7 +70,8 @@ export function formatDateRangeForPills(
  */
 export function formatTravelersForPills(
   adults: number | null | undefined,
-  children: number | null | undefined
+  children: number | null | undefined,
+  separator: string = ' \u00b7 ',
 ): string {
   const a = adults ?? 1; // Default to 1 adult
   const c = children ?? 0;
@@ -79,7 +80,7 @@ export function formatTravelersForPills(
   if (c === 0) return adultText;
 
   const childText = c === 1 ? '1 child' : `${c} children`;
-  return `${adultText} · ${childText}`;
+  return `${adultText}${separator}${childText}`;
 }
 
 /**

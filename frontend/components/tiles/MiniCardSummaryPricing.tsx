@@ -46,7 +46,7 @@ export function MiniCardSummaryPricing({ tile }: MiniCardSummaryPricingProps) {
               'transition-all duration-150 active:scale-95 hover:border-emerald-500/60 hover:bg-emerald-100',
               'dark:border-emerald-500/25 dark:bg-emerald-950/40 dark:text-emerald-400',
               'dark:hover:border-emerald-400/50 dark:hover:bg-emerald-900/50',
-              'dark:hover:shadow-[0_0_12px_-3px_rgba(16,185,129,0.3)]'
+              `dark:hover:${DS.glowClass.chipHover}`
             )}
           >
             {isPartnerDeeplinkUrl(deeplinkUrl) ? (

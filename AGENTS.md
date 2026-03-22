@@ -102,7 +102,7 @@ If two sessions are running simultaneously:
 - Backend zone (nodes/services/prompts):
   - `backend/app/planner/*`, `backend/app/services/*`, `backend/app/prompts/*`
 - Shared zone (coordinate first):
-  - `schemas.py`, `specialist_schemas.py`, API route signatures
+  - `schemas.py`, `schemas/coordinator_schemas.py`, API route signatures
 
 If a task touches both frontend and backend zones, confirm scope before proceeding.
 

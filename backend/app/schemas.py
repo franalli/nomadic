@@ -264,7 +264,7 @@ class TilesSearchRequest(BaseModel):
     requires_assistance: Optional[bool] = None
 
     verticals: List[TileType] = Field(default_factory=lambda: ["hotel", "flight", "activity"])
-    max_results_per_vertical: int = 5
+    max_results_per_vertical: int = Field(5, ge=1, le=50)
 
     currency: str = Field(default="USD", max_length=10)
     response_mode: str = Field(default="estimate_first", max_length=50)
@@ -550,7 +550,10 @@ class DocumentTripInputsPatch(BaseModel):
     """Partial trip-input updates coming from the UI or planner merges."""
 
     destination: Optional[str] = None
+    destination_iata: Optional[str] = None
+    country_code: Optional[str] = None
     origin: Optional[str] = None
+    origin_iata: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     adults: Optional[int] = None
@@ -963,6 +966,27 @@ class AckUpdate(BaseModel):
 AckStatus = Literal["applied", "partial", "no_change", "needs_clarification", "failed", "rejected"]
 
 
+class ConstraintValidation(BaseModel):
+    """A single constraint validation result (Trip DNA badge)."""
+
+    constraint_id: str = ""
+    rule: str = ""
+    status: str = ""
+    specialist: str = ""
+    label: Optional[str] = None
+
+
+class ConstraintViolation(BaseModel):
+    """A single constraint violation detected by ConstraintGuard."""
+
+    code: str = ""
+    message: str = ""
+    severity: str = ""
+    category: str = ""
+    rule: Optional[str] = None
+    suggested_action: Optional[str] = None
+
+
 class PlanDocumentData(BaseModel):
     """
     The JSON structure stored in plan_documents.document column.
@@ -1061,6 +1085,8 @@ class PlanDocumentData(BaseModel):
     # Constraint Validation State (for Trip DNA badges)
     # ==========================================================================
     # Populated by ConstraintGuard node when constraints are checked
+    # Expected shape: List[ConstraintValidation] / List[ConstraintViolation]
+    # Kept as Dict until all producers construct model instances (see schemas.py models above)
     constraints_validated: List[Dict[str, Any]] = Field(default_factory=list)
     constraint_violations: List[Dict[str, Any]] = Field(default_factory=list)
 

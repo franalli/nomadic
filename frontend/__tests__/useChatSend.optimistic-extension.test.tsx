@@ -226,6 +226,7 @@ describe('useChatSend optimistic extension rollback', () => {
         trip_inputs: {
           end_date: '2026-04-04',
           trip_duration: 4,
+          missing_fields: [],
         },
         day_cards: [
           { day_number: 1, date: '2026-04-01', label: 'Day 1', blocks: [] },

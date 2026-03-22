@@ -1,7 +1,7 @@
 'use client';
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
- * StrategyStageRenderer — orchestrator for stage-aware right-side plan view.
+ * StrategyStageRenderer --- orchestrator for stage-aware right-side plan view.
  * Owns the chrome: header, scrollable body, sticky footer.
  * @see docs/ux_unified_architecture.md - Unified Planning View
  */
@@ -9,16 +9,8 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useMemo } from 'react';
 
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { cn } from '@/lib/utils';
-import type { DocumentTripInputs } from '@/types/document';
-import {
-  type DestinationCard,
-  type PlanViewModel,
-  type PlanViewState,
-  type ViewMode,
-} from '@/types/plan-envelope';
-import type { SheetType } from '@/types/sheets';
-import type { Tile } from '@/types/tile';
 
 import { BookingDrawer } from './booking/BookingDrawer';
 import { BookingSection } from './BookingSection';
@@ -27,8 +19,15 @@ import { NextStepBar } from './NextStepBar';
 import { PlanMirrorLoader } from './PlanDensityViews';
 import { PlanFullDensityView } from './PlanFullDensityView';
 import { PlanHeader } from './PlanHeader';
-import { type GenerationState, isEditing, isItineraryReady, isStrategyReady } from './planStateHelpers';
-import { type TimelineVariant } from './TimelineThread';
+import {
+  computeTimelineVariant,
+  FADE_EXIT,
+  FADE_INITIAL,
+  FADE_TRANSITION,
+  FADE_VISIBLE,
+  shouldUsePlanMirrorLoader,
+  type StrategyStageRendererProps,
+} from './strategyStageHelpers';
 import {
   computeDataDensity,
   type DataDensity,
@@ -36,82 +35,7 @@ import {
 } from './useStrategyStageOrchestration';
 
 export type { DataDensity };
-export { computeDataDensity };
-
-export function shouldUsePlanMirrorLoader({
-  isShowingMirrorLoader,
-  density,
-  isPlanGenerationActive,
-  hasPartialItinerary = false,
-  hasTiles = false,
-}: {
-  isShowingMirrorLoader: boolean;
-  density: DataDensity;
-  isPlanGenerationActive: boolean;
-  hasPartialItinerary?: boolean;
-  hasTiles?: boolean;
-}): boolean {
-  if (hasPartialItinerary) {
-    return false;
-  }
-
-  // Tiles arriving mid-generation break the loader early —
-  // show real hotel/activity content instead of skeleton shimmer.
-  if (hasTiles && isPlanGenerationActive) {
-    return false;
-  }
-
-  if (isShowingMirrorLoader || density === 'ghost') {
-    return true;
-  }
-
-  return isPlanGenerationActive && (density === 'empty' || density === 'bridge');
-}
-
-export function computeTimelineVariant(
-  state: PlanViewState,
-  hasPartialItinerary = false,
-): TimelineVariant {
-  if (isItineraryReady(state)) return 'real';
-  if (hasPartialItinerary) return 'draft';
-  if (isEditing(state) || isStrategyReady(state)) return 'draft';
-  return 'ghost';
-}
-
-interface StrategyStageRendererProps {
-  state: PlanViewState;
-  viewModel: PlanViewModel;
-  destinationCard?: DestinationCard;
-  tiles?: Record<string, Tile>;
-  generation?: GenerationState | null;
-  canGeneratePlan?: boolean;
-  fallbackTitle?: string;
-  hasDates?: boolean;
-  isExpandingItinerary?: boolean;
-  onBuildPlan?: () => void;
-  onExpandToItinerary?: () => Promise<void>;
-  onFinalizePlan?: () => void;
-  isFinalizing?: boolean;
-  onRefineAssumptions?: () => void;
-  savedTileIds?: Set<string>;
-  onSaveTile?: (tile: Tile) => void;
-  tripInputs?: DocumentTripInputs;
-  onOpenSheet?: (sheet: SheetType) => void;
-  isCommitting?: boolean;
-  hasEverHadPlan?: boolean;
-  isRegenerating?: boolean;
-  onSelectNights?: (nights: number) => void;
-  mode?: ViewMode;
-  onOpenActivitySettings?: () => void;
-  onOpenStaysSettings?: () => void;
-  onOpenFlightsSettings?: () => void;
-}
-
-// Extracted animation constants to avoid re-creating objects on every render
-const FADE_INITIAL = { opacity: 0 } as const;
-const FADE_VISIBLE = { opacity: 1 } as const;
-const FADE_EXIT = { opacity: 0 } as const;
-const FADE_TRANSITION = { duration: 0.3, ease: [0.4, 0, 0.2, 1] } as const;
+export { computeDataDensity, shouldUsePlanMirrorLoader };
 
 const EMPTY_SAVED_TILE_IDS = new Set<string>();
 
@@ -134,7 +58,6 @@ export function StrategyStageRenderer({
 
   const planContent = useMemo(() => {
     const { isShowingMirrorLoader, tripDuration, density: immediateDensity } = o.displayLogic;
-    const { fullModeSections } = o.specialistData;
     if (shouldUsePlanMirrorLoader({
       isShowingMirrorLoader,
       density: immediateDensity,
@@ -146,24 +69,26 @@ export function StrategyStageRenderer({
     }
     if (immediateDensity === 'empty' || immediateDensity === 'bridge') return null;
     return (
-      <PlanFullDensityView
-        state={state} viewModel={viewModel}
-        fullModeSections={fullModeSections} fullModePOIs={o.fullModePOIs}
-        effectiveTiles={o.effectiveTiles} effectiveTripInputs={o.effectiveTripInputs}
-        destinationCard={destinationCard} generation={generation}
-        savedTileIds={savedTileIds} hasSectionData={o.hasSectionData}
-        hasItineraryContent={o.hasItineraryContent} isExpandingItinerary={isExpandingItinerary}
-        isStreaming={o.isStreaming} isAnyRegenerating={o.isAnyRegenerating}
-        isRegenUpdating={o.isRegenUpdating} isDesktop={o.isDesktop}
-        preferenceCount={o.preferenceCount}
-        effectiveMode={o.effectiveMode}
-        timelineVariant={computeTimelineVariant(state, hasPartialItinerary)}
-        timelineSectionRef={o.timelineSectionRef} scrollContainerRef={o.scrollContainerRef}
-        handleSaveTile={o.handleSaveTile} handleOpenBookingDrawer={o.handleOpenBookingDrawer}
-        onOpenStaysSettings={onOpenStaysSettings}
-        onOpenFlightsSettings={onOpenFlightsSettings}
-        onOpenSheet={onOpenSheet}
-      />
+      <ErrorBoundary label="PlanView">
+        <PlanFullDensityView
+          state={state} viewModel={viewModel}
+          fullModeSections={o.specialistData.fullModeSections} fullModePOIs={o.fullModePOIs}
+          effectiveTiles={o.effectiveTiles} effectiveTripInputs={o.effectiveTripInputs}
+          destinationCard={destinationCard} generation={generation}
+          savedTileIds={savedTileIds} hasSectionData={o.hasSectionData}
+          hasItineraryContent={o.hasItineraryContent} isExpandingItinerary={isExpandingItinerary}
+          isStreaming={o.isStreaming} isAnyRegenerating={o.isAnyRegenerating}
+          isRegenUpdating={o.isRegenUpdating} isDesktop={o.isDesktop}
+          preferenceCount={o.preferenceCount}
+          effectiveMode={o.effectiveMode}
+          timelineVariant={computeTimelineVariant(state, hasPartialItinerary)}
+          timelineSectionRef={o.timelineSectionRef} scrollContainerRef={o.scrollContainerRef}
+          handleSaveTile={o.handleSaveTile} handleOpenBookingDrawer={o.handleOpenBookingDrawer}
+          onOpenStaysSettings={onOpenStaysSettings}
+          onOpenFlightsSettings={onOpenFlightsSettings}
+          onOpenSheet={onOpenSheet}
+        />
+      </ErrorBoundary>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps -- onOpenActivitySettings etc intentionally excluded
   }, [

@@ -48,7 +48,7 @@ backend/app/planner/
   chip_generator.py  → Suggestion chips for complete envelope
   nodes/             → constraint_guard.py, vertical_specialist.py, local_expert.py,
                        logistics_node.py, router_extraction.py,
-                       specialist_schemas.py, input_gate_config.py,
+                       input_gate_config.py,
                        expert_constraints.py
   services/          → section_builder.py, state_serde.py,
                        itinerary_adapter.py, iata_resolver.py, admin_utils.py,
@@ -75,7 +75,9 @@ backend/app/
                        google_places_provider.py, provider_base.py, service.py,
                        models.py, title_utils.py
   tools/             → constraint_engine.py, tile_service.py
-  utils/             → tile_utils.py (tile-flattening utilities)
+  utils/             → tile_utils.py (tile-flattening utilities),
+                       geo.py (haversine_km shared geo utility)
+  http_clients.py    → Shared httpx clients (photo proxy)
   crud_document.py, crud_trip.py, validation.py, validation_cache.py,
   rate_limit.py, request_dedup.py, streaming.py, sse_state.py
 ```

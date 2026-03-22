@@ -65,7 +65,7 @@ export function ChatInputBar({
               ? `border border-emerald-500/50 ring-1 ring-emerald-500/30 dark:${DS.glowClass.sm}`
               // Default state
               : [
-                  'shadow-[0_8px_30px_-8px_rgba(0,0,0,0.08)] dark:shadow-[0_8px_30px_-8px_rgba(0,0,0,0.3)]',
+                  `${DS.shadow.inputBar} dark:${DS.shadow.inputBarDark}`,
                   'border border-zinc-200 dark:border-white/10',
                 ]
         )}

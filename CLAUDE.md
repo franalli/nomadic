@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Focus:** UX polish, cost optimization, and shipping speed
 - **Secondary:** post-demo delivery hardening across frontend/backend planner interactions
-- **Active work:** UX and interaction polish, cost-aware recommendation optimizations, and SSoT doc alignment in `docs/*`
-- **Active files:** `docs/{data-contracts.md,plan_graph_analysis.md,ux_unified_architecture.md,repo_structure.md}`, `CLAUDE.md`, `backend/app/{planner/{coordinator.py,conversationalist.py,nodes/{logistics_node.py,router_extraction.py},schemas/coordinator_schemas.py},services/{aviasales_provider.py,sharing.py},analytics_routes.py,db_models.py,main.py}`, `frontend/components/{chat/{ChatSuggestionChips.tsx,DateFlexChip.tsx},plan/{BookingPlanningView.tsx,StrategyStageRenderer.tsx,tiles/TileRailCard.tsx,timeline/RichBlockRenderer.tsx},shared/SharedTripSections.tsx}`, `frontend/{hooks/useChatSse.ts,lib/{analytics.ts,ghost-timeline-adapter.ts},state/documentStore.ts,types/document.ts}`
+- **Active work:** Frontend code splitting (api.ts, sheets, modals, hooks), backend cache clearing expansion, DS token additions, SSoT doc alignment
+- **Active files:** `docs/{data-contracts.md,design-system.md,repo_structure.md}`, `CLAUDE.md`, `backend/app/{main.py,schemas.py,http_clients.py,utils/geo.py,services/{experience_generator.py,partner_enrichment.py,unsplash.py}}`, `frontend/{lib/{api.ts,api-document.ts,api-streaming.ts,design-system.ts},hooks/{useChatSend.ts,useChatSse.ts,chatSendHelpers.ts,chatSseTypes.ts},components/{layout/hooks/useLandingRenderSurfaces.tsx,plan/{sheets/{BudgetSheet.tsx,DatesSheet.tsx,FlightsSheet.tsx},modals/AlternativesModal.tsx,timeline/RichBlockRenderer.tsx}},state/documentStore.ts}`
 - **Known broken:** none explicitly tracked in current diff
 - **DO NOT touch this sprint:** `llm_factory.py` provider/model-routing contract; API/schema compatibility surfaces
 
@@ -71,7 +71,7 @@ When two sessions run simultaneously:
 | ----------------------------- | ------------------------ | -------------------------------------------------------------------------- |
 | **Frontend**                  | UI, state, components    | `frontend/components/*`, `frontend/state/*`, `frontend/hooks/*`            |
 | **Backend**                   | Nodes, services, prompts | `backend/app/planner/*`, `backend/app/services/*`, `backend/app/prompts/*` |
-| **Shared (coordinate first)** | Types, API contracts     | `schemas.py`, `specialist_schemas.py`, API route signatures                |
+| **Shared (coordinate first)** | Types, API contracts     | `schemas.py`, `schemas/coordinator_schemas.py`, API route signatures       |
 
 If a task requires touching BOTH zones, stop and confirm scope before proceeding.
 
@@ -193,7 +193,7 @@ NomadicLanding → SplitLayoutView → left: ChatPanel, right: StrategyStageRend
 ```
 
 **Key frontend lib files**:
-- `lib/api.ts` — sole SSoT for all API calls; `apiFetch()` wrapper + `streamGraphPlan()` SSE client
+- `lib/api.ts` — core API client (`apiFetch()` wrapper, CSRF, retry); `lib/api-document.ts` — document mutations; `lib/api-streaming.ts` — SSE streaming + browse + enrichment
 - `lib/design-system.ts` — all DS tokens (colors, spacing, typography); use `DS.*` not raw Tailwind values
 - `lib/specialists.ts` — frontend SSoT for specialist display config (mirrors `specialist_registry.py`)
 - `lib/streamParser.ts` — parses SSE tokens/complete/error events from `generate_sse()`

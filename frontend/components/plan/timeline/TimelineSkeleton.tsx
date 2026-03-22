@@ -1,77 +1,17 @@
 'use client';
 
 import { useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
-import type { SpecialistPreviewActivity } from '@/lib/api';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
-import type { StrategySection } from '@/types/plan-envelope';
 
-interface PreviewItem {
-  title: string;
-  description?: string;
-  specialistLabel: string;
-  durationHours?: number | null;
-}
-
-function formatSpecialistLabel(value: string | undefined): string {
-  if (!value) return 'Specialist';
-  return value.replace(/_/g, ' ');
-}
-
-function collectPreviewItems(
-  strategySections: StrategySection[] | undefined
-): PreviewItem[] {
-  if (!strategySections) return [];
-
-  const previewItems: PreviewItem[] = [];
-
-  for (const section of strategySections) {
-    const specialistType = section.specialist_type;
-    if (
-      !specialistType ||
-      specialistType === 'general' ||
-      specialistType === 'local_expert' ||
-      section.feasibility_status === 'infeasible'
-    ) {
-      continue;
-    }
-
-    for (const content of section.content_added ?? []) {
-      const title = content.title?.trim();
-      if (!title) continue;
-
-      previewItems.push({
-        title,
-        description: content.description?.trim() || undefined,
-        specialistLabel: formatSpecialistLabel(specialistType),
-      });
-
-      if (previewItems.length >= 3) {
-        return previewItems;
-      }
-    }
-  }
-
-  return previewItems;
-}
-
-function collectPreviewItemsFromActivities(
-  activities: SpecialistPreviewActivity[] | null
-): PreviewItem[] {
-  if (!activities?.length) return [];
-
-  return activities
-    .filter((activity) => Boolean(activity.title?.trim()))
-    .slice(0, 3)
-    .map((activity) => ({
-      title: activity.title.trim(),
-      description: activity.description?.trim() || undefined,
-      specialistLabel: formatSpecialistLabel(activity.specialist_type),
-      durationHours: activity.duration_hours ?? null,
-    }));
-}
+import {
+  collectPreviewItems,
+  collectPreviewItemsFromActivities,
+  shimmerClasses,
+} from './TimelineSkeletonHelpers';
 
 /**
  * TimelineSkeleton
@@ -80,8 +20,9 @@ function collectPreviewItemsFromActivities(
  * Uses shimmer animation for a more polished feel.
  */
 export function TimelineSkeleton() {
-  const specialistPreview = useDocumentStore((s) => s._specialistPreview);
-  const strategySections = useDocumentStore((s) => s.document?.strategy_sections);
+  const { specialistPreview, strategySections } = useDocumentStore(
+    useShallow((s) => ({ specialistPreview: s._specialistPreview, strategySections: s.document?.strategy_sections })),
+  );
   const previewItems = useMemo(
     () => {
       const activityPreviewItems = collectPreviewItemsFromActivities(specialistPreview);
@@ -102,7 +43,7 @@ export function TimelineSkeleton() {
 
         return (
           <div
-            key={i}
+            key={`skeleton-block-${i}`}
             className={cn(
               'relative z-10 pl-10',
               i === 1 && '[animation-delay:150ms]',
@@ -120,7 +61,7 @@ export function TimelineSkeleton() {
             <div className="mb-3 space-y-2">
               {preview ? (
                 <>
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+                  <div className={cn(DS.textSize.mini, 'font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400')}>
                     {preview.specialistLabel}
                   </div>
                   <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100 line-clamp-1">
@@ -199,8 +140,5 @@ export function TimelineSkeleton() {
     </div>
   );
 }
-
-// Shimmer base classes
-const shimmerClasses = 'bg-zinc-200 dark:bg-zinc-700 animate-pulse';
 
 export default TimelineSkeleton;

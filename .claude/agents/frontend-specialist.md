@@ -59,6 +59,8 @@ frontend/
                      ChatModuleSheets,
                      ChatStatusHeader,
                      ChatSuggestionBar, ChatSuggestionChips,
+                     SuggestionChipItem, ChatPanelContentParts,
+                     chatModuleSheetHandlers.ts,
                      chatMessageProcessing.ts, chatMessageMarkdown.tsx,
                      chatPanelLayout.ts, suggestion-actions.ts
     plan/          → StrategyStageRenderer, strategyStagePoi.ts,
@@ -81,10 +83,13 @@ frontend/
                      usePlanFullDensityData, useStickyHeaderOffset,
                      PlanTimelineSection,
                      BrowseActivitiesSheet,
+                     BookingPlanningViewParts, BookingSummaryParts,
+                     BrowseActivitiesContent, NextStepBarHelpers,
+                     strategyStageHelpers, unifiedChipRowHelpers,
                      useBookingDrawerState, useStrategyStageOrchestration
-      pdf/        → TripPdfDocument
-      booking/     → BookingDrawer, CategorySection, CheckoutSidebar
-      modals/      → AlternativesModal
+      pdf/        → TripPdfDocument, tripPdfStyles
+      booking/     → BookingDrawer, CategorySection, CategorySectionParts, CheckoutSidebar
+      modals/      → AlternativesModal, AlternativesModalParts, alternativesHelpers
       stages/      → StrategyHero, StrategyHeroCompact, useStrategyHeroEnrichment,
                      S2AgentCard, S2AgentCardExpanded, S2LocalIntelSection,
                      S2TopicConfig,
@@ -92,25 +97,28 @@ frontend/
                      StrategyHeroContent, StrategyHeroTISectionsA, StrategyHeroTISectionsB,
                      StrategyHeroTravelIntelligence, StrategyHeroUtils
       sheets/      → BaseSheet, BaseSheet.shared.tsx, BaseSheetDesktopDialog, BaseSheetMobileSheet,
-                     DestinationSheet, OriginSheet,
-                     DatesSheet,
-                     TravelersSheet,
-                     BudgetSheet,
-                     FlightsSheet,
-                     StaysSheet,
-                     ActivitiesSheet, ActivitiesSheetContent,
+                     DestinationSheet, DestinationSheetParts,
+                     OriginSheet, OriginSheetParts,
+                     DatesSheet, DatesSheetParts, datePresets,
+                     TravelersSheet, TravelersSheetParts,
+                     BudgetSheet, BudgetSheetParts,
+                     FlightsSheet, FlightsSheetParts,
+                     StaysSheet, StaysSheetParts,
+                     ActivitiesSheet, ActivitiesSheetParts, ActivitiesSheetContent,
+                     activitiesSheetHelpers,
                      TripSettingsSheet, GatingBlocker
-      timeline/    → InlineDatePrompt, TimelineSkeleton,
+      timeline/    → InlineDatePrompt, TimelineSkeleton, TimelineSkeletonHelpers,
                      DragPreviewCard, DraggableBlock, DroppableDay, FreeDayDropSlot,
-                     ItineraryDndWrapper, RichBlockRenderer,
+                     ItineraryDndWrapper, RichBlockRenderer, richBlockHelpers,
                      useTimelineFillDay
-        blocks/    → ActivityMiniCard, ActivityCardActions,
+        blocks/    → ActivityMiniCard, activityMiniCardParts,
+                     ActivityCardActions, ActivityCardActionsParts,
                      ActivityCardMeta, ActivityCardMeta.helpers.ts,
-                     ActivityCardPhoto, LogisticsBlock,
+                     ActivityCardPhoto, LogisticsBlock, logisticsBlockParts,
                      SafetyBlock, GhostSlot,
-                     FreeDayCard,
+                     FreeDayCard, FreeDayCardParts,
                      HoldToDeleteButton, PreferenceAttributionBadge, types.ts
-      tiles/       → SuggestionCard, SuggestionCardContent, suggestionCardSections
+      tiles/       → SuggestionCard, SuggestionCardContent, suggestionCardSections, suggestionCardSectionsParts
     tiles/         → TileCard, TileCardActions, TileCardContent, TileCardMedia,
                      MiniCard, MiniCardContent, MiniCardQuickFacts,
                      MiniCardSummary, MiniCardSummaryPricing, MiniCardSummaryThumbnail,
@@ -144,11 +152,14 @@ frontend/
                      useHeaderActions, useIsDesktop, useLocalExpertPolling,
                      usePreferenceAutoRegen, useScrollCollapse, useSheetManager,
                      useSpecialistDeepLink, useTripInputsWithFallback, useViewNavigation,
-                     useChatEffects, useChatScrolling, useChatSend, useChatSse,
+                     useChatEffects, useChatScrolling,
+                     useChatSend, chatSendHelpers,
+                     useChatSse, chatSseTypes,
                      useMapSync, useUndoStack
   types/           → chat.ts, document.ts, generated.ts, hooks.ts, loader.ts,
                      plan-envelope.ts, sheets.ts, summary.ts, tile.ts
-  lib/             → design-system.ts, api.ts, animation-config.ts, streamParser.ts,
+  lib/             → design-system.ts, api.ts, api-document.ts, api-streaming.ts,
+                     animation-config.ts, streamParser.ts,
                      tileSelectors.ts, tileUtils.ts, specialist-utils.ts,
                      specialist-colors.ts, specialists.ts, utils.ts,
                      contentPolicyGuard.ts, ghost-timeline-adapter.ts, fillDayGuards.ts,

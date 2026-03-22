@@ -274,31 +274,3 @@ class LocalExpertOutput(BaseModel):
         default_factory=list,
         description="Top one-liner tips",
     )
-
-
-# =============================================================================
-# Static Local Expert Constraints
-# =============================================================================
-# Local Expert no longer carries destination-specific scaffolding. Any immediate
-# UX-density needs are handled by the generic fallback floor in local_expert.py,
-# while destination-specific guidance comes from the LLM/cache path.
-LOCAL_EXPERT_CONSTRAINTS: dict[str, dict] = {}
-
-
-def _get_constraint_context(destination: str) -> str:
-    """Return extra prompt grounding for reusable local-expert constraints."""
-    return ""
-
-
-def _get_constraints_as_list(destination: str) -> list[dict]:
-    """Return reusable static constraints for the destination skeleton path."""
-    return []
-
-
-def _get_static_must_dos(destination: str) -> list[str]:
-    """Return top must-do activities from static destination data.
-
-    DEPRECATED: must_dos have been removed from LOCAL_EXPERT_CONSTRAINTS.
-    Always returns an empty list. Kept for backward compatibility with callers.
-    """
-    return []

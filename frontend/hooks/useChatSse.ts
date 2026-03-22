@@ -13,10 +13,8 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 
-import { isBootstrap } from '@/components/plan/planStateHelpers';
+import { isBootstrap, isStrategyReady } from '@/components/plan/planStateHelpers';
 import { useToast } from '@/components/ui/toast';
-import { useActionLoader } from '@/hooks/useActionLoader';
-import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { useMapSync } from '@/hooks/useMapSync';
 import { trackEvent } from '@/lib/analytics';
 import {
@@ -28,14 +26,13 @@ import {
   type SSENodeStatusEvent,
   type SSEPartialEvent,
   streamGraphPlan,
-} from '@/lib/api';
+} from '@/lib/api-streaming';
 import { debugLog } from '@/lib/debug';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
 import { useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
 import { useMobileNavStore } from '@/state/mobileNavStore';
 import type { GraphPlanResponse, PlanDocumentData } from '@/types/document';
-import type { TriggerContext } from '@/types/loader';
 import type { DayCard, StrategySection } from '@/types/plan-envelope';
 
 // Re-exported helpers kept colocated with their consumer
@@ -329,82 +326,20 @@ function mergePreviewStrategySections(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Types
+// Types (canonical definitions live in ./chatSseTypes.ts)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface ChatSseRefs {
-  abortStreamRef: React.MutableRefObject<(() => void) | null>;
-  isSendingRef: React.MutableRefObject<boolean>;
-  activeStreamRequestIdRef: React.MutableRefObject<string | null>;
-  autoExpandTimeoutRef: React.MutableRefObject<NodeJS.Timeout | null>;
-  prevSpecialistTypesRef: React.MutableRefObject<Set<string>>;
-  prevTileTypesRef: React.MutableRefObject<Set<string>>;
-  prevTripInputsRef: React.MutableRefObject<{
-    start_date: string | null;
-    end_date: string | null;
-    adults: number | null;
-    children: number | null;
-    budget: number | null;
-    origin: string | null;
-  } | null>;
-}
+export type {
+  ChatSseCallbacks,
+  ChatSseRefs,
+  ExecuteStreamParams,
+} from './chatSseTypes';
 
-export interface ChatSseCallbacks {
-  setHasReceivedFirstToken: (v: boolean) => void;
-  setNodeStatus: (
-    v: {
-      active: boolean;
-      node: string;
-      label: string;
-      iconKey: string;
-      estimatedDurationMs: number;
-      startTime: number;
-      stage?: number;
-      topic?: string;
-    } | null
-  ) => void;
-  setStreamingMessageId: (v: string | null) => void;
-  setTriggerContext: (v: TriggerContext | null) => void;
-  setSuggestedResponses: (v: string[]) => void;
-  setSuggestedResponseMeta: (v: import('@/types/document').SuggestionChipMeta[]) => void;
-  setSuggestionChips: (v: import('@/types/document').SuggestionChip[]) => void;
-  setIsLoading: (v: boolean) => void;
-  setSessionState: (v: Record<string, unknown> | null) => void;
-  appendToMessage: (id: string, token: string) => void;
-  updateMessage: (
-    id: string,
-    updates: Partial<import('@/types/chat').ChatMessage>
-  ) => void;
-  updateMessageId: (oldId: string, newId: string) => void;
-  filterMessages: (
-    predicate: (msg: import('@/types/chat').ChatMessage) => boolean
-  ) => void;
-  onPlanResult: (result: {
-    tripContextId: number | null;
-    branches: import('@/types/document').DocumentBranch[];
-    tiles: Record<string, import('@/types/tile').Tile>;
-    primaryBranchId: string | null;
-    tripInputs?: import('@/types/document').DocumentTripInputs | null;
-    readyToGenerate?: boolean;
-    response?: GraphPlanResponse;
-  }) => void;
-  onAutoExpandItinerary?: (options?: { forceFullRebuild?: boolean }) => void;
-  onFeasibilityWarning?: (data: SSEFeasibilityWarningEvent['data']) => void;
-  scrollToBottom: (force?: boolean) => void;
-  scrollPanelIntoView: () => void;
-}
-
-export interface ExecuteStreamParams {
-  body: Parameters<typeof streamGraphPlan>[0];
-  requestId: string;
-  streamingMsgId: string;
-  isSilentPlanGeneration: boolean;
-  selectedBranchId: string | null;
-  envelopeGeneration: number;
-  triggerContext: TriggerContext | null;
-  delayedLoader: ReturnType<typeof useDelayedLoader>;
-  actionLoader: ReturnType<typeof useActionLoader>;
-}
+import type {
+  ChatSseCallbacks,
+  ChatSseRefs,
+  ExecuteStreamParams,
+} from './chatSseTypes';
 
 type ActiveNodeStatus = Exclude<Parameters<ChatSseCallbacks['setNodeStatus']>[0], null>;
 
@@ -851,7 +786,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             // Analytics: trip_created (first time strategy is ready with destination)
             if (
               !tripCreatedFiredRef.current &&
-              doc.plan_view_state === 'S2_STRATEGY_READY' &&
+              isStrategyReady(doc.plan_view_state) &&
               doc.trip_inputs?.destination
             ) {
               tripCreatedFiredRef.current = true;

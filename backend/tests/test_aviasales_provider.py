@@ -46,10 +46,10 @@ async def test_grouped_prices_deeplink_uses_requested_plan_dates(
         ),
         patch(
             "app.services.aviasales_provider._search_grouped_prices",
-            new=AsyncMock(return_value=grouped_result),
+            new=AsyncMock(return_value=(grouped_result, {})),
         ),
     ):
-        tiles = await search_aviasales_flights(
+        result = await search_aviasales_flights(
             origin="AMS",
             destination="FCO",
             depart_date="2026-04-07",
@@ -57,12 +57,12 @@ async def test_grouped_prices_deeplink_uses_requested_plan_dates(
             currency="usd",
         )
 
-    assert len(tiles) == 1
-    assert tiles[0]["deeplink"] == "https://www.aviasales.com/search/AMS0704FCO14041"
-    assert tiles[0]["deeplink_url"] == "https://www.aviasales.com/search/AMS0704FCO14041"
-    assert tiles[0]["is_estimate_only"] is True
-    assert tiles[0]["subtitle"] == "Price based on nearby dates"
-    assert tiles[0]["meta"]["departure_time"] == "2026-04-05T07:30:00+00:00"
+    assert len(result.tiles) == 1
+    assert result.tiles[0]["deeplink"] == "https://www.aviasales.com/search/AMS0704FCO14041"
+    assert result.tiles[0]["deeplink_url"] == "https://www.aviasales.com/search/AMS0704FCO14041"
+    assert result.tiles[0]["is_estimate_only"] is True
+    assert result.tiles[0]["subtitle"] == "Price based on nearby dates"
+    assert result.tiles[0]["meta"]["departure_time"] == "2026-04-05T07:30:00+00:00"
 
 
 @pytest.mark.asyncio
@@ -90,7 +90,7 @@ async def test_exact_date_results_keep_precise_copy(
         "app.services.aviasales_provider._search_prices_for_dates",
         new=AsyncMock(return_value=exact_result),
     ):
-        tiles = await search_aviasales_flights(
+        result = await search_aviasales_flights(
             origin="AMS",
             destination="FCO",
             depart_date="2026-04-07",
@@ -98,10 +98,10 @@ async def test_exact_date_results_keep_precise_copy(
             currency="usd",
         )
 
-    assert len(tiles) == 1
-    assert tiles[0]["deeplink"] == "https://www.aviasales.com/search/AMS0704FCO14041"
-    assert tiles[0]["is_estimate_only"] is False
-    assert tiles[0]["subtitle"] == "Departs 07:30 \u2022 2h 35m"
+    assert len(result.tiles) == 1
+    assert result.tiles[0]["deeplink"] == "https://www.aviasales.com/search/AMS0704FCO14041"
+    assert result.tiles[0]["is_estimate_only"] is False
+    assert result.tiles[0]["subtitle"] == "Departs 07:30 \u2022 2h 35m"
 
 
 @pytest.mark.asyncio
@@ -136,7 +136,7 @@ async def test_duplicate_provider_results_are_deduped_to_unique_tiles(
         "app.services.aviasales_provider._search_prices_for_dates",
         new=AsyncMock(return_value=[duplicate, duplicate.copy(), unique]),
     ):
-        tiles = await search_aviasales_flights(
+        result = await search_aviasales_flights(
             origin="AMS",
             destination="FCO",
             depart_date="2026-04-07",
@@ -144,9 +144,9 @@ async def test_duplicate_provider_results_are_deduped_to_unique_tiles(
             currency="usd",
         )
 
-    assert len(tiles) == 2
-    assert len({tile["id"] for tile in tiles}) == 2
-    assert len({tile["partner_product_id"] for tile in tiles}) == 2
+    assert len(result.tiles) == 2
+    assert len({tile["id"] for tile in result.tiles}) == 2
+    assert len({tile["partner_product_id"] for tile in result.tiles}) == 2
 
 
 def test_tile_identity_is_stable_for_same_logical_flight() -> None:

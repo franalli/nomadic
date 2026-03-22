@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 
+import { isResolving } from '@/components/plan/planStateHelpers';
 import { useToast } from '@/components/ui/toast';
 import { useChatEffects } from '@/hooks/useChatEffects';
 import { useChatMessagePipeline } from '@/hooks/useChatMessagePipeline';
@@ -26,7 +27,7 @@ export function useChatPanelController({
   readyToGenerate,
   selectedBranchId,
 }: ChatPanelProps) {
-  const isInputDisabledByPlanState = planState === 'RESOLVING';
+  const isInputDisabledByPlanState = isResolving(planState);
   const isDesktop = useIsDesktop();
   const { toast } = useToast();
   const isRegenerating = useDocumentStore((s) => s.isRegenerating);

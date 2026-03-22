@@ -10,7 +10,7 @@
  * (e.g., StrategyStageRenderer or NomadicLanding).
  */
 
-import { useCallback,useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import type { SheetType } from '@/types/sheets';
 
@@ -20,5 +20,5 @@ export function useSheetManager() {
   const openSheet = useCallback((sheet: SheetType) => setActiveSheet(sheet), []);
   const closeSheet = useCallback(() => setActiveSheet(null), []);
 
-  return { activeSheet, openSheet, closeSheet };
+  return useMemo(() => ({ activeSheet, openSheet, closeSheet }), [activeSheet, openSheet, closeSheet]);
 }

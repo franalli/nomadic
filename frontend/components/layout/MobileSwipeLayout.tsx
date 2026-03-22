@@ -13,6 +13,7 @@
  */
 
 import { memo, useCallback, useEffect, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { cn } from '@/lib/utils';
 import { type MobilePage, useMobileNavStore } from '@/state/mobileNavStore';
@@ -35,9 +36,13 @@ interface MobileSwipeLayoutProps {
 function MobileSwipeLayoutInner({ chatContent, planContent, planTabEnabled = false }: MobileSwipeLayoutProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const swipeResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const activePage = useMobileNavStore((s) => s.activePage);
-  const hasNewPlanContent = useMobileNavStore((s) => s.hasNewPlanContent);
-  const setActivePage = useMobileNavStore((s) => s.setActivePage);
+  const { activePage, hasNewPlanContent, setActivePage } = useMobileNavStore(
+    useShallow((s) => ({
+      activePage: s.activePage,
+      hasNewPlanContent: s.hasNewPlanContent,
+      setActivePage: s.setActivePage,
+    }))
+  );
   const isProgrammatic = useRef(false);
 
   // Programmatic scroll when activePage changes from store

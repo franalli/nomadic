@@ -2,27 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { API_BASE } from '@/lib/api';
 import {
-  buildGooglePlacesPhotoProxyUrl,
   getSignedGooglePlacesPhotoProxyUrl,
   isGooglePlacesPhotoProxyUrl,
   normalizeGooglePlacesPhotoName,
 } from '@/lib/googlePlacesPhoto';
 
 describe('google places photo proxy helpers', () => {
-  it('builds a backend proxy URL for valid photo names', () => {
-    const url = buildGooglePlacesPhotoProxyUrl('places/ChIJx/photos/AbCd_123', {
-      maxWidth: 320,
-      maxHeight: 240,
-    });
-
-    expect(url).toBe(
-      `${API_BASE}/api/media/google-places-photo?name=places%2FChIJx%2Fphotos%2FAbCd_123&max_width=320&max_height=240`
-    );
-  });
-
   it('rejects invalid photo names', () => {
     expect(normalizeGooglePlacesPhotoName('https://places.googleapis.com/v1/foo')).toBeUndefined();
-    expect(buildGooglePlacesPhotoProxyUrl('places/not-valid')).toBeUndefined();
+    expect(normalizeGooglePlacesPhotoName('places/not-valid')).toBeUndefined();
   });
 
   it('detects proxy URLs (absolute and relative)', () => {

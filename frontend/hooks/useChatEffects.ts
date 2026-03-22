@@ -106,9 +106,10 @@ export function useChatEffects(params: UseChatEffectsParams): void {
 
   // Scroll panel into view and focus input when response finishes (isLoading: true -> false)
   useEffect(() => {
+    let rafId: number | undefined;
     if (!prevIsLoadingRef.current && isLoading) {
       // Scroll to bottom when loading STARTS so Logic Terminal is visible
-      requestAnimationFrame(() => {
+      rafId = requestAnimationFrame(() => {
         scrollToBottom(true);
         scrollPanelIntoView();
       });
@@ -117,11 +118,12 @@ export function useChatEffects(params: UseChatEffectsParams): void {
       // Late layout shifts are handled inside useChatScrolling's settle passes.
       scrollToBottom(true);
       scrollPanelIntoView();
-      requestAnimationFrame(() => {
+      rafId = requestAnimationFrame(() => {
         inputRef.current?.focus();
       });
     }
     prevIsLoadingRef.current = isLoading;
+    return () => { if (rafId !== undefined) cancelAnimationFrame(rafId); };
   }, [isLoading, scrollToBottom, scrollPanelIntoView, inputRef]);
 
   // Cleanup timeouts on unmount

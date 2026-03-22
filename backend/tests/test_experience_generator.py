@@ -144,11 +144,11 @@ class TestSingleCategoryCachePath:
         from app.services.experience_generator import (
             _cache_set,
             _single_category_cache_key,
-            clear_experience_cache,
+            clear_memory_cache,
             generate_single_category,
         )
 
-        clear_experience_cache()
+        clear_memory_cache()
         cache_key = _single_category_cache_key("Bali", "yoga", "2099-01", tiles_per_category=2)
         _cache_set(
             cache_key,
@@ -189,7 +189,7 @@ class TestSingleCategoryCachePath:
         assert result[1]["id"] == "exp_bali_yoga_101"
         assert result[0]["title"] == "Ubud Morning Vinyasa"
         assert result[1]["title"] == "Seminyak Sunset Yoga"
-        clear_experience_cache()
+        clear_memory_cache()
 
     @pytest.mark.asyncio
     async def test_fill_day_defaults_rotate_through_shared_browse_categories(
@@ -474,9 +474,9 @@ class TestGenerateExperiences:
     """Test the main generate_experiences function with mocked dependencies."""
 
     def _clear_l1(self):
-        from app.services.experience_generator import clear_experience_cache
+        from app.services.experience_generator import clear_memory_cache
 
-        clear_experience_cache()
+        clear_memory_cache()
 
     @pytest.mark.asyncio
     async def test_empty_destination_returns_empty(self):
@@ -872,7 +872,7 @@ async def test_generate_single_category_skips_stale_cache_write_after_epoch_bump
 ):
     import app.services.experience_generator as generator
 
-    generator.clear_experience_cache()
+    generator.clear_memory_cache()
     stale_epoch = generator._experience_cache_epoch
     await generator.invalidate_experience_cache_state()
 

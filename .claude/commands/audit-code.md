@@ -168,7 +168,7 @@ grep -rn "diving\|hiking\|skiing\|cycling\|surfing\|sailing" backend/app/planner
 grep -rn "serialize\|deserialize\|model_dump\|model_validate" backend/app/planner/nodes/ --include="*.py" | grep -v __pycache__ | grep -v state_serde | grep -v "import.*serde" | head -20
 
 # 3. Duplicate Pydantic model fields across schema files
-grep -rn "class.*BaseModel\|class.*Model" backend/app/schemas.py backend/app/planner/state/graph_state.py backend/app/planner/nodes/specialist_schemas.py | grep -v __pycache__
+grep -rn "class.*BaseModel\|class.*Model" backend/app/schemas.py backend/app/planner/state/graph_state.py backend/app/planner/schemas/coordinator_schemas.py | grep -v __pycache__
 
 # 4. Duplicate error handling — look for copy-pasted try/except patterns
 grep -rn "except Exception as e:" backend/app/planner/ backend/app/services/ --include="*.py" | grep -v __pycache__ | grep -v test_

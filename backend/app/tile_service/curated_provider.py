@@ -255,19 +255,3 @@ class CuratedProvider(Provider):
             source="curated",
             source_agent=f"{specialist_type}_specialist" if specialist_type else "curated_provider",
         )
-
-    def get_hero_image(self) -> Optional[str]:
-        """Get the hero image URL for this destination."""
-        return self.manifest.get("hero_image")
-
-    def get_hero_image_alt(self) -> Optional[str]:
-        """Get the hero image alt text for this destination."""
-        return self.manifest.get("hero_image_alt")
-
-    def get_tagline(self) -> Optional[str]:
-        """Get the destination tagline."""
-        return self.manifest.get("tagline")
-
-    def get_logistics(self) -> Dict[str, Any]:
-        """Get logistics tips for this destination."""
-        return self.manifest.get("logistics", {})

@@ -517,6 +517,8 @@ describe('RichBlockRenderer null guard', () => {
   function buildBarebonesBlock(overrides: Partial<DayBlock> = {}): DayBlock {
     return {
       period: 'morning',
+      activity_type: '',
+      summary: '',
       ...overrides,
     };
   }

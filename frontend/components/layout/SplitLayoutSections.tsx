@@ -83,8 +83,8 @@ export function DesktopSplitLayout({
             ? 'mx-auto w-[640px]'
             : [
                 'mx-0 w-[480px] shrink-0 border-r',
-                'border-zinc-200 bg-white shadow-[4px_0_24px_-12px_rgba(0,0,0,0.12),8px_0_40px_-20px_rgba(0,0,0,0.08)]',
-                'dark:border-white/5 dark:bg-black/40 dark:backdrop-blur-xl dark:shadow-[4px_0_12px_rgba(0,0,0,0.3)]',
+                `border-zinc-200 bg-white ${DS.shadow.panelEdge}`,
+                `dark:border-white/5 dark:bg-black/40 dark:backdrop-blur-xl dark:${DS.shadow.panelEdgeDark}`,
               ]
         )}
         aria-label="Trip planner"

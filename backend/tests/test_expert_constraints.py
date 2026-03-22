@@ -2,10 +2,6 @@
 Unit tests for expert_constraints.py — Pydantic models and constraint data.
 
 Tests:
-- LOCAL_EXPERT_CONSTRAINTS remains destination-agnostic
-- _get_constraint_context() prompt formatting
-- _get_constraints_as_list() raw constraint retrieval
-- _get_static_must_dos() deprecated (always returns [])
 - Pydantic schema validation for LocalExpertOutput and sub-models
 """
 
@@ -15,7 +11,6 @@ import importlib
 from pathlib import Path
 
 from app.planner.nodes.expert_constraints import (
-    LOCAL_EXPERT_CONSTRAINTS,
     AirportTransfer,
     Connectivity,
     DailyBudget,
@@ -31,9 +26,6 @@ from app.planner.nodes.expert_constraints import (
     SafetyHealth,
     Scam,
     VisaEntry,
-    _get_constraint_context,
-    _get_constraints_as_list,
-    _get_static_must_dos,
 )
 
 _le_mod = importlib.import_module("app.planner.nodes.local_expert")
@@ -50,64 +42,6 @@ def _schema_contains_key(node: object, key: str) -> bool:
     if isinstance(node, list):
         return any(_schema_contains_key(item, key) for item in node)
     return False
-
-
-class TestConstraintDataIntegrity:
-    """Static local-expert helpers must not embed destination world data."""
-
-    def test_destination_constraint_table_is_empty(self) -> None:
-        assert LOCAL_EXPERT_CONSTRAINTS == {}
-
-
-# =============================================================================
-# _get_constraint_context
-# =============================================================================
-
-
-class TestGetConstraintContext:
-    def test_returns_empty_for_any_destination(self) -> None:
-        assert _get_constraint_context("Bali") == ""
-        assert _get_constraint_context("PARIS") == ""
-        assert _get_constraint_context("New York City") == ""
-
-
-# =============================================================================
-# _get_constraints_as_list
-# =============================================================================
-
-
-class TestGetConstraintsAsList:
-    def test_returns_empty_for_known_destination(self) -> None:
-        assert _get_constraints_as_list("Dubai") == []
-
-    def test_unknown_returns_empty_list(self) -> None:
-        assert _get_constraints_as_list("Narnia") == []
-
-
-# =============================================================================
-# _get_static_must_dos
-# =============================================================================
-
-
-class TestGetStaticMustDos:
-    """_get_static_must_dos is deprecated and always returns []."""
-
-    def test_always_returns_empty(self) -> None:
-        result = _get_static_must_dos("Bali")
-        assert result == []
-
-    def test_unknown_returns_empty(self) -> None:
-        result = _get_static_must_dos("Mordor")
-        assert result == []
-
-    def test_known_destination_returns_empty(self) -> None:
-        result = _get_static_must_dos("Tokyo")
-        assert result == []
-
-
-# =============================================================================
-# Pydantic model validation
-# =============================================================================
 
 
 class TestPydanticModels:

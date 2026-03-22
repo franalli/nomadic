@@ -9,7 +9,7 @@ export interface ChangeReceiptData {
 
 // Topic keywords for detecting specialist topics from user messages.
 // Keys must stay aligned with backend canonical specialist topic names.
-export const TOPIC_KEYWORDS: Record<string, string[]> = {
+const TOPIC_KEYWORDS: Record<string, string[]> = {
   diving: ['dive', 'diving', 'scuba', 'snorkel', 'reef'],
   hiking: ['hike', 'hiking', 'trek', 'trail', 'mountain'],
   skiing: ['ski', 'skiing', 'snowboard', 'piste'],

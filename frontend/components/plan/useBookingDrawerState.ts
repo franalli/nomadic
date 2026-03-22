@@ -10,7 +10,7 @@
 import { useCallback, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
-import { fillDay } from '@/lib/api';
+import { fillDay } from '@/lib/api-document';
 import { debugLog } from '@/lib/debug';
 import { isFillDayCooldownActive } from '@/lib/fillDayGuards';
 import { useDocumentStore } from '@/state/documentStore';

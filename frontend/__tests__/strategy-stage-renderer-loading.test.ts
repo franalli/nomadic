@@ -2,6 +2,8 @@ import { render, screen } from '@testing-library/react';
 import { createElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { DayCard } from '@/types/plan-envelope';
+
 const { orchestrationState } = vi.hoisted(() => ({
   orchestrationState: {
     displayLogic: {
@@ -28,7 +30,7 @@ const { orchestrationState } = vi.hoisted(() => ({
     handleSaveTile: vi.fn(),
     handleOpenBookingDrawer: vi.fn(),
     generating: false,
-    effectiveDayCards: [],
+    effectiveDayCards: [] as DayCard[],
     nextAction: null,
     hideNextStepBar: false,
     shouldShowAutoProgress: false,
@@ -98,10 +100,8 @@ describe('StrategyStageRenderer render path', () => {
       createElement(StrategyStageRenderer, {
         state: 'S2_STRATEGY_READY',
         viewModel: {
-          plan_view_state: 'S2_STRATEGY_READY',
           strategy_sections: [],
           day_cards: [],
-          tiles: {},
         },
       })
     );
@@ -167,13 +167,25 @@ describe('shouldUsePlanMirrorLoader', () => {
     ).toBe(false);
   });
 
-  it('exits the mirror loader when tiles arrive during generation', () => {
+  it('keeps skeleton when tiles arrive during generation but no day_cards yet', () => {
     expect(
       shouldUsePlanMirrorLoader({
         isShowingMirrorLoader: false,
         density: 'ghost',
         isPlanGenerationActive: true,
         hasPartialItinerary: false,
+        hasTiles: true,
+      })
+    ).toBe(true);
+  });
+
+  it('exits skeleton when tiles and day_cards both present during generation', () => {
+    expect(
+      shouldUsePlanMirrorLoader({
+        isShowingMirrorLoader: false,
+        density: 'ghost',
+        isPlanGenerationActive: true,
+        hasPartialItinerary: true,
         hasTiles: true,
       })
     ).toBe(false);
@@ -201,5 +213,17 @@ describe('shouldUsePlanMirrorLoader', () => {
         hasTiles: false,
       })
     ).toBe(true);
+  });
+
+  it('dismisses skeleton when generation ends even if no day_cards yet', () => {
+    expect(
+      shouldUsePlanMirrorLoader({
+        isShowingMirrorLoader: false,
+        density: 'full',
+        isPlanGenerationActive: false,
+        hasPartialItinerary: false,
+        hasTiles: true,
+      })
+    ).toBe(false);
   });
 });

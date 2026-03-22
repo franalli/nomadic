@@ -42,7 +42,7 @@ class TestGetPlannerDebugInfo:
 
     def test_contains_required_keys(self):
         result = get_planner_debug_info()
-        required = {"version", "build_id", "cache_schema", "prompt_hash", "architecture", "tools"}
+        required = {"version", "build_id", "cache_schema", "prompt_hash", "architecture", "steps"}
         assert required.issubset(result.keys())
 
     def test_version_is_string(self):
@@ -61,10 +61,10 @@ class TestGetPlannerDebugInfo:
         result = get_planner_debug_info()
         assert result["prompt_hash"] == PROMPT_BUNDLE_HASH
 
-    def test_tools_is_list(self):
+    def test_steps_is_list(self):
         result = get_planner_debug_info()
-        assert isinstance(result["tools"], list)
-        assert len(result["tools"]) == 6
+        assert isinstance(result["steps"], list)
+        assert len(result["steps"]) == 6
 
 
 class TestGetGraphStats:
@@ -77,14 +77,14 @@ class TestGetGraphStats:
     def test_contains_required_keys(self):
         result = get_graph_stats()
         assert "architecture" in result
-        assert "tools" in result
+        assert "steps" in result
         assert "middleware" in result
         assert "version" in result
 
-    def test_tools_is_int(self):
+    def test_steps_is_int(self):
         result = get_graph_stats()
-        assert isinstance(result["tools"], int)
-        assert result["tools"] == 6
+        assert isinstance(result["steps"], int)
+        assert result["steps"] == 6
 
     def test_middleware_is_int(self):
         result = get_graph_stats()
@@ -220,7 +220,7 @@ class TestClearResponseCaches:
 
         with (
             patch(
-                "app.services.experience_generator.clear_experience_cache",
+                "app.services.experience_generator.clear_memory_cache",
                 return_value=3,
             ) as mock_exp,
             patch(
@@ -251,7 +251,7 @@ class TestClearResponseCaches:
         monkeypatch.setattr(settings, "clear_l2_on_session_reset", False)
         monkeypatch.setattr(settings, "pytest_running", False)
         with (
-            patch("app.services.experience_generator.clear_experience_cache", return_value=0),
+            patch("app.services.experience_generator.clear_memory_cache", return_value=0),
             patch("app.services.specialist_cache.clear_memory_cache", return_value=0),
             patch("app.services.tile_cache.clear_memory_cache", return_value=0),
             patch("app.planner.services.feasibility_service._feasibility_cache") as mock_feas,
@@ -298,7 +298,7 @@ class TestClearResponseCaches:
             return session_ctx
 
         with (
-            patch("app.services.experience_generator.clear_experience_cache", return_value=0),
+            patch("app.services.experience_generator.clear_memory_cache", return_value=0),
             patch("app.services.specialist_cache.clear_memory_cache", return_value=0),
             patch("app.services.tile_cache.clear_memory_cache", return_value=0),
             patch("app.services.router_cache.clear_cache", return_value=0),
@@ -347,7 +347,7 @@ class TestClearResponseCaches:
             return session_ctx
 
         with (
-            patch("app.services.experience_generator.clear_experience_cache", return_value=0),
+            patch("app.services.experience_generator.clear_memory_cache", return_value=0),
             patch("app.services.specialist_cache.clear_memory_cache", return_value=0),
             patch("app.services.tile_cache.clear_memory_cache", return_value=0),
             patch("app.services.router_cache.clear_cache", return_value=0),
@@ -375,7 +375,7 @@ class TestClearResponseCaches:
                 "app.planner.services.admin_utils.cancel_cache_population_tasks",
                 new=AsyncMock(return_value={"experience": 1, "browse": 2}),
             ) as mock_cancel,
-            patch("app.services.experience_generator.clear_experience_cache", return_value=0),
+            patch("app.services.experience_generator.clear_memory_cache", return_value=0),
             patch("app.services.specialist_cache.clear_memory_cache", return_value=0),
             patch("app.services.tile_cache.clear_memory_cache", return_value=0),
             patch("app.services.router_cache.clear_cache", return_value=0),

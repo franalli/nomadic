@@ -6,6 +6,7 @@ import { X } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 // Animation constants (hoisted to avoid new object refs per render)
@@ -110,7 +111,7 @@ function BottomSheetInner({
               'fixed bottom-0 left-0 right-0 z-[1201]',
               'max-h-[70vh] overflow-hidden rounded-t-2xl',
               'bg-[var(--theme-panel)] border-t border-[var(--theme-border)]',
-              'shadow-[0_-4px_24px_rgba(0,0,0,0.12)]',
+              DS.shadow.sheetUp,
               'pb-[env(safe-area-inset-bottom)]'
             )}
           >

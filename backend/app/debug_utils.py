@@ -213,9 +213,12 @@ class CompactLogger:
     def llm_call_from_response(self, response: Any, purpose: str = "") -> None:
         """Log LLM call directly from LangChain response object."""
         try:
-            metadata = response.response_metadata
-            usage = metadata.get("token_usage", {})
-            model = metadata.get("model_name", "unknown")
+            from app.planner.llm_factory import extract_token_usage
+
+            usage = extract_token_usage(response)
+            model = (getattr(response, "response_metadata", None) or {}).get(
+                "model_name", "unknown"
+            )
             self.llm_call(
                 model=model,
                 prompt_tokens=usage.get("prompt_tokens", 0),
@@ -393,33 +396,6 @@ def log(tag: str, message: str, data: str | None = None, sleep: float | None = N
 
         if data:
             _console.print(f"{' ' * 17}[data]└─ {data}[/data]")
-    except Exception:
-        pass
-
-
-def log_tokens(component: str, prompt: int, completion: int, total: int):
-    """Log token usage. Shown in full mode."""
-    log(
-        "TOKENS",
-        f"{component} LLM call",
-        data=f"prompt={prompt} | completion={completion} | total={total}",
-    )
-
-
-def log_complete(tiles: int, strategy_sections: int, view_state: str):
-    """Log graph completion summary. Shown in full mode with rich colorization."""
-    if get_debug_mode() != "full":
-        return
-
-    try:
-        _console.print()
-        _console.print()
-        _console.print("[success]" + "=" * 50 + "[/success]")
-        _console.print("[success]       ✓ PLAN OPTIMIZED[/success]")
-        _console.print("[success]" + "=" * 50 + "[/success]")
-        _console.print(f"   Tiles: {tiles} | Strategy: {strategy_sections}")
-        _console.print(f"   View: {view_state}")
-        _console.print()
     except Exception:
         pass
 

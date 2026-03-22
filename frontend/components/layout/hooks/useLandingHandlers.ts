@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * useLandingHandlers — Event handlers for NomadicLanding.
  *

@@ -59,8 +59,6 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch) -> Dict[str, MagicMock]:
 
     Patches:
     - settings.local_expert_use_llm = False (no real LLM calls in unit tests)
-    - _get_constraints_as_list (returns [] by default — no static constraints)
-    - _get_constraint_context (returns empty string by default)
     - build_local_expert_section (returns stub section)
     - upsert_section (no-op)
     - mark_topic_executed (no-op)
@@ -71,16 +69,6 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch) -> Dict[str, MagicMock]:
 
     # Disable LLM for all unit tests — no real API calls
     monkeypatch.setattr(_le_mod.settings, "local_expert_use_llm", False)
-
-    # Static constraints list (Phase A) -- default empty
-    mock_constraints_list = MagicMock(return_value=[])
-    monkeypatch.setattr(_le_mod, "_get_constraints_as_list", mock_constraints_list)
-    mocks["constraints_list"] = mock_constraints_list
-
-    # Constraint context (Phase B prompt injection) -- default empty
-    mock_constraint_ctx = MagicMock(return_value="")
-    monkeypatch.setattr(_le_mod, "_get_constraint_context", mock_constraint_ctx)
-    mocks["constraint_context"] = mock_constraint_ctx
 
     # Section builder
     mock_build = MagicMock(
@@ -189,8 +177,7 @@ class TestCacheHit:
 
         assert result.active_specialist is None
         assert result.metadata.get("last_executed_specialist") == "local_expert"
-        # Should NOT call constraint context or build
-        mocks["constraint_context"].assert_not_called()
+        # Cache hit: should NOT rebuild the section
         mocks["build_section"].assert_not_called()
 
     @pytest.mark.asyncio
@@ -228,8 +215,6 @@ class TestCacheHit:
 
         await _le_mod.local_expert(state)
 
-        mocks["constraint_context"].assert_not_called()
-
 
 # =============================================================================
 # 3. Cache MISS -> destination changed
@@ -242,11 +227,7 @@ class TestCacheMiss:
 
     @pytest.mark.asyncio
     async def test_cache_miss_runs_pipeline(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Cache miss triggers Phase A skeleton build.
-
-        Phase A uses _get_constraints_as_list (not _get_constraint_context).
-        _get_constraint_context is only called in Phase B (LLM disabled here).
-        """
+        """Cache miss triggers Phase A skeleton build."""
         mocks = _patch_common(monkeypatch)
         state = _make_state(
             destination="Paris",
@@ -263,8 +244,6 @@ class TestCacheMiss:
 
         result = await _le_mod.local_expert(state)
 
-        # Phase A: static constraint list called with destination
-        mocks["constraints_list"].assert_called_once_with("Paris")
         # Section built and upserted
         mocks["build_section"].assert_called_once()
         mocks["upsert_section"].assert_called_once()
@@ -283,8 +262,6 @@ class TestCacheMiss:
 
         await _le_mod.local_expert(state)
 
-        # Phase A: static constraint list called with destination
-        mocks["constraints_list"].assert_called_once_with("Rome")
         mocks["build_section"].assert_called_once()
 
 
@@ -644,7 +621,6 @@ def _patch_enrichment_dependencies(
 
     monkeypatch.setattr(_le_mod, "get_llm_by_model", lambda *args, **kwargs: fake_llm)
     monkeypatch.setattr(_le_mod, "extract_token_usage", lambda *args, **kwargs: None)
-    monkeypatch.setattr(_le_mod, "_get_constraint_context", lambda _: "")
     monkeypatch.setattr(_le_mod, "_persist_travel_intelligence", persist)
     monkeypatch.setattr(
         db_mod, "_get_async_session_factory", lambda: (lambda: _DummyAsyncSession())

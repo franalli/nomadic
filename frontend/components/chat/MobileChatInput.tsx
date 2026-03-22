@@ -88,7 +88,7 @@ function MobileChatInputInner({
         className={cn(
           'relative flex items-center w-full h-12 rounded-full transition-all duration-300',
           'bg-zinc-50 dark:bg-black/40',
-          'shadow-[0_4px_16px_-4px_rgba(0,0,0,0.06)] dark:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.3)]',
+          `${DS.shadow.mobileInputRest} dark:${DS.shadow.mobileInputRestDark}`,
           'border border-zinc-200 dark:border-white/10',
           isProcessing && [
             'border-emerald-500/40 dark:border-emerald-500/30',
@@ -102,7 +102,7 @@ function MobileChatInputInner({
             ref={inputRef}
             disabled={isProcessing}
             aria-label="Chat message"
-            className="w-full h-10 min-h-10 bg-transparent text-zinc-900 dark:text-white pl-5 pr-2 py-2.5 text-[16px] font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+            className="w-full h-10 min-h-10 bg-transparent text-zinc-900 dark:text-white pl-5 pr-2 py-2.5 text-base font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
             placeholder={placeholder}
             value={input}
             onChange={(e) => setInput(e.target.value)}

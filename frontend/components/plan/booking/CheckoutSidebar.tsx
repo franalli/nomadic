@@ -109,8 +109,8 @@ export function CheckoutSidebar({
         {/* Line items */}
         <div className="space-y-4 mb-6 border-b border-zinc-200 dark:border-white/10 pb-6">
           {computedLineItems.length > 0 ? (
-            computedLineItems.map((item, idx) => (
-              <div key={idx} className="flex justify-between text-sm">
+            computedLineItems.map((item) => (
+              <div key={item.label} className="flex justify-between text-sm">
                 <span className="text-zinc-500 dark:text-zinc-400">{item.label}</span>
                 <span className="text-zinc-900 dark:text-white">{formatPrice(item.amount, currency)}</span>
               </div>

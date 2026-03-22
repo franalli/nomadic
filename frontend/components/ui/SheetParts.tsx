@@ -1,0 +1,172 @@
+'use client';
+
+import { AnimatePresence, motion } from 'framer-motion';
+import { X } from 'lucide-react';
+import * as React from 'react';
+import { createPortal } from 'react-dom';
+
+import { cn } from '@/lib/utils';
+
+import { useSheet } from './sheet';
+
+// Animation constants (hoisted to avoid new object refs per render)
+const BACKDROP_INITIAL = { opacity: 0 };
+const BACKDROP_ANIMATE = { opacity: 1 };
+const BACKDROP_EXIT = { opacity: 0 };
+const BACKDROP_TRANSITION = { duration: 0.2 };
+const SHEET_TRANSITION = { type: 'spring' as const, damping: 30, stiffness: 300 };
+
+interface SheetContentProps {
+  side?: 'top' | 'bottom' | 'left' | 'right';
+  className?: string;
+  children: React.ReactNode;
+}
+
+const slideVariants = {
+  top: {
+    initial: { y: '-100%' },
+    animate: { y: 0 },
+    exit: { y: '-100%' },
+  },
+  bottom: {
+    initial: { y: '100%' },
+    animate: { y: 0 },
+    exit: { y: '100%' },
+  },
+  left: {
+    initial: { x: '-100%' },
+    animate: { x: 0 },
+    exit: { x: '-100%' },
+  },
+  right: {
+    initial: { x: '100%' },
+    animate: { x: 0 },
+    exit: { x: '100%' },
+  },
+};
+
+const positionClasses = {
+  top: 'inset-x-0 top-0',
+  bottom: 'inset-x-0 bottom-0',
+  left: 'inset-y-0 left-0',
+  right: 'inset-y-0 right-0',
+};
+
+function SheetContent({ side = 'right', className, children }: SheetContentProps) {
+  const { open, onOpenChange } = useSheet();
+  const [mounted, setMounted] = React.useState(false);
+
+  // Handle client-side mounting for portal
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Close on escape key
+  React.useEffect(() => {
+    if (!open) return;
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onOpenChange(false);
+      }
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [open, onOpenChange]);
+
+  // Prevent body scroll when open
+  React.useEffect(() => {
+    if (open) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [open]);
+
+  const variants = slideVariants[side];
+
+  // Use portal to escape stacking context and render at document body level
+  const content = (
+    <AnimatePresence>
+      {open && (
+        <>
+          {/* Backdrop */}
+          <motion.div
+            initial={BACKDROP_INITIAL}
+            animate={BACKDROP_ANIMATE}
+            exit={BACKDROP_EXIT}
+            transition={BACKDROP_TRANSITION}
+            className="fixed inset-0 z-[1200] bg-black/40 backdrop-blur-sm"
+            onClick={() => onOpenChange(false)}
+          />
+
+          {/* Sheet */}
+          <motion.div
+            initial={variants.initial}
+            animate={variants.animate}
+            exit={variants.exit}
+            transition={SHEET_TRANSITION}
+            className={cn(
+              'fixed z-[1201]',
+              positionClasses[side],
+              'bg-background border-border shadow-lg',
+              side === 'left' || side === 'right'
+                ? 'h-full w-3/4 max-w-sm border-l'
+                : 'w-full border-t',
+              className
+            )}
+          >
+            {children}
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+
+  // Only use portal on client-side to avoid SSR hydration issues
+  if (!mounted) return null;
+
+  return createPortal(content, document.body);
+}
+
+function SheetHeader({ className, children }: { className?: string; children: React.ReactNode }) {
+  return (
+    <div className={cn('flex flex-col space-y-1.5 p-4', className)}>
+      {children}
+    </div>
+  );
+}
+
+function SheetTitle({ className, children }: { className?: string; children: React.ReactNode }) {
+  return (
+    <h2 className={cn('text-lg font-semibold', className)}>
+      {children}
+    </h2>
+  );
+}
+
+function SheetClose({ className }: { className?: string }) {
+  const { onOpenChange } = useSheet();
+
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenChange(false)}
+      className={cn(
+        'absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background',
+        'transition-opacity hover:opacity-100',
+        'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+        className
+      )}
+    >
+      <X className="h-4 w-4" />
+      <span className="sr-only">Close</span>
+    </button>
+  );
+}
+
+export { SheetClose, SheetContent, SheetHeader, SheetTitle };

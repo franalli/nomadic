@@ -24,6 +24,13 @@ const HEADER_VIEWPORT = { once: true, amount: 0.5 };
 const SECTION_INITIAL = { opacity: 0, y: 28 };
 const SECTION_VIEWPORT = { once: true, amount: 0.35 };
 
+/** Pre-built transition objects for section stagger animation (avoids inline object per render) */
+const SECTION_TRANSITIONS = Array.from({ length: 20 }, (_, i) => ({
+  duration: 0.45,
+  ease: 'easeOut' as const,
+  delay: i * 0.08,
+}));
+
 const CTA_INITIAL = { opacity: 0, y: 28 };
 const CTA_TRANSITION = { duration: 0.45, ease: 'easeOut' as const };
 const CTA_VIEWPORT = { once: true, amount: 0.25 };
@@ -55,7 +62,7 @@ export function LegalPage({ title, description, updated, sections, cta }: LegalP
                 className="space-y-4 rounded-2xl bg-card/90 p-6 shadow-sm ring-1 ring-border"
                 initial={SECTION_INITIAL}
                 whileInView={FADE_UP_ANIMATE}
-                transition={{ duration: 0.45, ease: 'easeOut', delay: index * 0.08 }}
+                transition={SECTION_TRANSITIONS[index] ?? SECTION_TRANSITIONS[0]}
                 viewport={SECTION_VIEWPORT}
               >
                 <h2 className="text-xl font-semibold text-foreground">{section.title}</h2>

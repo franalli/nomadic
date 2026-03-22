@@ -84,7 +84,6 @@ backend/app/planner/
 │   ├── local_expert.py      # City logistics concierge (Phase A/B architecture)
 │   ├── logistics_node.py    # Flight/hotel/activity fetching + safety logic
 │   ├── router_extraction.py # LLM-based intent classification + field extraction (RouterOutput schema)
-│   ├── specialist_schemas.py # Specialist Pydantic schemas
 │   └── vertical_specialist.py # Domain specialist (8 specialists, registry-driven)
 ├── services/
 │   ├── __init__.py          # Services package
@@ -136,7 +135,7 @@ backend/app/planner/
 
 ### Parallelism Rules
 
-- `plan_turn()` splits `SEARCH_TILES` into two sequential steps — flights+hotels first, activities second — for progressive frontend rendering. Hotels typically return 3-5s faster; splitting lets the UI show them immediately.
+- `plan_turn()` emits a single `SEARCH_TILES` step with all tile types (`flights`, `hotels`, `activities`). `logistics_node.py` already runs them concurrently via `asyncio.gather`, so splitting into sequential coordinator steps only adds overhead.
 - `DISPATCH_SPECIALISTS` and `SEARCH_TILES` may run in parallel via `_execute_parallel_group()`.
 - `_execute_parallel_group()` now yields `(step, events, completed)` tuples as each parallel task completes via an `asyncio.Queue`, instead of gathering all results with `asyncio.gather`. This means `node_status` completed events fire as each parallel step finishes, not after the whole group. Step results that are async generators (e.g. specialist dispatch) are consumed incrementally -- each yielded event is forwarded to the caller as it arrives.
 - `_dispatch_specialists_parallel()` is now an `AsyncGenerator` that yields `(topic, result)` pairs as each specialist completes (via `asyncio.as_completed`), instead of returning a collected dict. The step executor returns a streaming async generator `_stream_specialist_dispatch_events()` that emits `specialist_preview` and `strategy_sections` partials after each specialist finishes.
@@ -429,7 +428,7 @@ The matched tile object is stored on each enriched activity (`activity._matched_
 blocks that were actually placed in the itinerary and lack a `google_place_id`, using `enrich_activities_with_places` with
 `path_label="post_build_enrich"`. This defers expensive Google Places API calls to after placement, so only placed blocks
 (typically 3-5) incur API cost instead of all candidate tiles (10+). Enriched fields (coordinates, google_place_id, deeplink,
-signed photo URL) are written back directly to the day_card blocks.
+signed photo URL) are written back directly to the day_card blocks. Enrichment concurrency and retry are configurable via `settings.google_places_enrichment_max_parallel` (default 4), `settings.google_places_enrichment_retry_attempts` (default 2), and `settings.google_places_enrichment_retry_base_ms` (default 250ms).
 If a block already carries partner deeplink/image data (Viator or GYG), Google Places enrichment is limited to coordinate/place-id style backfill and does not overwrite the affiliate booking surface.
 
 **Partner browse/enrichment path**
@@ -1391,7 +1390,7 @@ INITIATED -> PENDING_PAYMENT -> HOLD -> CONFIRMED
 | `/api/admin/clear-validation-cache` | POST   | Clear validation caches                                                         |
 | `/api/admin/fresh-start`            | POST   | Clear validation + response caches                                              |
 | `/api/admin/clear-all-checkpoints`  | POST   | Invoke the checkpoint-clear hook (currently a no-op that reports zero checkpoints) |
-| `/api/admin/clear-all-caches`       | POST   | Comprehensive clear of planner/validation caches plus the checkpoint-clear hook; also clears specialist/tile/experience L1+L2, browse/router/iata state, cancels in-flight browse/experience population, and drains Google Places geocode/country-code + enrichment inflight state |
+| `/api/admin/clear-all-caches`       | POST   | Comprehensive clear of planner/validation caches plus the checkpoint-clear hook; also clears specialist/tile/experience L1+L2, browse/router/iata/feasibility/photo-bytes/places-enrichment memory caches, cancels in-flight browse/experience population, and drains Google Places geocode/country-code + enrichment inflight state |
 
 ---
 

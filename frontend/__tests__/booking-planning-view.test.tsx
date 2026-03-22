@@ -41,6 +41,7 @@ const tripInputs: DocumentTripInputs = {
   missing_fields: [],
   activity_settings: {
     categories: [],
+    skill_level: null,
   },
 };
 

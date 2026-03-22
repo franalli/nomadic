@@ -7,6 +7,8 @@ import type { DocumentTripInputs } from '@/types/document';
 import type { DayCard } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
+import { formatTravelersForPills } from './format-utils';
+
 // ---------------------------------------------------------------------------
 // Exported interfaces
 // ---------------------------------------------------------------------------
@@ -126,20 +128,11 @@ function formatDateRange(startIso: string | null | undefined, endIso: string | n
   return `${sMonth} ${sDay} – ${eMonth} ${eDay}, ${sYear}`;
 }
 
-function pluralize(count: number, singular: string): string {
-  return count === 1 ? `${count} ${singular}` : `${count} ${singular}s`;
-}
-
 function formatTravelers(adults: number | null | undefined, children: number | null | undefined): string {
   const a = typeof adults === 'number' ? adults : 0;
   const c = typeof children === 'number' ? children : 0;
-  // Default to 1 adult when travelers not specified — matches UI default
   if (a === 0 && c === 0) return '1 adult';
-
-  const parts: string[] = [];
-  if (a > 0) parts.push(pluralize(a, 'adult'));
-  if (c > 0) parts.push(c === 1 ? '1 child' : `${c} children`);
-  return parts.join(', ');
+  return formatTravelersForPills(a, c, ', ');
 }
 
 function formatBudget(budget: number | null | undefined, currency: string | null | undefined): string | null {

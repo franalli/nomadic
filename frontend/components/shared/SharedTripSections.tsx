@@ -3,7 +3,9 @@ import Link from 'next/link';
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { MapErrorBoundary } from '@/components/map/MapErrorBoundary';
+import { DS } from '@/lib/design-system';
 import type { MapPOI } from '@/lib/ghost-timeline-adapter';
+import { cn } from '@/lib/utils';
 import type { StrategySection } from '@/types/plan-envelope';
 
 function getStrategySummary(section: StrategySection): string | null {
@@ -65,7 +67,7 @@ export function SharedTripHeader({
       <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
         <div className="min-w-0">
           <h1 className="truncate text-sm font-semibold md:text-base">{title || 'Shared Trip'}</h1>
-          <p className="text-[11px] uppercase tracking-widest text-zinc-400">
+          <p className={cn(DS.textSize.mini, 'uppercase tracking-widest text-zinc-400')}>
             Shared Trip{dayCount ? ` · ${dayCount} days` : ''}
           </p>
         </div>

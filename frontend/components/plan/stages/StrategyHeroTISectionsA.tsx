@@ -35,7 +35,7 @@ export function renderVisaEntry(h: SectionDataHelpers) {
         <div>
           <p className="font-medium text-zinc-800 dark:text-zinc-200 text-xs uppercase mt-2">Required:</p>
           <ul className="list-disc list-inside space-y-0.5 text-xs">
-            {(h.arr('key_requirements') as string[]).map((r, i) => <li key={i}>{r}</li>)}
+            {(h.arr('key_requirements') as string[]).map((r, i) => <li key={`${r}-${i}`}>{r}</li>)}
           </ul>
         </div>
       )}
@@ -64,7 +64,7 @@ export function renderSafetyHealth(h: SectionDataHelpers) {
         <div>
           <p className="font-medium text-red-600 dark:text-red-400 text-xs uppercase mt-2">⚠️ Watch out for:</p>
           <ul className="list-disc list-inside space-y-0.5 text-xs">
-            {(h.arr('common_concerns') as string[]).map((c, i) => <li key={i}>{c}</li>)}
+            {(h.arr('common_concerns') as string[]).map((c, i) => <li key={`${c}-${i}`}>{c}</li>)}
           </ul>
         </div>
       )}
@@ -117,8 +117,8 @@ export function renderTransportation(h: SectionDataHelpers) {
         <div>
           <p className="font-medium text-xs uppercase mb-1">Airport → City</p>
           <div className="space-y-1">
-            {atc.map((t, i) => (
-              <div key={i} className="text-xs flex items-center gap-2">
+            {atc.map((t) => (
+              <div key={t.method} className="text-xs flex items-center gap-2">
                 <span className="font-medium">{t.method}:</span>
                 {t.price && <span>{t.price}</span>}
                 {t.time && <span className="text-zinc-500">({t.time})</span>}
@@ -153,7 +153,7 @@ export function renderCulturalNorms(h: SectionDataHelpers) {
         <div>
           <p className="font-medium text-red-600 dark:text-red-400 text-xs uppercase mt-2">🚫 Never do:</p>
           <ul className="list-disc list-inside space-y-0.5 text-xs">
-            {taboos.map((t, i) => <li key={i}>{t}</li>)}
+            {taboos.map((t, i) => <li key={`${t}-${i}`}>{t}</li>)}
           </ul>
         </div>
       )}

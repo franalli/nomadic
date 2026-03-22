@@ -35,14 +35,14 @@ def get_planner_debug_info() -> Dict[str, Any]:
         "build_id": PLANNER_BUILD_ID,
         "cache_schema": CACHE_SCHEMA_VERSION,
         "prompt_hash": PROMPT_BUNDLE_HASH,
-        "architecture": "create_agent",
-        "tools": [
-            "extract_trip_fields",
-            "get_specialist_advice",
-            "get_local_intel",
-            "search_tiles",
-            "validate_plan",
-            "build_itinerary",
+        "architecture": "coordinator",
+        "steps": [
+            "CLASSIFY",
+            "DISPATCH_SPECIALISTS",
+            "LOCAL_INTEL",
+            "SEARCH_TILES",
+            "BUILD_ITINERARY",
+            "GENERATE_RESPONSE",
         ],
     }
 
@@ -50,8 +50,8 @@ def get_planner_debug_info() -> Dict[str, Any]:
 def get_graph_stats() -> Dict[str, Any]:
     """Return graph statistics."""
     return {
-        "architecture": "create_agent",
-        "tools": 6,
+        "architecture": "coordinator",
+        "steps": 6,
         "middleware": 4,
         "version": "2.0",
     }
@@ -123,7 +123,7 @@ async def clear_response_caches() -> int:
     unset so L2 entries survive restarts and expire naturally via their TTL.
     """
     from app.planner.services.feasibility_service import _feasibility_cache
-    from app.services.experience_generator import clear_experience_cache
+    from app.services.experience_generator import clear_memory_cache as clear_experience_cache
     from app.services.specialist_cache import clear_memory_cache as clear_specialist_cache
     from app.services.tile_cache import clear_memory_cache as clear_tile_cache
 

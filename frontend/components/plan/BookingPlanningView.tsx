@@ -10,21 +10,18 @@
  * @see docs/ux_unified_architecture.md Section I.B - Booking Suggestions Pattern
  */
 
-import { Lock } from 'lucide-react';
 import { useCallback, useState } from 'react';
 
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 import { ModalErrorBoundary } from '@/components/ui/ModalErrorBoundary';
 import { trackEvent } from '@/lib/analytics';
-import { DS } from '@/lib/design-system';
 import { usePanelToggleStore } from '@/state/panelToggleStore';
 import type { ViewMode } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
+import { BookingLockMessage, BookingSectionGroup } from './BookingPlanningViewParts';
 import { AlternativesModal } from './modals/AlternativesModal';
-import { SuggestionCard } from './tiles/SuggestionCard';
-import { TileRailCard } from './tiles/TileRailCard';
 
 interface BookingPlanningViewProps {
   /** Filtered stay tiles (after applyFilters) */
@@ -119,105 +116,56 @@ export function BookingPlanningView({
   const flightTiles = filteredFlightTiles;
   const activityTiles = filteredActivityTiles;
 
-  const renderSection = (
-    title: 'Stays' | 'Flights' | 'Activities',
-    tiles: Tile[],
-    emptyMessage: string,
-    options?: { onOpenStaysSettings?: () => void }
-  ) => {
-    const isRail = title === 'Stays' || title === 'Flights';
-
-    return (
-      <section aria-label={`${title.toLowerCase()} suggestions`}>
-        <h2 className={`${DS.text.label} mb-3`}>{title}</h2>
-        {tiles.length > 0 ? (
-          isRail ? (
-            <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory -mx-1 px-1">
-              {tiles.slice(0, 6).map((tile) => (
-                <TileRailCard
-                  key={tile.id}
-                  tile={tile}
-                  isSaved={savedTileIds.has(tile.id)}
-                  onSave={handleSaveClick}
-                  onDetailsClick={handleDetailsClick}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {tiles.slice(0, 6).map((tile) => (
-                <SuggestionCard
-                  key={tile.id}
-                  tile={tile}
-                  reasoning={tile.meta?.reasoning as string | undefined}
-                  isSaved={savedTileIds.has(tile.id)}
-                  onSave={handleSaveClick}
-                  onViewAlternatives={() => handleViewAlternatives(tile)}
-                  onDetailsClick={handleDetailsClick}
-                  onOpenStaysSettings={options?.onOpenStaysSettings}
-                  variant="compact"
-                />
-              ))}
-              {tiles.length > 6 && (
-                <p className="pt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                  +{tiles.length - 6} more {title.toLowerCase()} available
-                </p>
-              )}
-            </div>
-          )
-        ) : (
-          <p className="py-2 text-xs text-zinc-500 dark:text-zinc-400">{emptyMessage}</p>
-        )}
-      </section>
-    );
-  };
-
   return (
     <ModalErrorBoundary>
       <div id="booking-section">
         <div className="px-6 pt-0 pb-1">
-          {/* Section-level lock message - only show if dates are NOT set */}
           {/* @see docs/ux_unified_architecture.md Section XII - Tiles-first logic */}
-          {!hasDates && (
-            <p className="mt-2 flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
-              <Lock className="h-3 w-3" />
-              <span>
-                Booking links unlock after you{' '}
-                {onOpenSheet ? (
-                  <button
-                    type="button"
-                    onClick={() => onOpenSheet('dates')}
-                    className="text-emerald-700 underline underline-offset-2 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300"
-                  >
-                    set trip dates
-                  </button>
-                ) : (
-                  'set trip dates'
-                )}{' '}
-                and create your itinerary.
-              </span>
-            </p>
-          )}
+          {!hasDates && <BookingLockMessage onOpenSheet={onOpenSheet} />}
         </div>
 
         {/* Stays tiles */}
         {isExpanded && (
           <div className="px-6 pb-4">
-            {renderSection('Stays', stayTiles, 'No stays found yet.', { onOpenStaysSettings })}
+            <BookingSectionGroup
+              title="Stays"
+              tiles={stayTiles}
+              emptyMessage="No stays found yet."
+              savedTileIds={savedTileIds}
+              onSave={handleSaveClick}
+              onDetailsClick={handleDetailsClick}
+              onViewAlternatives={handleViewAlternatives}
+              onOpenStaysSettings={onOpenStaysSettings}
+            />
           </div>
         )}
 
         {/* Flights tiles */}
         {flightsExpanded && (
           <div className="px-6 pb-4">
-            {renderSection('Flights', flightTiles, 'No flights found yet.')}
+            <BookingSectionGroup
+              title="Flights"
+              tiles={flightTiles}
+              emptyMessage="No flights found yet."
+              savedTileIds={savedTileIds}
+              onSave={handleSaveClick}
+              onDetailsClick={handleDetailsClick}
+            />
           </div>
         )}
 
         {/* Activities tiles */}
         {activitiesExpanded && (
           <div className="px-6 pb-4">
-            {renderSection('Activities', activityTiles, 'No activities found yet.')}
+            <BookingSectionGroup
+              title="Activities"
+              tiles={activityTiles}
+              emptyMessage="No activities found yet."
+              savedTileIds={savedTileIds}
+              onSave={handleSaveClick}
+              onDetailsClick={handleDetailsClick}
+              onViewAlternatives={handleViewAlternatives}
+            />
           </div>
         )}
       </div>

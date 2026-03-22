@@ -500,7 +500,7 @@ _GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 # In-memory geocode cache to avoid repeat API calls for the same destination.
 # Single threading.Lock is safe here — critical sections are microsecond dict ops.
-_geocode_cache: TTLCache = TTLCache(maxsize=1000, ttl=86400)
+_geocode_cache: TTLCache = TTLCache(maxsize=1000, ttl=settings.geocode_cache_ttl_hours * 3600)
 # threading.Lock OK: <1us critical section (dict lookup + optional API call guard)
 _geocode_thread_lock = Lock()
 
@@ -535,7 +535,7 @@ def _extract_country_code(data: dict) -> str | None:
 
 # Module-level country code cache (populated by geocode calls).
 # TTLCache (24h, max 512) prevents unbounded growth; protected by _geocode_thread_lock.
-_country_code_cache: TTLCache = TTLCache(maxsize=512, ttl=86400)
+_country_code_cache: TTLCache = TTLCache(maxsize=512, ttl=settings.geocode_cache_ttl_hours * 3600)
 
 
 def get_country_code(destination: str) -> str | None:
@@ -1367,9 +1367,6 @@ _ENRICH_L2_TTL_HOURS = int(
     )
 )
 _enrich_mem = MemoryCache(maxsize=_ENRICH_L1_MAX_SIZE, ttl=_ENRICH_L1_TTL_SECONDS)
-_ENRICH_MAX_PARALLEL_DEFAULT = 4
-_ENRICH_RETRY_ATTEMPTS_DEFAULT = 2
-_ENRICH_RETRY_BASE_MS_DEFAULT = 250
 
 # Singleflight dedup for concurrent enrichment of the same activity title.
 _enrich_inflight: dict[str, asyncio.Future[dict]] = {}
@@ -1407,31 +1404,15 @@ def _normalize_title_for_cache(title: str) -> str:
 
 
 def _enrich_max_parallel() -> int:
-    raw = getattr(settings, "google_places_enrichment_max_parallel", _ENRICH_MAX_PARALLEL_DEFAULT)
-    try:
-        return max(1, int(raw))
-    except (TypeError, ValueError):
-        return _ENRICH_MAX_PARALLEL_DEFAULT
+    return max(1, settings.google_places_enrichment_max_parallel)
 
 
 def _enrich_retry_attempts() -> int:
-    raw = getattr(
-        settings,
-        "google_places_enrichment_retry_attempts",
-        _ENRICH_RETRY_ATTEMPTS_DEFAULT,
-    )
-    try:
-        return max(1, int(raw))
-    except (TypeError, ValueError):
-        return _ENRICH_RETRY_ATTEMPTS_DEFAULT
+    return max(1, settings.google_places_enrichment_retry_attempts)
 
 
 def _enrich_backoff_seconds(attempt: int) -> float:
-    raw = getattr(settings, "google_places_enrichment_retry_base_ms", _ENRICH_RETRY_BASE_MS_DEFAULT)
-    try:
-        base_ms = max(1, int(raw))
-    except (TypeError, ValueError):
-        base_ms = _ENRICH_RETRY_BASE_MS_DEFAULT
+    base_ms = max(1, settings.google_places_enrichment_retry_base_ms)
     return (base_ms * (2**attempt)) / 1000.0
 
 

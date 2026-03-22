@@ -241,7 +241,7 @@ class SpecialistStateOutput(BaseModel):
     Internal state representation of specialist output (not LLM schema).
 
     Contains BOTH constraints AND content (the key insight from planning).
-    See specialist_schemas.py for the LLM structured-output schema.
+    See vertical_specialist.py for the LLM structured-output schema.
     """
 
     # Feasibility assessment (checked BEFORE generating content)

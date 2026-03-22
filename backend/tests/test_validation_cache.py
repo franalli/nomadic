@@ -18,6 +18,7 @@ from __future__ import annotations
 import pytest
 from cachetools import TTLCache
 
+import app.validation_cache as vc_module
 from app.validation_cache import (
     _build_prompt,
     _cache_key,
@@ -74,8 +75,9 @@ class TestPrewarmCache:
     """Tests for prewarm_cache() pre-population."""
 
     @pytest.mark.asyncio
-    async def test_prewarm_populates_cache(self):
+    async def test_prewarm_populates_cache(self, monkeypatch):
         """prewarm_cache() returns 0 when no VALIDATION_PREWARM_DESTINATIONS env var is set."""
+        monkeypatch.setattr(vc_module, "_PREWARM_DESTINATIONS", [])
         count = await prewarm_cache()
         # No hardcoded defaults — empty list when env var is unset
         assert count == 0
@@ -85,8 +87,9 @@ class TestPrewarmCache:
         assert stats["fallback"] == 0
 
     @pytest.mark.asyncio
-    async def test_prewarm_idempotent(self):
+    async def test_prewarm_idempotent(self, monkeypatch):
         """Calling prewarm twice should not double-count existing entries."""
+        monkeypatch.setattr(vc_module, "_PREWARM_DESTINATIONS", [])
         count1 = await prewarm_cache()
         count2 = await prewarm_cache()
         assert count1 == 0

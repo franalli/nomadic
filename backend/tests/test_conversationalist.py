@@ -617,7 +617,7 @@ class TestBuildGroundingBlock:
         assert "ITA Airways - Direct" in result
         assert "Maya Ubud Resort" in result
         assert "Unused Hotel" not in result
-        assert "NEVER mention a named activity, hotel, or flight" in result
+        assert "NEVER mention a specific bookable tour operator, hotel, or flight" in result
 
     def test_response_context_includes_grounding_block_even_without_day_cards(self):
         state = {

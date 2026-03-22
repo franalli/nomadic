@@ -173,6 +173,10 @@ Ready-to-use Tailwind shadow classes for emerald glow effects. Apply with `dark:
 | `DS.glowClass.dropMarker` | 0.6 | Map marker drop-shadow |
 | `DS.glowClass.mobileInputSm` | 0.15 | Mobile input (subtle, tighter) |
 | `DS.glowClass.mobileInputMd` | 0.2 | Mobile input (medium, tighter) |
+| `DS.glowClass.chipHover` | 0.3 | Chip hover (deeplink pill hover) |
+| `DS.glowClass.chipHoverLg` | 0.35 | Chip hover large (larger deeplink pill hover) |
+| `DS.glowClass.markerActive` | 0.45 | Map marker active state |
+| `DS.glowClass.markerHover` | 0.35 | Map marker hover state |
 | `DS.glowClass.dotGlow` | 0.3 | Dot indicator/separator glow (6px, tight) |
 | `DS.glowClass.commandBar` | composite | Command bar elevation (black + emerald tint + inset glass) |
 
@@ -185,6 +189,26 @@ Non-emerald box shadows for light-mode surfaces. Unlike `DS.glowClass.*`, these 
 | `DS.shadow.bubble` | `0 2px 8px rgba(10,14,18,0.06)` | Chat bubble resting shadow (light mode) |
 | `DS.shadow.bubbleHover` | `0 4px 12px rgba(10,14,18,0.08)` | Chat bubble hover shadow (light mode) |
 | `DS.shadow.bubbleWhite` | `0 0 10px -6px rgba(255,255,255,0.18)` | White surface self-glow (dark mode user bubble) |
+| `DS.shadow.sheetUp` | `0 -4px 24px rgba(0,0,0,0.12)` | Bottom sheet upward shadow |
+| `DS.shadow.heroOverlay` | `0 8px 30px rgba(0,0,0,0.4)` | Hero image deep elevation |
+| `DS.shadow.inputBar` | `0 8px 30px -8px rgba(0,0,0,0.08)` | Input bar resting shadow (light) |
+| `DS.shadow.inputBarDark` | `0 8px 30px -8px rgba(0,0,0,0.3)` | Input bar resting shadow (dark) |
+| `DS.shadow.dragPreview` | `0 25px 50px rgba(0,0,0,0.15)` | Drag preview card float (light) |
+| `DS.shadow.dragPreviewDark` | `0 25px 50px rgba(0,0,0,0.4)` | Drag preview card float (dark) |
+| `DS.shadow.panelEdge` | composite | Chat panel rightward edge shadow (light) |
+| `DS.shadow.panelEdgeDark` | `4px 0 12px rgba(0,0,0,0.3)` | Chat panel edge shadow (dark) |
+| `DS.shadow.mobileInputRest` | `0 4px 16px -4px rgba(0,0,0,0.06)` | Mobile input resting elevation (light) |
+| `DS.shadow.mobileInputRestDark` | `0 4px 16px -4px rgba(0,0,0,0.3)` | Mobile input resting elevation (dark) |
+| `DS.shadow.emeraldInset` | `inset 2px 0 8px rgba(16,185,129,0.15)` | Emerald left-border glow on activity cards |
+| `DS.shadow.dropTargetInset` | `inset 0 0 20px -8px rgba(16,185,129,0.15)` | DnD drop target hover inset glow |
+
+### Gradients (`DS.gradient.*`)
+
+Reusable CSS gradient strings as Tailwind arbitrary values.
+
+| Token | Use For |
+|-------|---------|
+| `DS.gradient.emeraldSweep` | Emerald shimmer sweep — decorative scan effect |
 
 ### Brand Colors
 

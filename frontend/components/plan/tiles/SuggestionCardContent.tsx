@@ -10,7 +10,7 @@ import {
   getTileDeeplinkPillLabel,
   isPartnerDeeplinkUrl,
 } from '@/components/tiles/tileHelpers';
-import { trackDeeplinkClick } from '@/lib/api';
+import { trackDeeplinkClick } from '@/lib/api-streaming';
 import { DS } from '@/lib/design-system';
 import { formatTilePrice } from '@/lib/format-utils';
 import { placeholderImageForTile } from '@/lib/placeholders';
@@ -160,7 +160,7 @@ export function SuggestionCardContent({
                 'hover:bg-emerald-100 hover:border-emerald-500/60',
                 'dark:bg-emerald-950/40 dark:border-emerald-500/25 dark:text-emerald-400',
                 'dark:hover:bg-emerald-900/50 dark:hover:border-emerald-400/50',
-                'dark:hover:shadow-[0_0_16px_-3px_rgba(16,185,129,0.35)]',
+                `dark:hover:${DS.glowClass.chipHoverLg}`,
               )}
             >
               {isPartner ? <ExternalLink className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />}

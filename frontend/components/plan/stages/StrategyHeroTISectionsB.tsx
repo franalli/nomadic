@@ -23,8 +23,8 @@ export function renderSeasonality(h: SectionDataHelpers) {
       {festivals.length > 0 && (
         <div>
           <p className="font-medium text-xs uppercase mt-2">🎉 Festivals:</p>
-          {festivals.map((f, i) => (
-            <div key={i} className="text-xs mt-1">
+          {festivals.map((f) => (
+            <div key={f.name} className="text-xs mt-1">
               <strong>{f.name}</strong> {f.when && `(${f.when})`}
               {f.impact && <p className="text-zinc-500">{f.impact}</p>}
             </div>
@@ -47,8 +47,8 @@ export function renderThingsToDo(h: SectionDataHelpers) {
         <div>
           <p className="font-medium text-xs uppercase mb-1">🎯 Must Do</p>
           <div className="space-y-2">
-            {mustDo.slice(0, 5).map((item, i) => (
-              <div key={i} className="text-xs p-2 rounded bg-zinc-50 dark:bg-zinc-800">
+            {mustDo.slice(0, 5).map((item) => (
+              <div key={item.name} className="text-xs p-2 rounded bg-zinc-50 dark:bg-zinc-800">
                 <p className="font-medium text-zinc-900 dark:text-white">{item.name}</p>
                 {item.why && <p className="text-zinc-500 dark:text-zinc-400 mt-0.5">{item.why}</p>}
                 <div className={`flex gap-2 mt-1 ${DS.textSize.micro}`}>
@@ -64,7 +64,7 @@ export function renderThingsToDo(h: SectionDataHelpers) {
         <div>
           <p className="font-medium text-red-600 dark:text-red-400 text-xs uppercase mt-2">❌ Skip These</p>
           <ul className="list-disc list-inside space-y-0.5 text-xs">
-            {skipThese.map((s, i) => <li key={i}>{s}</li>)}
+            {skipThese.map((s, i) => <li key={`${s}-${i}`}>{s}</li>)}
           </ul>
         </div>
       )}
@@ -79,14 +79,14 @@ export function renderNeighborhoods(h: SectionDataHelpers) {
     <div className="pt-2 space-y-2">
       {whereToStay.length > 0 && (
         <div className="space-y-2">
-          {whereToStay.map((n, i) => (
-            <div key={i} className="text-xs p-2 rounded bg-zinc-50 dark:bg-zinc-800">
+          {whereToStay.map((n) => (
+            <div key={n.name} className="text-xs p-2 rounded bg-zinc-50 dark:bg-zinc-800">
               <p className="font-medium text-zinc-900 dark:text-white">{n.name}</p>
               {n.vibe && <p className="text-zinc-500 dark:text-zinc-400 mt-0.5">{n.vibe}</p>}
               <div className={`flex gap-2 mt-1 ${DS.textSize.micro}`}>
                 {n.price_range && <span className="px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200">{n.price_range}</span>}
                 {Array.isArray(n.best_for) && n.best_for.slice(0, 2).map((b, j) => (
-                  <span key={j} className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">{b}</span>
+                  <span key={`${b}-${j}`} className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">{b}</span>
                 ))}
               </div>
             </div>
@@ -97,7 +97,7 @@ export function renderNeighborhoods(h: SectionDataHelpers) {
         <div>
           <p className="font-medium text-red-600 dark:text-red-400 text-xs uppercase mt-2">⚠️ Avoid:</p>
           <ul className="list-disc list-inside space-y-0.5 text-xs">
-            {avoidStaying.map((a, i) => <li key={i}>{a}</li>)}
+            {avoidStaying.map((a, i) => <li key={`${a}-${i}`}>{a}</li>)}
           </ul>
         </div>
       )}
@@ -137,8 +137,8 @@ export function renderScamsTraps(h: SectionDataHelpers) {
     <div className="pt-2 space-y-2">
       {commonScams.length > 0 && (
         <div className="space-y-2">
-          {commonScams.map((scam, i) => (
-            <div key={i} className="text-xs p-2 rounded bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+          {commonScams.map((scam) => (
+            <div key={scam.name} className="text-xs p-2 rounded bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
               <p className="font-medium text-red-700 dark:text-red-400">⚠️ {scam.name}</p>
               {scam.how_it_works && <p className="text-red-600/70 dark:text-red-400/70 mt-0.5">{scam.how_it_works}</p>}
               {scam.how_to_avoid && <p className="text-emerald-600 dark:text-emerald-400 mt-1">✓ {scam.how_to_avoid}</p>}
@@ -169,7 +169,7 @@ export function renderPacking(h: SectionDataHelpers) {
         <div>
           <p className="font-medium text-emerald-600 dark:text-emerald-400 text-xs uppercase">✓ Must Pack</p>
           <ul className="list-disc list-inside space-y-0.5 text-xs">
-            {mustPack.map((p, i) => <li key={i}>{p}</li>)}
+            {mustPack.map((p, i) => <li key={`${p}-${i}`}>{p}</li>)}
           </ul>
         </div>
       )}
@@ -177,7 +177,7 @@ export function renderPacking(h: SectionDataHelpers) {
         <div>
           <p className="font-medium text-red-600 dark:text-red-400 text-xs uppercase mt-2">✗ Don&apos;t Bring</p>
           <ul className="list-disc list-inside space-y-0.5 text-xs">
-            {dontBring.map((p, i) => <li key={i}>{p}</li>)}
+            {dontBring.map((p, i) => <li key={`${p}-${i}`}>{p}</li>)}
           </ul>
         </div>
       )}

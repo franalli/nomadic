@@ -92,8 +92,8 @@ export function StrategyHeroContent({
         {/* Constraint Pills (Horizontal Scroll) */}
         {constraints.length > 0 && !isInfeasible && (
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-5 md:-mx-6 px-5 md:px-6 pb-1">
-            {constraints.map((c, i) => (
-              <div key={i} className={cn('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg shrink-0', 'bg-black/40 backdrop-blur-md border border-white/10')} title={c.reason || formatConstraintRule(c.rule)}>
+            {constraints.map((c) => (
+              <div key={c.rule} className={cn('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg shrink-0', 'bg-black/40 backdrop-blur-md border border-white/10')} title={c.reason || formatConstraintRule(c.rule)}>
                 {getConstraintIcon(c.type)}
                 <span className="text-xs font-medium text-white/90">{getShortConstraintLabel(c.rule)}</span>
               </div>
@@ -104,7 +104,7 @@ export function StrategyHeroContent({
         {constraints.length === 0 && section.principles.length > 0 && !isInfeasible && (
           <div className="flex flex-wrap gap-2">
             {section.principles.slice(0, 3).map((principle, i) => (
-              <div key={i} className={cn('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg', 'bg-black/40 backdrop-blur-md border border-white/10')}>
+              <div key={`${principle}-${i}`} className={cn('flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg', 'bg-black/40 backdrop-blur-md border border-white/10')}>
                 <Sparkles className="w-3 h-3 text-emerald-400" />
                 <span className="text-xs font-medium text-white/90 line-clamp-1">{principle}</span>
               </div>

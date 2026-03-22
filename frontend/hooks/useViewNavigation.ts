@@ -1,7 +1,7 @@
 'use client';
 
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { BOOKABLE_STATES } from '@/components/plan/planStateHelpers';
@@ -123,5 +123,5 @@ export function useViewNavigationLight(): Pick<
 
   const finalizePlan = useCallback(() => setFinalized(true), [setFinalized]);
 
-  return { navigateTo, finalizePlan, canViewPlan, activeView };
+  return useMemo(() => ({ navigateTo, finalizePlan, canViewPlan, activeView }), [navigateTo, finalizePlan, canViewPlan, activeView]);
 }

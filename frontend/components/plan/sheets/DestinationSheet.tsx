@@ -8,7 +8,7 @@
  * Uses search/autocomplete input with recent destinations.
  */
 
-import { MapPin, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
@@ -17,10 +17,7 @@ import { POPULAR_DESTINATIONS } from '@/lib/popular-places';
 import { cn } from '@/lib/utils';
 
 import { BaseSheet } from './BaseSheet';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
+import { DestinationPill } from './DestinationSheetParts';
 
 interface DestinationSheetProps {
   open: boolean;
@@ -29,10 +26,6 @@ interface DestinationSheetProps {
   onSave: (destination: string) => void;
   recentDestinations?: string[];
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Component
-// ─────────────────────────────────────────────────────────────────────────────
 
 function DestinationSheetInner({
   open,
@@ -168,26 +161,11 @@ function DestinationSheetInner({
             </h3>
             <div className="flex flex-wrap gap-2">
               {recentDestinations.slice(0, 4).map((dest) => (
-                <button
+                <DestinationPill
                   key={dest}
-                  type="button"
+                  label={dest}
                   onClick={() => handleQuickSelect(dest)}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg',
-                    // Tactile Rule: border-2 for visibility, snap-to-black on hover
-                    'bg-white border-2 border-zinc-200',
-                    'text-xs font-semibold text-zinc-600',
-                    'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                    // Dark: Glass Fill with border-2
-                    'dark:bg-white/5 dark:border-2 dark:border-white/15',
-                    'dark:text-zinc-400',
-                    'dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white',
-                    'transition-all duration-150'
-                  )}
-                >
-                  <MapPin className="h-3.5 w-3.5" />
-                  {dest}
-                </button>
+                />
               ))}
             </div>
           </div>
@@ -200,26 +178,11 @@ function DestinationSheetInner({
             </h3>
           <div className="flex flex-wrap gap-2">
             {POPULAR_DESTINATIONS.map((dest) => (
-              <button
+              <DestinationPill
                 key={dest.iata}
-                type="button"
+                label={dest.name}
                 onClick={() => handleQuickSelect(dest.name)}
-                className={cn(
-                  'inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg',
-                  // Tactile Rule: border-2 for visibility, snap-to-black on hover
-                  'bg-white border-2 border-zinc-200',
-                  'text-xs font-semibold text-zinc-600',
-                  'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                  // Dark: Glass Fill with border-2
-                  'dark:bg-white/5 dark:border-2 dark:border-white/15',
-                  'dark:text-zinc-400',
-                  'dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white',
-                  'transition-all duration-150'
-                )}
-              >
-                <MapPin className="h-3.5 w-3.5" />
-                {dest.name}
-              </button>
+              />
             ))}
           </div>
         </div>

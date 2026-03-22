@@ -678,6 +678,9 @@ def check_tool_contract(backend_log: str, sse_data: str, flow_num: int, report: 
             # response is expected once per turn in multi-turn flows
             if tool == "response":
                 max_expected = num_turns
+            elif tool == "search_tiles":
+                # Coordinator splits tile refresh: pass 1 (flights+hotels), pass 2 (activities)
+                max_expected = 2 * num_turns
             else:
                 max_expected = 1 if num_turns == 1 else 2
             if count > max_expected:
@@ -754,8 +757,8 @@ def check_unnecessary_tile_refreshes(backend_log: str, flow_num: int, report: Fl
 
     # Multiple tile refreshes in single-turn flows is suspicious
     single_turn_flows = {1, 2, 3, 4, 5, 8, 12, 16}
-    if flow_num in single_turn_flows and total > 1:
-        report.warn(f"Single-turn flow had {total} tile refreshes (expected ≤1)")
+    if flow_num in single_turn_flows and total > 2:
+        report.warn(f"Single-turn flow had {total} tile refreshes (expected ≤2)")
 
 
 def check_cache_behavior(backend_log: str, flow_num: int, report: FlowReport) -> None:
@@ -866,14 +869,14 @@ def check_state_rebuilds(backend_log: str, report: FlowReport) -> None:
         if builds > 1:
             report.warn(f"Turn {i}: ItineraryBuilder ran {builds}× — duplicate build")
 
-        # Tile refreshes per turn (should be exactly 0 or 1)
+        # Tile refreshes per turn (0-2 normal; coordinator does 2-pass refresh)
         refreshes = len(
             re.findall(
                 r"\[coordinator\] Refreshing tiles via logistics_node",
                 turn_log,
             )
         )
-        if refreshes > 1:
+        if refreshes > 2:
             report.warn(f"Turn {i}: Tile refresh triggered {refreshes}× — duplicate refresh")
 
 

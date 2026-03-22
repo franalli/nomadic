@@ -123,8 +123,8 @@ vi.mock('@/components/chat/useChatPanelController', () => ({
   useChatPanelController: chatPanelMocks.useController,
 }));
 
-vi.mock('@/lib/api', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
+vi.mock('@/lib/api-streaming', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/api-streaming')>('@/lib/api-streaming');
   return {
     ...actual,
     trackDeeplinkClick: suggestionCardMocks.trackDeeplinkClick,

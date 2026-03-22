@@ -1,6 +1,6 @@
 'use client';
 
-import { getSpecialistEnrichment } from '@/lib/api';
+import { getSpecialistEnrichment } from '@/lib/api-streaming';
 import type { StrategySection } from '@/types/plan-envelope';
 
 // ---------------------------------------------------------------------------

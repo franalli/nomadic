@@ -1,0 +1,6 @@
+# Dev-only dependencies — not needed in production
+-r requirements.txt
+ruff==0.14.10
+pre-commit==4.5.1
+pytest==9.0.2
+pytest-asyncio==1.3.0

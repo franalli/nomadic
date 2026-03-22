@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { useIsDesktop } from '@/hooks/useIsDesktop';
 import type { SpecialistType } from '@/lib/specialistLinkParser';
@@ -82,5 +82,5 @@ export function useSpecialistDeepLink() {
     [isDesktop]
   );
 
-  return { navigateToSpecialist };
+  return useMemo(() => ({ navigateToSpecialist }), [navigateToSpecialist]);
 }

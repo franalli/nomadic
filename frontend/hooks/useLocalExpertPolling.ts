@@ -254,11 +254,11 @@ export function useLocalExpertPolling({
     });
   }, [travelIntelItemCount, showTravelAdviceSegment, isTravelIntelPending]);
 
-  return {
+  return useMemo(() => ({
     effectiveStrategySections,
     intelCategories,
     travelIntelItemCount,
     isTravelIntelPending,
     hasDestinationIntel,
-  };
+  }), [effectiveStrategySections, intelCategories, travelIntelItemCount, isTravelIntelPending, hasDestinationIntel]);
 }

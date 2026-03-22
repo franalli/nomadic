@@ -45,6 +45,7 @@ from app.planner.llm_factory import (
 from app.planner.specialist_registry import TIER2_BROWSE_CATEGORIES
 from app.services.cache_core import MemoryCache, l2_upsert
 from app.services.task_tracker import track as _track_task
+from app.utils.geo import haversine_km as _haversine_km
 
 logger = logging.getLogger(__name__)
 
@@ -69,19 +70,6 @@ _inflight_generation_tasks: dict[str, asyncio.Task[list[dict]]] = {}
 _experience_cache_epoch = 0
 
 _COORD_OUTLIER_THRESHOLD_KM = 100.0
-
-
-def _haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
-    """Great-circle distance between two (lat, lng) points in kilometres."""
-    lat1, lng1 = a
-    lat2, lng2 = b
-    dlat = math.radians(lat2 - lat1)
-    dlng = math.radians(lng2 - lng1)
-    h = (
-        math.sin(dlat / 2) ** 2
-        + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng / 2) ** 2
-    )
-    return 6371.0 * 2 * math.asin(min(1.0, math.sqrt(h)))
 
 
 def _discard_coordinate_outliers(tiles: list[dict]) -> None:
@@ -157,7 +145,7 @@ def _set_tier2_generation_source(state, source: str) -> None:
         state.metadata["tier2_generation_source_internal"] = source
 
 
-def clear_experience_cache() -> int:
+def clear_memory_cache() -> int:
     """Clear L1 experience cache. Returns count of cleared entries."""
     return _mem.clear()
 
@@ -166,7 +154,7 @@ def _experience_cache_write_allowed(cache_epoch: int | None) -> bool:
     return cache_epoch is None or cache_epoch == _experience_cache_epoch
 
 
-async def clear_experience_db_cache(db: AsyncSession) -> int:
+async def clear_db_cache(db: AsyncSession) -> int:
     """Clear all L2 experience cache entries. Returns count deleted."""
     from app.db_models import ResponseCache
 

@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 _memory_cache: MemoryCache = MemoryCache(maxsize=512, ttl=7200)
 _memory_cache_lock = asyncio.Lock()
 # Threading lock for sync access paths (get_cached_image_url, get_image_url_sync,
-# clear_memory_cache, get_memory_cache_stats). The asyncio.Lock above only
+# clear_memory_cache, get_cache_stats). The asyncio.Lock above only
 # protects async callers; sync functions called from thread-pool executors need this.
 _sync_lock = threading.RLock()
 # In-flight fetch dedupe (destination/activity scoped).
@@ -984,7 +984,7 @@ async def clear_db_cache(db: AsyncSession) -> int:
         return 0
 
 
-def get_memory_cache_stats() -> dict:
+def get_cache_stats() -> dict:
     """Return statistics about the in-memory Unsplash cache."""
     with _sync_lock:
         destinations = {

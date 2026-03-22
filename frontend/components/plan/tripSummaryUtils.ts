@@ -9,7 +9,7 @@
 import { canonicalCategoryKey, TIER1_CONSTRAINT_HINTS, toCategoryKey } from '@/lib/categoryNormalization';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
 
-export const NON_ACTIVITY_TYPES = new Set([
+const NON_ACTIVITY_TYPES = new Set([
   'arrival',
   'departure',
   'check-in',
@@ -73,15 +73,15 @@ export function inferConstraintCategories(block: DayBlock): string[] {
   return Array.from(categories);
 }
 
-export function blockTextForMatching(block: DayBlock): string {
+function blockTextForMatching(block: DayBlock): string {
   return `${String(block.activity_type ?? '')} ${String(block.summary ?? '')}`.toLowerCase();
 }
 
-export function escapeRegex(value: string): string {
+function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-export function blockMatchesCategory(block: DayBlock, category: string): boolean {
+function blockMatchesCategory(block: DayBlock, category: string): boolean {
   const resolved = resolveBlockCategory(block);
   if (resolved === category) return true;
 

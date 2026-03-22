@@ -13,7 +13,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
 
-import { isBootstrap, ITINERARY_STATES } from '@/components/plan/planStateHelpers';
+import { isBootstrap, isResolving, ITINERARY_STATES } from '@/components/plan/planStateHelpers';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import type { PlanViewState } from '@/types/plan-envelope';
@@ -30,7 +30,7 @@ export function getChatStatusConfig(
   /** UI loading signal — replaces the old isFraming(planViewState) check */
   isFramingOverride?: boolean,
 ): { text: string; label: string; indicator: 'blink' | 'spin' | 'pulse' | 'check' } {
-  if (isFramingOverride || isGenerating || planState === 'RESOLVING') {
+  if (isFramingOverride || isGenerating || isResolving(planState)) {
     return { text: 'Building your trip...', label: 'Generating', indicator: 'spin' };
   }
   if (isBootstrap(planViewState)) {
@@ -95,7 +95,7 @@ export function ChatStatusHeader({
       >
         {/* Hero image — only when destination image available */}
         {showHero && (
-          <div className="relative h-full overflow-hidden rounded-2xl ring-1 ring-white/10 shadow-[0_8px_30px_rgba(0,0,0,0.4)]">
+          <div className={cn("relative h-full overflow-hidden rounded-2xl ring-1 ring-white/10", DS.shadow.heroOverlay)}>
             <img
               src={destinationImageUrl!}
               alt={destination ?? 'Destination'}

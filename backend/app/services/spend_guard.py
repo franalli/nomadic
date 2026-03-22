@@ -444,10 +444,6 @@ def flush_spend_state() -> None:
     """DB-backed counters are already durable; kept for lifespan compatibility."""
 
 
-def _load_state() -> None:
-    """No-op retained for compatibility after migrating to DB-backed counters."""
-
-
 if not settings.spend_guard_enabled:
     _level = logging.CRITICAL if not settings.is_dev else logging.WARNING
     logger.log(

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
 import { apiFetch } from '@/lib/api';
@@ -125,11 +125,15 @@ export function useHeaderActions({
   }, [login]);
 
   const handleLogout = useCallback(async () => {
-    await logout();
-    onMenuClose();
+    try {
+      await logout();
+      onMenuClose();
+    } catch (err) {
+      console.error('Logout failed:', err);
+    }
   }, [logout, onMenuClose]);
 
-  return {
+  return useMemo(() => ({
     pdfState,
     shareState,
     handleNewTrip,
@@ -137,5 +141,5 @@ export function useHeaderActions({
     handleShareTrip,
     handleLogin,
     handleLogout,
-  };
+  }), [pdfState, shareState, handleNewTrip, handlePdfExport, handleShareTrip, handleLogin, handleLogout]);
 }

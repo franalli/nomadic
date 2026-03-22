@@ -6,15 +6,14 @@ import { forwardRef, useImperativeHandle } from 'react';
 import { cn } from '@/lib/utils';
 
 import { ErrorBoundary } from '../ui/ErrorBoundary';
-import { ChatBootstrapHero } from './ChatBootstrapHero';
 import { ChatInputHandler } from './ChatInputHandler';
 import { ChatMessageList } from './ChatMessageList';
 import { ChatModuleSheets } from './ChatModuleSheets';
 import type { ChatPanelHandle, ChatPanelProps } from './ChatPanel.types';
+import { ActiveLoaderSection, buildScrollHeaderContent } from './ChatPanelContentParts';
 import { shouldShowBootstrapHero, shouldUseLandingChatLayout } from './chatPanelLayout';
 import { ChatStatusHeader } from './ChatStatusHeader';
 import { ChatSuggestionBar } from './ChatSuggestionBar';
-import { SmartLoader } from './SmartLoader';
 import { useChatPanelController } from './useChatPanelController';
 
 export type { ChatPanelHandle, ChatPanelProps } from './ChatPanel.types';
@@ -24,30 +23,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   ref
 ) {
   const {
-    hasBranches,
-    isGenerating,
-    readyToGenerate,
-    planState,
-    destination,
-    origin,
-    dateRange,
-    budget,
-    hasDestination = false,
-    hasDates = false,
-    tripInputs,
-    bookingTypes,
-    flightSettings,
-    hotelSettings,
-    activitySettings,
-    onUpdateBookingTypes,
-    onUpdateFlightSettings,
-    onUpdateHotelSettings,
-    onUpdateActivitySettings,
-    planViewState,
-    isFraming: isFramingProp,
-    onOpenSheet,
-    destinationImageUrl,
-    onConfirmReset,
+    hasBranches, isGenerating, readyToGenerate, planState,
+    destination, origin, dateRange, budget,
+    hasDestination = false, hasDates = false,
+    tripInputs, bookingTypes, flightSettings, hotelSettings, activitySettings,
+    onUpdateBookingTypes, onUpdateFlightSettings, onUpdateHotelSettings,
+    planViewState, isFraming: isFramingProp,
+    onOpenSheet, destinationImageUrl, onConfirmReset,
   } = props;
 
   const {
@@ -126,40 +108,34 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
           isDesktop={isDesktop}
           planViewState={planViewState ?? undefined}
           isLanding={useLandingChatLayout}
-          scrollHeaderContent={
-            showBootstrapHero ? (
-              <ChatBootstrapHero
-                planViewState={planViewState}
-                planState={planState}
-                isGenerating={isGenerating ?? false}
-                isFraming={isFramingProp}
-                destination={destination}
-                origin={origin}
-                hasDates={hasDates}
-                dateRange={dateRange}
-                budget={budget}
-                tripInputs={tripInputs}
-                bookingTypes={bookingTypes}
-                flightSettings={flightSettings}
-                hotelSettings={hotelSettings}
-                activitySettings={activitySettings}
-                onOpenSheet={onOpenSheet}
-                onOpenModuleSheet={setOpenModuleSheet}
-              />
-            ) : undefined
-          }
+          scrollHeaderContent={buildScrollHeaderContent({
+            showBootstrapHero,
+            planViewState,
+            planState,
+            isGenerating: isGenerating ?? false,
+            isFraming: isFramingProp,
+            destination,
+            origin,
+            hasDates,
+            dateRange,
+            budget,
+            tripInputs,
+            bookingTypes,
+            flightSettings,
+            hotelSettings,
+            activitySettings,
+            onOpenSheet,
+            onOpenModuleSheet: setOpenModuleSheet,
+          })}
         />
 
         <div className="relative z-20 shrink-0 space-y-4 pb-0">
-          {isRegenerating ? (
-            <SmartLoader
-              status={{ label: 'REBUILDING ITINERARY', icon_key: 'calendar' }}
-            />
-          ) : chatSend.isLoading &&
-            activeStatus &&
-            visibleMessages[visibleMessages.length - 1]?.role === 'user' ? (
-            <SmartLoader status={activeStatus} />
-          ) : null}
+          <ActiveLoaderSection
+            isRegenerating={isRegenerating}
+            isLoading={chatSend.isLoading}
+            activeStatus={activeStatus}
+            visibleMessages={visibleMessages}
+          />
           <ChatSuggestionBar
             effectiveSuggestions={effectiveSuggestions}
             suggestionChips={chatSend.suggestionChips}
@@ -203,14 +179,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
           flightSettings={flightSettings}
           hotelSettings={hotelSettings}
           activitySettings={activitySettings}
-          planViewState={planViewState ?? undefined}
           origin={origin}
           hasDestination={hasDestination}
           hasDates={hasDates}
           onUpdateBookingTypes={onUpdateBookingTypes}
           onUpdateFlightSettings={onUpdateFlightSettings}
           onUpdateHotelSettings={onUpdateHotelSettings}
-          onUpdateActivitySettings={onUpdateActivitySettings}
           onOpenSheet={onOpenSheet}
           sendMessageCore={chatSend.sendMessageCore}
           toast={toast}

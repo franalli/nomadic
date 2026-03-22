@@ -192,20 +192,6 @@ def get_destination_gallery(destination: str) -> List[dict]:
     ]
 
 
-def get_hero_image(category: str, seed: Optional[str] = None) -> str:
-    """
-    Get a hero image for a specialist or activity.
-
-    Args:
-        category: Specialist type (diving, hiking, skiing, etc.)
-        seed: Optional seed for deterministic selection
-
-    Returns:
-        Unsplash CDN URL for the hero image
-    """
-    return get_placeholder_image(category, seed, 800, 400)
-
-
 def get_activity_image(topic: str, destination: str, title: str) -> str:
     """
     Get a placeholder image for an activity without curated content.

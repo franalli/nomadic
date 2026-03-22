@@ -272,8 +272,8 @@ class TestPlanTurnPlanning:
         # Response is always last
         assert step_types[-1] == StepType.GENERATE_RESPONSE
 
-    def test_initial_plan_splits_tiles_into_hotels_then_activities(self) -> None:
-        """SEARCH_TILES is split into hotels+flights first, activities second."""
+    def test_initial_plan_emits_single_tile_step_with_all_types(self) -> None:
+        """SEARCH_TILES is a single step — logistics_node handles internal parallelism."""
         classifier = _make_classifier(
             intent="PLANNING",
             change_type=ChangeType.INITIAL_PLAN,
@@ -287,12 +287,10 @@ class TestPlanTurnPlanning:
         plan = plan_turn(classifier, state)
 
         tile_steps = [s for s in plan.steps if s.step_type == StepType.SEARCH_TILES]
-        assert len(tile_steps) == 2, "Expected two SEARCH_TILES steps for progressive rendering"
-        assert set(tile_steps[0].params["tile_types"]) <= {"flights", "hotels"}
-        assert tile_steps[1].params["tile_types"] == ["activities"]
-        # First tile step runs parallel with specialists, second is sequential
+        assert len(tile_steps) == 1, "Expected single SEARCH_TILES step"
+        assert set(tile_steps[0].params["tile_types"]) == {"flights", "hotels", "activities"}
+        # Tile step runs parallel with specialists
         assert tile_steps[0].parallel_with == StepType.DISPATCH_SPECIALISTS
-        assert tile_steps[1].parallel_with is None
 
     def test_destination_only_no_dates_skips_tiles_and_builder(self) -> None:
         """Without dates, tiles and itinerary builder should not run."""
@@ -1167,12 +1165,14 @@ class TestLogisticsFlightRefresh:
         async def _fake_resolve_iata_codes(origin: str, destination: str, _state: GraphState):
             return "AMS", "DPS"
 
-        async def _fake_search_aviasales_flights(**kwargs: Any) -> list[Dict[str, Any]]:
+        async def _fake_search_aviasales_flights(**kwargs: Any):
+            from app.services.aviasales_provider import FlightSearchResult
+
             order.append("flight_start")
             flight_started.set()
             await asyncio.wait_for(release_flights.wait(), timeout=0.1)
             order.append("flight_end")
-            return []
+            return FlightSearchResult()
 
         monkeypatch.setattr(app_settings, "aviasales_enabled", True)
         monkeypatch.setattr(
@@ -2833,7 +2833,9 @@ class TestExecuteTurn:
             assistant_message: str,
         ) -> Dict[str, Any]:
             order.append("envelope")
-            assert state_arg["day_cards"][0]["blocks"][0]["deeplink"] == "https://viator.test"
+            # Envelope is now built BEFORE enrichment completes, so day_cards
+            # should NOT yet contain the enriched deeplink field.
+            assert "deeplink" not in state_arg["day_cards"][0]["blocks"][0]
             return {
                 "document": {"day_cards": list(state_arg.get("day_cards", []))},
                 "assistant_message": assistant_message,
@@ -2870,30 +2872,26 @@ class TestExecuteTurn:
             )
         ]
 
+        # Enrichment task starts during BUILD_ITINERARY (before response streaming)
         assert order.index("enrichment_started") < order.index("response_finished")
-        assert order.index("enrichment_finished") < order.index("envelope")
-        response_completed_index = next(
-            idx
-            for idx, event in enumerate(events)
-            if event["type"] == "node_status"
-            and event["data"]["node"] == "response"
-            and event["data"]["status"] == "completed"
-        )
+        # Envelope is now emitted BEFORE enrichment finishes (non-blocking)
+        assert order.index("envelope") < order.index("enrichment_finished")
+
         complete_index = next(
             idx for idx, event in enumerate(events) if event["type"] == "complete"
         )
-        partial_events = [
+        # Enrichment follow-up partials are emitted AFTER the complete event
+        partial_events_after_complete = [
             event
-            for event in events
+            for event in events[complete_index + 1 :]
             if event["type"] == "partial" and event["data"]["kind"] != "trip_inputs"
         ]
-        assert [event["data"]["kind"] for event in partial_events] == [
-            "day_cards",
+        assert [event["data"]["kind"] for event in partial_events_after_complete] == [
             "tile_enrichment",
             "day_cards",
             "tiles",
         ]
-        tile_enrichment_event = partial_events[1]
+        tile_enrichment_event = partial_events_after_complete[0]
         assert (
             tile_enrichment_event["data"]["payload"]["day_cards"][0]["blocks"][0]["deeplink"]
             == "https://viator.test"
@@ -2903,15 +2901,12 @@ class TestExecuteTurn:
         assert tile_enrichment_event["data"]["payload"]["tiles_changed"] is True
         assert tile_enrichment_event["data"]["payload"]["plan_view_state"] == "S3_ITINERARY_READY"
 
-        enriched_day_cards_event = partial_events[2]
+        enriched_day_cards_event = partial_events_after_complete[1]
         assert (
             enriched_day_cards_event["data"]["payload"]["day_cards"][0]["blocks"][0]["deeplink"]
             == "https://viator.test"
         )
-        assert partial_events[3]["data"]["payload"]["tile_1"]["provider"] == "viator"
-        tile_enrichment_index = events.index(tile_enrichment_event)
-        assert response_completed_index < tile_enrichment_index < complete_index
-        assert events[-1]["type"] == "complete"
+        assert partial_events_after_complete[2]["data"]["payload"]["tile_1"]["provider"] == "viator"
 
     @pytest.mark.asyncio
     async def test_noop_initial_plan_preserves_existing_itinerary(self, monkeypatch: Any) -> None:

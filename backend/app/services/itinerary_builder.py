@@ -1861,7 +1861,7 @@ class ItineraryBuilder:
                     self.preferences and self.preferences.is_activity_preferred(activity_id)
                 )
                 # Store preference state on activity for later use
-                activity.is_user_preferred = is_preferred  # type: ignore
+                activity.is_user_preferred = is_preferred  # type: ignore[attr-defined]  # dynamic attr for sort priority
                 if is_preferred:
                     _debug(f"[ItineraryBuilder] ❤️ Activity '{activity.title}' is user-preferred")
 
@@ -3927,10 +3927,6 @@ class ItineraryBuilder:
             ):
                 return True
         return False
-
-    @staticmethod
-    def _normalize_map_type_key(value: Any) -> Optional[str]:
-        return normalize_poi_type_key(value)
 
     @classmethod
     def _canonical_map_type(cls, raw: Any) -> Optional[str]:

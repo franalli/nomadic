@@ -8,14 +8,13 @@ import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
 import { trackEvent } from '@/lib/analytics';
-import {
-  apiFetch,
-  type DayCardsPartialPayload,
-  parseRetryAfter,
-  type SpecialistPreviewActivity,
-  type SpecialistPreviewPayload,
-  type TileEnrichmentPayload,
-} from '@/lib/api';
+import { apiFetch, parseRetryAfter } from '@/lib/api';
+import type {
+  DayCardsPartialPayload,
+  SpecialistPreviewActivity,
+  SpecialistPreviewPayload,
+  TileEnrichmentPayload,
+} from '@/lib/api-streaming';
 import { debugLog, explicitDebugLog } from '@/lib/debug';
 import type {
   ActivitySettings,
@@ -1655,7 +1654,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           set({ isLoading: false });
           return null;
         }
-        console.error('[documentStore.fetchDocument] ❌ Error:', err);
+        console.error('[documentStore.fetchDocument] Error:', err);
         const message = err instanceof Error ? err.message : 'Failed to fetch document';
         set({ isLoading: false, error: message });
         return null;
@@ -2841,7 +2840,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             version: patchVersion,
             preferred_tile_ids: Array.from(currentSet),
           };
-          debugLog('[documentStore] 💜 PATCH preferences:', patchData);
+          debugLog('[documentStore] PATCH preferences:', patchData);
           return apiFetch('/api/document', {
             method: 'PATCH',
             body: JSON.stringify(patchData),
@@ -2865,12 +2864,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           if (res.ok) {
             const responseData = await res.json();
             set({ version: responseData.version });
-            debugLog('[documentStore] 💜 PATCH success, new version:', responseData.version);
+            debugLog('[documentStore] PATCH success, new version:', responseData.version);
           } else {
-            debugLog('[documentStore] 💜 PATCH failed:', res.status);
+            debugLog('[documentStore] PATCH failed:', res.status);
           }
         } catch (err) {
-          console.error('[documentStore] 💜 PATCH error:', err);
+          console.error('[documentStore] PATCH error:', err);
         }
         resolve();
       }, 500);

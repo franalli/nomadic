@@ -1,7 +1,7 @@
 'use client';
 
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 interface UseDelayedLoaderOptions {
   /** Delay before showing loader (ms). Default: 400ms */
@@ -99,10 +99,10 @@ export function useDelayedLoader(options: UseDelayedLoaderOptions = {}): Delayed
     setIsVisible(false);
   }, []);
 
-  return {
+  return useMemo(() => ({
     isVisible,
     startLoading,
     onTangibleOutput,
     reset,
-  };
+  }), [isVisible, startLoading, onTangibleOutput, reset]);
 }

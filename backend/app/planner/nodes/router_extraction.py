@@ -813,27 +813,6 @@ def _validate_extraction(extracted: dict, today_date: str, user_message: str = "
     return extracted
 
 
-def _parse_day_preferences(raw: Optional[str], user_text: str = "") -> dict[str, int]:
-    """Parse activity_day_preferences JSON string → dict. Returns {} on failure.
-
-    Guards against LLM hallucination: day preferences require the user to state
-    a number (e.g. "3 days diving"). If the user message contains no digits,
-    the LLM is inferring counts from trip duration — reject those.
-    """
-    if not raw:
-        return {}
-    if user_text and not any(c.isdigit() for c in user_text):
-        logger.info(f"[ROUTER] Ignoring hallucinated day_preferences: {raw} (no digits)")
-        return {}
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict):
-            return {k.lower().strip(): int(v) for k, v in parsed.items()}
-    except (json.JSONDecodeError, TypeError, ValueError):
-        logger.warning(f"Invalid activity_day_preferences JSON: {raw}")
-    return {}
-
-
 def _build_current_trip_context(state: "GraphState") -> str:
     """Build prompt context used for relative-date extraction."""
     tp = state.trip_plan

@@ -79,6 +79,7 @@ backend/
 │   ├── db_models.py            # SQLAlchemy models
 │   ├── debug_utils.py          # Debugging utilities
 │   ├── graph_plan_utils.py     # Graph plan route utilities
+│   ├── http_clients.py         # Shared httpx clients (photo proxy) to avoid circular imports
 │   ├── lifespan.py             # Application lifespan hooks (startup + shutdown)
 │   ├── main.py                 # FastAPI application entry
 │   ├── placeholders.py         # Placeholder data
@@ -121,7 +122,6 @@ backend/
 │   │   │   ├── expert_constraints.py        # Local expert schema + grounded constraints
 │   │   │   ├── local_expert.py             # Local knowledge section generation
 │   │   │   ├── logistics_node.py           # Flights/hotels/activity fetching
-│   │   │   ├── specialist_schemas.py       # Specialist Pydantic schemas
 │   │   │   └── vertical_specialist.py      # Tier 1 specialist planning
 │   │   │
 │   │   ├── services/
@@ -177,6 +177,7 @@ backend/
 │   │
 │   ├── utils/                 # Shared utility modules
 │   │   ├── __init__.py
+│   │   ├── geo.py             # Shared geographic utilities (haversine_km)
 │   │   └── tile_utils.py      # Tile flattening (category-grouped → ID-based map)
 │   │
 │   ├── tile_service/           # Tile data providers
@@ -228,6 +229,8 @@ backend/
 │   ├── conftest.py                       # Pytest fixtures
 │   ├── llm_stub.py                       # LLM mock for testing
 │   ├── run_curl_flows.sh                 # End-to-end curl flow tests
+│   ├── curl_flow_validators.py           # Curl flow response validators
+│   ├── test_curl_flow_validators.py      # Curl flow validator tests
 │   ├── analyze_flow_logs.py               # Flow log analysis and regression checks
 │   ├── test_activity_browser.py          # Browse activities backend contract tests
 │   ├── test_activity_category_conflicts.py  # Shared partner-category conflict rule tests
@@ -274,15 +277,23 @@ backend/
 │   ├── test_specialist_enrichment_endpoint.py  # Specialist enrichment endpoint tests
 │   ├── test_specialist_structured.py     # Specialist structured output tests
 │   ├── test_spend_guard.py              # Spend guard tests
-│   ├── test_stage11_day_preferences.py   # Day-preference placement regression tests
+│   ├── test_analytics_routes.py          # Analytics route endpoint tests
+│   ├── test_geo.py                       # Geographic utility (haversine) tests
+│   ├── test_http_clients.py              # Shared HTTP client tests
+│   ├── test_placeholders.py              # Placeholder data tests
 │   ├── test_graph_integration.py         # ItineraryBuilder full-pipeline integration tests
 │   ├── test_tile_cache.py                # Tile cache tests (L1/L2, thread safety)
 │   ├── test_typed_meta.py                # Typed metadata bridge tests
 │   ├── test_admin_utils.py               # Admin utility tests
 │   ├── test_cache_core.py                # Cache core tests
+│   ├── test_critical_coverage.py         # Critical coverage gap tests
+│   ├── test_crud_document.py             # Document CRUD operation tests
 │   ├── test_constraint_engine.py         # Constraint engine tests
 │   ├── test_itinerary_adapter.py         # Itinerary adapter tests
 │   ├── test_llm_factory.py              # LLM factory tests
+│   ├── test_logistics_node.py           # Logistics node tests
+│   ├── test_sharing.py                  # Share/trip sharing tests
+│   ├── test_crud_trip.py                # Trip CRUD operation tests
 │   ├── test_section_builder.py          # Section builder tests
 │   ├── test_state_serde.py              # State serde tests
 │   ├── test_unsplash_service.py          # Unsplash service fallback + retry tests
@@ -315,6 +326,7 @@ backend/
 ├── alembic.ini                 # Alembic migration config
 ├── Dockerfile                  # Backend Docker image
 ├── pyproject.toml              # Python project config
+├── dev-requirements.txt        # Dev/test-only Python dependencies
 ├── requirements.txt            # Python dependencies
 ├── start.py                    # Server startup script
 └── test_unsplash.py            # Unsplash integration test
@@ -360,10 +372,13 @@ frontend/
 │   │   ├── ChatPanel.types.ts              # ChatPanel shared types
 │   │   ├── chatPanelLayout.ts              # Layout logic helpers (shouldUseLandingChatLayout, shouldShowBootstrapHero)
 │   │   ├── ChatPanelContent.tsx            # ChatPanel content rendering (extracted from ChatPanel)
+│   │   ├── ChatPanelContentParts.tsx       # ChatPanelContent sub-components (extracted)
 │   │   ├── ChatStatusHeader.tsx        # Desktop status hero/mini bar above chat
 │   │   ├── ChatSkeleton.tsx
 │   │   ├── ChatSuggestionBar.tsx     # Thin wrapper around ChatSuggestionChips for ChatPanel integration
 │   │   ├── ChatSuggestionChips.tsx   # Suggestion chips rendering (extracted from ChatPanel)
+│   │   ├── SuggestionChipItem.tsx          # Individual suggestion chip component (extracted)
+│   │   ├── chatModuleSheetHandlers.ts      # Module sheet open/close handlers (extracted from ChatModuleSheets)
 │   │   ├── DateFlexChip.tsx         # Date flex suggestion chip (cheaper nearby departure date)
 │   │   ├── MobileChatInput.tsx
 │   │   ├── SmartLoader.tsx
@@ -389,6 +404,7 @@ frontend/
 │   │   ├── SplitLayoutView.tsx
 │   │   ├── headerMenuParts.tsx             # Shared header menu parts
 │   │   └── hooks/              # Layout-specific hooks
+│   │       ├── branchManagerTypes.ts            # Type definitions for useBranchManager (extracted)
 │   │       ├── useBranchManager.ts
 │   │       ├── useBranchState.ts
 │   │       ├── useItineraryGeneration.ts  # Itinerary generation orchestration (extracted from NomadicLanding)
@@ -398,7 +414,10 @@ frontend/
 │   │       ├── useLandingEffects.ts       # Side effects for NomadicLanding (extracted)
 │   │       ├── useLandingHandlers.ts
 │   │       ├── useLandingPlanState.ts             # Landing plan-state orchestration extracted from controller
+│   │       ├── useHeaderAndMobileContent.tsx     # Header + mobile content surface assembly (extracted from useLandingRenderSurfaces)
 │   │       ├── useLandingRenderSurfaces.tsx       # Planner/header/mobile surface assembly for landing route
+│   │       ├── usePlanViewContent.tsx            # Plan view content surface (extracted from useLandingRenderSurfaces)
+│   │       ├── usePlannerContent.tsx             # Planner content surface (extracted from useLandingRenderSurfaces)
 │   │       ├── useLandingStoreSnapshot.ts         # Landing document snapshot helpers
 │   │       ├── useLocalBookingSettings.ts
 │   │       ├── useNomadicLandingController.tsx      # NomadicLanding controller hook (state+effects)
@@ -428,11 +447,14 @@ frontend/
 │   │
 │   ├── plan/                   # Plan view components
 │   │   ├── BookingPlanningView.tsx           # Booking controls rendered in full-density planning context
+│   │   ├── BookingPlanningViewParts.tsx     # BookingPlanningView sub-components (extracted)
 │   │   ├── BookingSection.helpers.ts         # BookingSection helper utilities
 │   │   ├── BookingSection.tsx
 │   │   ├── BookingSectionBookingView.tsx     # Booking view extracted from BookingSection
 │   │   ├── BookingSummary.tsx                # Grouped booking-links summary for bookable stays/flights/activities
+│   │   ├── BookingSummaryParts.tsx          # BookingSummary sub-components (extracted)
 │   │   ├── BrowseActivitiesSheet.tsx  # Bottom sheet for browsing categorized activity tiles (Tier 1 free days)
+│   │   ├── BrowseActivitiesContent.tsx     # BrowseActivitiesSheet content rendering (extracted)
 │   │   ├── PdfExportButton.tsx               # Export generated itinerary to PDF
 │   │   ├── ChipGroup.tsx
 │   │   ├── ChipScrollContainer.tsx        # Shared horizontal chip wrapper (carousel-safe)
@@ -440,6 +462,7 @@ frontend/
 │   │   ├── ItineraryProgressIndicator.tsx  # Path A: Auto-generation progress display
 │   │   ├── ModuleChip.tsx                  # Individual module chip component
 │   │   ├── NextStepBar.tsx
+│   │   ├── NextStepBarHelpers.ts           # NextStepBar helper utilities (extracted)
 │   │   ├── OriginPromptCard.tsx
 │   │   ├── PlanDensityViews.tsx            # Mirror-loader density view (`PlanMirrorLoader`)
 │   │   ├── PlanFullDensityDesktopMap.tsx   # Desktop map section for PlanFullDensityView
@@ -451,11 +474,13 @@ frontend/
 │   │   ├── PlanHeader.tsx
 │   │   ├── PlanTimelineSection.tsx         # Timeline section with DnD wiring for full-density view
 │   │   ├── pdf/                            # PDF export rendering subtree
-│   │   │   └── TripPdfDocument.tsx          # @react-pdf renderer for itinerary output
+│   │   │   ├── TripPdfDocument.tsx          # @react-pdf renderer for itinerary output
+│   │   │   └── tripPdfStyles.ts            # PDF style definitions (extracted)
 │   │   ├── planStateHelpers.ts
 │   │   ├── SetupCoreChip.tsx               # Setup core chip component
 │   │   ├── ShareTripButton.tsx             # Share-link CTA for itinerary surfaces
 │   │   ├── StrategyStageRenderer.tsx  # Main orchestrator: 60/40 map layout when destination set
+│   │   ├── strategyStageHelpers.ts         # StrategyStageRenderer helper utilities (extracted)
 │   │   ├── strategyStagePoi.ts             # Stable day-card snapshot + fingerprint helpers for map POI rendering
 │   │   ├── TimelineBlockList.helpers.ts    # TimelineBlockList helper utilities
 │   │   ├── TimelineBlockList.tsx
@@ -469,6 +494,7 @@ frontend/
 │   │   ├── TripSummaryPillsSegment.tsx     # Pill segment extracted from TripSummaryPills
 │   │   ├── tripSummaryUtils.ts        # Shared category/day-count inference for pills and activity sheet
 │   │   ├── UnifiedChipRow.tsx
+│   │   ├── unifiedChipRowHelpers.tsx       # UnifiedChipRow helper components (extracted)
 │   │   ├── useBookingDrawerState.ts        # Booking drawer open/close + fill-day API hook
 │   │   ├── usePlanFullDensityData.tsx      # PlanFullDensityView data hook
 │   │   ├── useStickyHeaderOffset.ts        # Sticky header offset hook
@@ -481,26 +507,39 @@ frontend/
 │   │   ├── booking/
 │   │   │   ├── BookingDrawer.tsx
 │   │   │   ├── CategorySection.tsx
+│   │   │   ├── CategorySectionParts.tsx    # CategorySection sub-components (extracted)
 │   │   │   └── CheckoutSidebar.tsx
 │   │   │
 │   │   ├── modals/
-│   │   │   └── AlternativesModal.tsx
+│   │   │   ├── AlternativesModal.tsx
+│   │   │   ├── AlternativesModalParts.tsx        # AlternativesModal sub-components (extracted)
+│   │   │   └── alternativesHelpers.ts            # AlternativesModal helper utilities (extracted)
 │   │   │
 │   │   ├── sheets/             # Bottom sheets
 │   │   │   ├── ActivitiesSheet.tsx
+│   │   │   ├── ActivitiesSheetParts.tsx        # ActivitiesSheet sub-components (extracted)
 │   │   │   ├── ActivitiesSheetContent.tsx      # Activity sheet form/section rendering
 │   │   │   ├── BaseSheet.shared.tsx            # Shared BaseSheet utilities/types
 │   │   │   ├── BaseSheet.tsx
 │   │   │   ├── BaseSheetDesktopDialog.tsx      # Desktop dialog variant of BaseSheet
 │   │   │   ├── BaseSheetMobileSheet.tsx        # Mobile sheet variant of BaseSheet
 │   │   │   ├── BudgetSheet.tsx
+│   │   │   ├── BudgetSheetParts.tsx              # BudgetSheet sub-components (extracted)
 │   │   │   ├── DatesSheet.tsx
+│   │   │   ├── DatesSheetParts.tsx               # DatesSheet sub-components (extracted)
+│   │   │   ├── datePresets.ts                    # Date preset definitions for DatesSheet (extracted)
 │   │   │   ├── DestinationSheet.tsx
+│   │   │   ├── DestinationSheetParts.tsx       # DestinationSheet sub-components (extracted)
 │   │   │   ├── FlightsSheet.tsx
+│   │   │   ├── FlightsSheetParts.tsx             # FlightsSheet sub-components (extracted)
+│   │   │   ├── activitiesSheetHelpers.ts         # ActivitiesSheet helper utilities (extracted)
 │   │   │   ├── GatingBlocker.tsx     # Shared gate-check blocker (gates array, used by Flights/Stays/Activities sheets)
 │   │   │   ├── OriginSheet.tsx
+│   │   │   ├── OriginSheetParts.tsx            # OriginSheet sub-components (extracted)
 │   │   │   ├── StaysSheet.tsx
+│   │   │   ├── StaysSheetParts.tsx             # StaysSheet sub-components (extracted)
 │   │   │   ├── TravelersSheet.tsx
+│   │   │   ├── TravelersSheetParts.tsx         # TravelersSheet sub-components (extracted)
 │   │   │   └── TripSettingsSheet.tsx
 │   │   │
 │   │   ├── stages/             # Stage-specific views
@@ -524,6 +563,7 @@ frontend/
 │   │   │   ├── SuggestionCard.tsx
 │   │   │   ├── SuggestionCardContent.tsx
 │   │   │   ├── suggestionCardSections.tsx      # SuggestionCard sections (extracted)
+│   │   │   ├── suggestionCardSectionsParts.tsx # suggestionCardSections sub-components (extracted)
 │   │   │   └── TileRailCard.tsx               # Compact horizontal rail card for Stays/Flights tiles
 │   │   │
 │   │   └── timeline/
@@ -534,18 +574,24 @@ frontend/
 │   │       ├── InlineDatePrompt.tsx
 │   │       ├── ItineraryDndWrapper.tsx # DndContext root; orchestrates validate/apply-arrangement flow
 │   │       ├── RichBlockRenderer.tsx   # Smart block router: logistics → safety → ghost → activity (extracted from TimelineThread)
+│   │       ├── richBlockHelpers.ts    # RichBlockRenderer helper utilities (extracted)
 │   │       ├── TimelineSkeleton.tsx
+│   │       ├── TimelineSkeletonHelpers.ts  # TimelineSkeleton helper utilities (extracted)
 │   │       ├── useTimelineFillDay.ts   # Fill-day state + handler hook (extracted from TimelineThread)
 │   │       └── blocks/
 │   │           ├── ActivityCardActions.tsx
+│   │           ├── ActivityCardActionsParts.tsx    # ActivityCardActions sub-components (extracted)
 │   │           ├── ActivityCardMeta.helpers.ts     # ActivityCardMeta helper utilities
 │   │           ├── ActivityCardMeta.tsx
 │   │           ├── ActivityCardPhoto.tsx
 │   │           ├── ActivityMiniCard.tsx
+│   │           ├── activityMiniCardParts.tsx       # ActivityMiniCard sub-components (extracted)
 │   │           ├── FreeDayCard.tsx
+│   │           ├── FreeDayCardParts.tsx            # FreeDayCard sub-components (extracted)
 │   │           ├── GhostSlot.tsx
 │   │           ├── HoldToDeleteButton.tsx          # Press-and-hold circular progress delete button
 │   │           ├── LogisticsBlock.tsx
+│   │           ├── logisticsBlockParts.tsx         # LogisticsBlock sub-components (extracted)
 │   │           ├── PreferenceAttributionBadge.tsx  # "You preferred this" badge
 │   │           ├── SafetyBlock.tsx
 │   │           └── types.ts
@@ -582,10 +628,12 @@ frontend/
 │       ├── card.tsx
 │       ├── popover.tsx
 │       ├── sheet.tsx
+│       ├── SheetParts.tsx          # Sheet sub-components (extracted)
 │       ├── skeleton.tsx
 │       ├── switch.tsx
 │       ├── stepper.tsx         # +/- stepper (Glass Fill, sm/default sizes)
 │       ├── toast.tsx
+│       ├── ToastParts.tsx          # Toast sub-components (extracted)
 │       └── tooltip.tsx
 │
 ├── hooks/                      # Custom React hooks
@@ -593,6 +641,8 @@ frontend/
 │   ├── useChatEffects.ts         # ChatPanel side effects (scroll, focus, ready-to-generate; extracted from ChatPanel)
 │   ├── useChatMessagePipeline.ts # Memoized stable/streaming chat-message derivation hook
 │   ├── useChatScrolling.ts       # Chat scroll container, auto-scroll, collapse header (extracted from ChatPanel)
+│   ├── chatSendHelpers.ts        # Stateless utility functions for useChatSend (extracted)
+│   ├── chatSseTypes.ts           # Type definitions for useChatSse (extracted)
 │   ├── useChatSend.ts            # Chat send orchestration + SSE lifecycle (extracted from ChatPanel)
 │   ├── useChatSse.ts             # SSE/streaming connection manager for ChatPanel (extracted from ChatPanel)
 │   ├── useDelayedLoader.ts
@@ -611,7 +661,9 @@ frontend/
 ├── lib/                        # Utility functions
 │   ├── animation-config.ts     # Progressive disclosure timing constants
 │   ├── analytics.ts            # Frontend event tracking helper (trackEvent → /api/analytics/event)
-│   ├── api.ts                  # API client
+│   ├── api.ts                  # API client (core apiFetch, CSRF, retry helpers)
+│   ├── api-document.ts         # Document mutation API (tile refresh, fill-day, arrangement; split from api.ts)
+│   ├── api-streaming.ts        # SSE/streaming API + browse activities + specialist enrichment (split from api.ts)
 │   ├── config.ts               # Shared backend URL constant for RSC + client fetches
 │   ├── contentPolicyGuard.ts   # Content policy validation
 │   ├── date-utils.ts           # Date formatting/parsing utilities

@@ -7,7 +7,6 @@ from app.planner.nodes.logistics_node import (
     _cached_tier2_tiles_for_categories,
     _calculate_diving_safety,
     _compute_tiles_per_category,
-    _curated_to_flight_tiles,
     _fallback_tier2_tiles,
     _get_mock_flights,
     _has_nofly_constraints,
@@ -525,82 +524,6 @@ class TestTier2GenerationKey:
     def test_format_structure(self):
         key = _tier2_generation_key("bali", "march", {"yoga", "cooking"}, 3)
         assert key == "tier2:bali:march:cooking|yoga:n3"
-
-
-# ===========================================================================
-# 7. _curated_to_flight_tiles
-# ===========================================================================
-
-
-class TestCuratedToFlightTiles:
-    def test_converts_single_flight(self):
-        curated = [
-            {
-                "id": "ek_001",
-                "carrier_code": "EK",
-                "carrier_name": "Emirates",
-                "departure_time": "10:30",
-                "duration": "PT6H",
-                "price": 450,
-            }
-        ]
-        result = _curated_to_flight_tiles(curated, "2026-03-15")
-
-        assert len(result) == 1
-        flight = result[0]
-        assert flight["id"] == "ek_001"
-        assert flight["price"]["total"] == "450"
-        segments = flight["itineraries"][0]["segments"]
-        assert len(segments) == 1
-        assert segments[0]["carrierCode"] == "EK"
-        assert segments[0]["departure"]["at"] == "2026-03-15T10:30:00"
-        assert segments[0]["duration"] == "PT6H"
-
-    def test_converts_multiple_flights(self):
-        curated = [
-            {"carrier_code": "EK", "departure_time": "08:00", "duration": "PT5H", "price": 300},
-            {"carrier_code": "BA", "departure_time": "18:00", "duration": "PT7H", "price": 550},
-        ]
-        result = _curated_to_flight_tiles(curated, "2026-04-01")
-        assert len(result) == 2
-        assert result[0]["itineraries"][0]["segments"][0]["carrierCode"] == "EK"
-        assert result[1]["itineraries"][0]["segments"][0]["carrierCode"] == "BA"
-
-    def test_uses_date_str_as_base(self):
-        curated = [
-            {"carrier_code": "SQ", "departure_time": "14:00", "duration": "PT8H", "price": 600}
-        ]
-        result = _curated_to_flight_tiles(curated, "2026-12-25")
-        departure_at = result[0]["itineraries"][0]["segments"][0]["departure"]["at"]
-        assert departure_at.startswith("2026-12-25T")
-
-    def test_defaults_for_missing_fields(self):
-        curated = [{}]
-        result = _curated_to_flight_tiles(curated, "2026-03-15")
-        flight = result[0]
-        # Should use defaults without raising
-        assert flight["price"]["total"] == "0"
-        segments = flight["itineraries"][0]["segments"]
-        assert segments[0]["carrierCode"] == "EK"  # default
-        assert segments[0]["departure"]["at"] == "2026-03-15T12:00:00"  # default
-        assert segments[0]["duration"] == "PT6H"  # default
-
-    def test_truncates_long_date_str(self):
-        curated = [
-            {"carrier_code": "QF", "departure_time": "09:00", "duration": "PT4H", "price": 200}
-        ]
-        # date_str with full ISO timestamp - should take first 10 chars
-        result = _curated_to_flight_tiles(curated, "2026-03-15T14:30:00+00:00")
-        departure_at = result[0]["itineraries"][0]["segments"][0]["departure"]["at"]
-        assert departure_at.startswith("2026-03-15T")
-
-    def test_empty_date_str_uses_fallback(self):
-        curated = [
-            {"carrier_code": "QF", "departure_time": "09:00", "duration": "PT4H", "price": 200}
-        ]
-        result = _curated_to_flight_tiles(curated, "")
-        departure_at = result[0]["itineraries"][0]["segments"][0]["departure"]["at"]
-        assert departure_at.startswith("2026-03-20T")  # fallback date
 
 
 # ===========================================================================

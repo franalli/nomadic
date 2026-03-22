@@ -39,9 +39,6 @@ from app.planner.nodes.expert_constraints import (
     LocalConstraint,
     LocalExpertOutput,
     LocalRecommendation,
-    _get_constraint_context,
-    _get_constraints_as_list,
-    _get_static_must_dos,
 )
 from app.planner.services.section_builder import (
     build_local_expert_section,
@@ -668,10 +665,6 @@ def build_enrichment_closure(
 2. Recommendations: Transit passes, efficiency tips, cultural notes
 Output as JSON with "constraints" and "recommendations" arrays."""
 
-    constraint_context = _get_constraint_context(destination)
-    if constraint_context:
-        system_prompt += constraint_context
-
     system_prompt += (
         "\n\nRespond ONLY with valid JSON (no markdown fences, no commentary) "
         "matching the OUTPUT FORMAT above."
@@ -1047,17 +1040,8 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
     # PHASE A: Instant skeleton (0ms, no LLM)
     # ==========================================================================
 
-    # Build constraints_applied from static data (no LLM)
-    constraint_list = _get_constraints_as_list(plan.destination)
-    constraints_applied = [
-        {
-            "rule": c["desc"],
-            "type": c["type"],
-            "severity": c["severity"],
-            "reason": c["desc"],
-        }
-        for c in constraint_list
-    ]
+    # Static constraint scaffolding removed — constraints come from LLM enrichment.
+    constraints_applied = []
 
     # Enforce minimum constraint floor (6) for consistent UX density.
     # LLM non-determinism can produce 3 or 12 constraints; this ensures
@@ -1122,34 +1106,16 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
     if not gallery_images:
         gallery_images = get_destination_gallery(plan.destination)
 
-    # Keep the generic fallback floor internal to constraints_applied. Visible
-    # section copy should only come from destination-specific scaffold data.
-    visible_constraints = [
-        {
-            "type": c["type"],
-            "desc": c["rule"],
-            "severity": c["severity"],
-        }
-        for c in constraint_list
-    ]
-    warning_constraints = [c for c in visible_constraints if c["severity"] == "warning"]
-    if warning_constraints:
-        warning_types = list({c["type"] for c in warning_constraints})
-        joined = " & ".join(warning_types[:2])
-        one_liner = f"{plan.destination}: review {joined} requirements before your trip"
-    else:
-        one_liner = f"Your adventure in {plan.destination}"
-
-    # Principles stay intentionally sparse when no destination scaffold exists.
-    principles = [c["desc"] for c in warning_constraints[:4]]
+    one_liner = f"Your adventure in {plan.destination}"
+    principles: list[str] = []
 
     # Keep skeleton must_dos empty when LLM enrichment is disabled.
-    must_dos = _get_static_must_dos(plan.destination) if settings.local_expert_use_llm else []
+    must_dos = []
 
     section = build_local_expert_section(
         destination=plan.destination,
         one_liner=one_liner,
-        bullets=[c["desc"] for c in visible_constraints[:3]],
+        bullets=[],
         must_dos=must_dos,
         logistics_notes=[],
         constraints_applied=constraints_applied,

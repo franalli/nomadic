@@ -7,7 +7,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.config import settings
-from app.services.spend_guard import clear_spend_guard_counters, spend_guard_scope
+from app.services import spend_guard as sg_module
+from app.services.spend_guard import SpendLimitExceeded, spend_guard_scope
 
 
 class _FakeResponse:
@@ -51,12 +52,10 @@ def _reset_state():
     from app.tile_service import google_places_provider as provider
 
     provider.clear_google_places_circuit_breaker()
-    clear_spend_guard_counters()
     _FakeQuotaClient.calls = 0
     _FakeSuccessClient.calls = 0
     yield
     provider.clear_google_places_circuit_breaker()
-    clear_spend_guard_counters()
     _FakeQuotaClient.calls = 0
     _FakeSuccessClient.calls = 0
 
@@ -112,6 +111,30 @@ async def test_places_spend_guard_blocks_second_call_without_hitting_api(
     monkeypatch.setattr(settings, "spend_guard_session_daily_cap_usd", 0.03)
     monkeypatch.setattr(settings, "spend_guard_global_daily_cap_usd", 10.0)
     monkeypatch.setattr(settings, "spend_guard_places_estimated_call_usd", 0.02)
+
+    # In-memory spend tracking to avoid runtime_state DB dependency
+    session_spend: dict[str, float] = {}
+
+    def _mock_reserve_or_raise(
+        *, provider: str, estimated_usd: float, session_id: str | None = None, source: str = ""
+    ) -> None:
+        if not settings.spend_guard_enabled:
+            return
+        sid = session_id or sg_module._session_id_ctx.get()
+        key = f"{sid}:{provider}"
+        current = session_spend.get(key, 0.0)
+        if current + estimated_usd > float(settings.spend_guard_session_daily_cap_usd):
+            raise SpendLimitExceeded(
+                provider=provider,
+                scope="session",
+                limit_usd=float(settings.spend_guard_session_daily_cap_usd),
+                current_usd=current,
+                requested_usd=estimated_usd,
+                source=source,
+            )
+        session_spend[key] = current + estimated_usd
+
+    monkeypatch.setattr(sg_module, "_reserve_or_raise", _mock_reserve_or_raise)
 
     fake_client = _FakeSuccessClient()
     mock_get_client = AsyncMock(return_value=fake_client)

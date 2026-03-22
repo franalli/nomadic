@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 from typing import Any
 
 from app.config import settings
+from app.utils.geo import haversine_km as _haversine_km
 
 logger = logging.getLogger(__name__)
 _PARTNER_GEO_MAX_DISTANCE_KM = 120.0
@@ -37,21 +37,6 @@ def _coords_from_tile(tile: dict[str, Any]) -> tuple[float, float] | None:
             return float(lat), float(lng)
 
     return None
-
-
-def _haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
-    """Return the great-circle distance between two lat/lng points."""
-    lat1, lng1 = a
-    lat2, lng2 = b
-    radius_km = 6371.0
-    dlat = math.radians(lat2 - lat1)
-    dlng = math.radians(lng2 - lng1)
-    sin_dlat = math.sin(dlat / 2.0)
-    sin_dlng = math.sin(dlng / 2.0)
-    lat1_rad = math.radians(lat1)
-    lat2_rad = math.radians(lat2)
-    arc = sin_dlat**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * sin_dlng**2
-    return 2.0 * radius_km * math.asin(math.sqrt(arc))
 
 
 def _partner_match_is_geo_compatible(

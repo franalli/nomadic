@@ -7,7 +7,7 @@
  * Mount this once near the timeline root so the timer always runs.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 
 import { useDocumentStore } from '@/state/documentStore';
 
@@ -23,5 +23,5 @@ export function useUndoStack() {
     return () => clearTimeout(timer);
   }, [undoEntry, setUndoEntry]);
 
-  return { undoEntry, executeUndo };
+  return useMemo(() => ({ undoEntry, executeUndo }), [undoEntry, executeUndo]);
 }

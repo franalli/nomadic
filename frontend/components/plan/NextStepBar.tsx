@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { PlanViewState } from '@/types/plan-envelope';
 
+import { formatDateDisplay } from './NextStepBarHelpers';
 import { isStrategyReady } from './planStateHelpers';
 
 interface NextStepBarProps {
@@ -60,54 +61,7 @@ export function NextStepBar({
     trip_duration: state.document?.trip_inputs?.trip_duration ?? null,
   })));
 
-  // Check if dates are in the past (defensive — DatesSheet blocks selection,
-  // but NL extraction could produce past dates before guard catches them)
-  const isPastDates = (() => {
-    if (!tripInputs?.start_date) return false;
-    const today = new Date().toISOString().split('T')[0];
-    return tripInputs.start_date < today;
-  })();
-
-  // Format date range for display (handles incomplete and single-day trips)
-  const dateDisplay = (() => {
-    if (!tripInputs?.start_date) return null;
-    const start = new Date(tripInputs.start_date);
-    const startStr = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-
-    if (isPastDates) {
-      // Past dates: show warning state
-      const endStr = tripInputs.end_date
-        ? new Date(tripInputs.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        : null;
-      return {
-        range: endStr ? `${startStr} — ${endStr}` : startStr,
-        days: null,
-        incomplete: true,
-        pastDates: true,
-      };
-    }
-
-    if (tripInputs.end_date) {
-      const end = new Date(tripInputs.end_date);
-      const isSameDay = start.toDateString() === end.toDateString();
-      const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-
-      if (isSameDay) {
-        // Single day trip: show warning state
-        return { range: startStr, days: 1, incomplete: true, pastDates: false };
-      }
-
-      const endStr = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      return { range: `${startStr} — ${endStr}`, days, incomplete: false, pastDates: false };
-    }
-
-    if (tripInputs.trip_duration) {
-      return { range: startStr, days: tripInputs.trip_duration, incomplete: false, pastDates: false };
-    }
-
-    // Start date only - show incomplete state with arrow
-    return { range: `${startStr} → ?`, days: null, incomplete: true, pastDates: false };
-  })();
+  const dateDisplay = formatDateDisplay(tripInputs);
 
   // Reset click lock when finalization completes
   useEffect(() => {

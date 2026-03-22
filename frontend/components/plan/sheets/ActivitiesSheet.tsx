@@ -1,32 +1,28 @@
 'use client';
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 /**
- * ActivitiesSheet
- *
- * Module sheet for activity preferences.
- * Prerequisites: Destination (dates optional)
- * Includes toggle + category selection + pace.
+ * ActivitiesSheet — Module sheet for activity preferences.
+ * Prerequisites: Destination (dates optional). Includes toggle + category selection + pace.
  */
-
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { useToast } from '@/components/ui/toast';
-import { canonicalCategoryKey } from '@/lib/categoryNormalization';
-import { DS } from '@/lib/design-system';
-import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { ActivitySettings } from '@/types/document';
-import type { DayCard } from '@/types/plan-envelope';
 
-import { inferConstraintCategories, resolveBlockCategory } from '../tripSummaryUtils';
-import { ActivitiesSheetContent, ALL_CATEGORIES } from './ActivitiesSheetContent';
+import { ActivitiesSheetContent } from './ActivitiesSheetContent';
+import { inferCategoriesFromDayCards, inferDayPreferencesFromDayCards } from './activitiesSheetHelpers';
+import {
+  ActivitiesSheetFooter,
+  buildSavePayload,
+  deriveEffectiveInitialCategories,
+  deriveEffectiveInitialDayPreferences,
+  normalizeSettingCategories as normalizeCategories,
+  normalizeSettingDayPreferences as normalizeDayPrefs,
+} from './ActivitiesSheetParts';
 import { BaseSheet } from './BaseSheet';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface ActivitiesSheetProps {
   open: boolean;
@@ -46,55 +42,6 @@ interface ActivitiesSheetProps {
   onOpenDestination?: () => void;
 }
 
-function inferCategoriesFromDayCards(dayCards: DayCard[] | undefined): string[] {
-  if (!dayCards || dayCards.length === 0) return [];
-  const allowed = new Set(ALL_CATEGORIES.map((c) => c.value));
-  const inferred = new Set<string>();
-  dayCards.forEach((card) => {
-    card.blocks?.forEach((block) => {
-      const category = resolveBlockCategory(block);
-      if (category && allowed.has(category)) inferred.add(category);
-      inferConstraintCategories(block).forEach((c) => {
-        if (allowed.has(c)) inferred.add(c);
-      });
-    });
-  });
-  return Array.from(inferred);
-}
-
-function inferDayPreferencesFromDayCards(dayCards: DayCard[] | undefined): Record<string, number> {
-  if (!dayCards || dayCards.length === 0) return {};
-  const allowed = new Set(ALL_CATEGORIES.map((c) => c.value));
-  const categoryToDays = new Map<string, Set<number>>();
-
-  dayCards.forEach((card) => {
-    card.blocks?.forEach((block) => {
-      const category = resolveBlockCategory(block);
-      if (category && allowed.has(category)) {
-        const days = categoryToDays.get(category) ?? new Set<number>();
-        days.add(card.day_number);
-        categoryToDays.set(category, days);
-      }
-      inferConstraintCategories(block).forEach((constraintCategory) => {
-        if (!allowed.has(constraintCategory)) return;
-        const days = categoryToDays.get(constraintCategory) ?? new Set<number>();
-        days.add(card.day_number);
-        categoryToDays.set(constraintCategory, days);
-      });
-    });
-  });
-
-  const counts: Record<string, number> = {};
-  categoryToDays.forEach((days, category) => {
-    counts[category] = days.size;
-  });
-  return counts;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Component
-// ─────────────────────────────────────────────────────────────────────────────
-
 function ActivitiesSheetInner({
   open,
   onOpenChange,
@@ -111,53 +58,21 @@ function ActivitiesSheetInner({
   const inferredCategories = useMemo(() => inferCategoriesFromDayCards(dayCards), [dayCards]);
   const inferredDayPreferences = useMemo(() => inferDayPreferencesFromDayCards(dayCards), [dayCards]);
   const normalizedSettingCategories = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (settings.categories ?? [])
-            .map((category) => canonicalCategoryKey(category))
-            .filter((category): category is string => !!category)
-        )
-      ),
+    () => normalizeCategories(settings.categories),
     [settings.categories]
   );
-  const normalizedSettingDayPreferences = useMemo(() => {
-    const normalizedEntries: Array<[string, number]> = [];
-    Object.entries(settings.day_preferences ?? {}).forEach(([rawCategory, rawDays]) => {
-      const category = canonicalCategoryKey(rawCategory);
-      if (!category || typeof rawDays !== 'number' || !Number.isFinite(rawDays)) return;
-      normalizedEntries.push([category, Math.max(0, Math.round(rawDays))]);
-    });
-    return Object.fromEntries(normalizedEntries);
-  }, [settings.day_preferences]);
+  const normalizedSettingDayPreferences = useMemo(
+    () => normalizeDayPrefs(settings.day_preferences),
+    [settings.day_preferences]
+  );
   const hasItinerary = (dayCards?.length ?? 0) > 0;
-  // If saved categories exist, use them. Otherwise:
-  // - If user explicitly saved (even with []), respect that choice.
-  // - If user never saved, infer from day cards for initial display.
   const effectiveInitialCategories = useMemo(
-    () =>
-      normalizedSettingCategories.length > 0
-        ? normalizedSettingCategories
-        : (hasExplicitSettings ? normalizedSettingCategories : inferredCategories),
+    () => deriveEffectiveInitialCategories(normalizedSettingCategories, hasExplicitSettings, inferredCategories),
     [normalizedSettingCategories, hasExplicitSettings, inferredCategories]
   );
   const effectiveInitialDayPreferences = useMemo(
-    () => (hasItinerary
-      ? Object.fromEntries(
-          effectiveInitialCategories
-            .map((cat) => [
-              cat,
-              inferredDayPreferences[cat] ?? normalizedSettingDayPreferences[cat],
-            ] as const)
-            .filter((entry): entry is [string, number] => entry[1] != null && entry[1] > 0)
-        )
-      : normalizedSettingDayPreferences),
-    [
-      hasItinerary,
-      effectiveInitialCategories,
-      inferredDayPreferences,
-      normalizedSettingDayPreferences,
-    ]
+    () => deriveEffectiveInitialDayPreferences(hasItinerary, effectiveInitialCategories, inferredDayPreferences, normalizedSettingDayPreferences),
+    [hasItinerary, effectiveInitialCategories, inferredDayPreferences, normalizedSettingDayPreferences]
   );
   const [localEnabled, setLocalEnabled] = useState(enabled);
   const [localCategories, setLocalCategories] = useState<string[]>(
@@ -205,21 +120,7 @@ function ActivitiesSheetInner({
 
   // Handle save preferences
   const handleSave = useCallback(() => {
-    // Only send day_preferences for categories the user explicitly adjusted via stepper.
-    // Inferred defaults and seed values (from toggleCategory) are display-only.
-    // Also strip keys for categories that were removed.
-    const activeCategorySet = new Set(localCategories);
-    const cleanedDayPreferences = Object.fromEntries(
-      Object.entries(localDayPreferences).filter(
-        ([cat]) => activeCategorySet.has(cat) && userAdjustedCategories.has(cat)
-      )
-    );
-    onSaveSettings({
-      categories: localCategories,
-      skill_level: null,
-      day_preferences: cleanedDayPreferences,
-      activities_per_day: localPace,
-    });
+    onSaveSettings(buildSavePayload(localCategories, localDayPreferences, localPace, userAdjustedCategories));
     toast('Activity preferences saved');
     onOpenChange(false);
   }, [localCategories, localDayPreferences, localPace, userAdjustedCategories, onSaveSettings, toast, onOpenChange]);
@@ -261,32 +162,11 @@ function ActivitiesSheetInner({
       title="Activities"
       hint="Configure activity preferences"
       footer={
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => onOpenChange(false)}
-            className={cn(
-              'flex-1 px-4 py-2.5 rounded-xl text-sm font-medium',
-              'text-zinc-500 dark:text-zinc-500',
-              'hover:text-zinc-900 hover:bg-zinc-100',
-              'dark:hover:text-white dark:hover:bg-white/5',
-              'transition-colors'
-            )}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={!localEnabled}
-            className={cn(
-              localEnabled ? DS.actions.primary : DS.actions.primaryDisabled,
-              'flex-1 px-4 py-2.5 font-semibold'
-            )}
-          >
-            Save
-          </button>
-        </div>
+        <ActivitiesSheetFooter
+          localEnabled={localEnabled}
+          onCancel={() => onOpenChange(false)}
+          onSave={handleSave}
+        />
       }
     >
       <ActivitiesSheetContent

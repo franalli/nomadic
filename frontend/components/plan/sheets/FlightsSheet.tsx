@@ -1,13 +1,4 @@
 'use client';
-/* eslint no-unused-vars: ["error", { "args": "none" }] */
-/**
- * FlightsSheet
- *
- * Module sheet for flight preferences.
- * Prerequisites: Origin + Destination + Dates
- * Includes toggle + preferences.
- */
-
 
 import { Plane } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
@@ -19,11 +10,8 @@ import { cn } from '@/lib/utils';
 import type { FlightSettings } from '@/types/document';
 
 import { BaseSheet } from './BaseSheet';
+import { CabinClassSelector, StopsSelector, TripTypeSelector } from './FlightsSheetParts';
 import { GatingBlocker } from './GatingBlocker';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface FlightsSheetProps {
   open: boolean;
@@ -43,24 +31,6 @@ interface FlightsSheetProps {
   onOpenDestination?: () => void;
   onOpenDates?: () => void;
 }
-
-// Cabin class options
-const CABIN_OPTIONS: { value: FlightSettings['cabin_class']; label: string }[] = [
-  { value: 'economy', label: 'Economy' },
-  { value: 'premium_economy', label: 'Premium' },
-  { value: 'business', label: 'Business' },
-  { value: 'first', label: 'First' },
-];
-
-// Stops options
-const STOPS_OPTIONS = [
-  { value: 'any', label: 'Any stops', directOnly: false },
-  { value: 'nonstop', label: 'Nonstop only', directOnly: true },
-];
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Component
-// ─────────────────────────────────────────────────────────────────────────────
 
 function FlightsSheetInner({
   open,
@@ -190,129 +160,22 @@ function FlightsSheetInner({
           )}
         >
           {/* Trip type */}
-          <div>
-            <h3 className={cn(DS.text.label, 'mb-2')}>
-              Trip type
-            </h3>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => updateSetting('round_trip', true)}
-                className={cn(
-                  'flex-1 px-3 py-2.5 rounded-lg text-sm font-medium',
-                  'transition-all duration-150',
-                  localSettings.round_trip
-                    // Selected: Solid Black (maximum contrast)
-                    ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
-                    // Tactile: Crisp border, snap-to-black hover
-                    // Inactive: Glass Fill - visible buttons
-                      : cn(
-                          'bg-white border-2 border-zinc-200 text-zinc-600',
-                          'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                          // Dark: Glass substance
-                          'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
-                          'dark:hover:bg-white/10 dark:hover:text-white dark:hover:border-white/40'
-                        )
-                )}
-              >
-                Round trip
-              </button>
-              <button
-                type="button"
-                onClick={() => updateSetting('round_trip', false)}
-                className={cn(
-                  'flex-1 px-3 py-2.5 rounded-lg text-sm font-medium',
-                  'transition-all duration-150',
-                  !localSettings.round_trip
-                    ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
-                    // Inactive: Glass Fill - visible buttons
-                      : cn(
-                          'bg-white border-2 border-zinc-200 text-zinc-600',
-                          'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                          // Dark: Glass substance
-                          'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
-                          'dark:hover:bg-white/10 dark:hover:text-white dark:hover:border-white/40'
-                        )
-                )}
-              >
-                One-way
-              </button>
-            </div>
-          </div>
+          <TripTypeSelector
+            roundTrip={localSettings.round_trip}
+            onChange={(v) => updateSetting('round_trip', v)}
+          />
 
           {/* Cabin class */}
-          <div>
-            <h3 className={cn(DS.text.label, 'mb-2')}>
-              Cabin class
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {CABIN_OPTIONS.map((option) => {
-                const isSelected = localSettings.cabin_class === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => updateSetting('cabin_class', option.value)}
-                    className={cn(
-                      'px-4 py-2.5 rounded-lg text-sm font-medium',
-                      'transition-all duration-150',
-                      isSelected
-                        // Selected: Solid Black (maximum contrast)
-                        ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
-                        // Tactile: Crisp border, snap-to-black hover
-                        // Inactive: Glass Fill - visible buttons
-                      : cn(
-                          'bg-white border-2 border-zinc-200 text-zinc-600',
-                          'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                          // Dark: Glass substance
-                          'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
-                          'dark:hover:bg-white/10 dark:hover:text-white dark:hover:border-white/40'
-                        )
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <CabinClassSelector
+            cabinClass={localSettings.cabin_class}
+            onChange={(v) => updateSetting('cabin_class', v)}
+          />
 
           {/* Stops */}
-          <div>
-            <h3 className={cn(DS.text.label, 'mb-2')}>
-              Stops
-            </h3>
-            <div className="flex gap-2">
-              {STOPS_OPTIONS.map((option) => {
-                const isSelected = localSettings.direct_only === option.directOnly;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => updateSetting('direct_only', option.directOnly)}
-                    className={cn(
-                      'flex-1 px-3 py-2.5 rounded-lg text-sm font-medium',
-                      'transition-all duration-150',
-                      isSelected
-                        // Selected: Solid Black (maximum contrast)
-                        ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-transparent'
-                        // Tactile: Crisp border, snap-to-black hover
-                        // Inactive: Glass Fill - visible buttons
-                      : cn(
-                          'bg-white border-2 border-zinc-200 text-zinc-600',
-                          'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
-                          // Dark: Glass substance
-                          'dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400',
-                          'dark:hover:bg-white/10 dark:hover:text-white dark:hover:border-white/40'
-                        )
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <StopsSelector
+            directOnly={localSettings.direct_only}
+            onChange={(v) => updateSetting('direct_only', v)}
+          />
         </div>
       </div>
     </BaseSheet>

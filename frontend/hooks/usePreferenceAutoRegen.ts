@@ -18,7 +18,7 @@ import { useDocumentStore } from '@/state/documentStore';
 /**
  * Compare two sets for equality.
  */
-export function setsEqual(a: Set<string>, b: Set<string>): boolean {
+function setsEqual(a: Set<string>, b: Set<string>): boolean {
   if (a.size !== b.size) return false;
   for (const id of a) {
     if (!b.has(id)) return false;

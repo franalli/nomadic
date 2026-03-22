@@ -75,6 +75,7 @@ from app.graph_plan_utils import (  # noqa: E402
     normalize_trip_inputs,
     sanitize_session_state,
 )
+from app.http_clients import get_photo_proxy_client as _get_photo_proxy_client  # noqa: E402
 from app.lifespan import lifespan as _lifespan  # noqa: E402
 from app.middleware import (  # noqa: E402
     CSRFMiddleware,
@@ -166,10 +167,10 @@ from app.services.unsplash import (  # noqa: E402
     clear_memory_cache as clear_unsplash_memory_cache,
 )
 from app.services.unsplash import (  # noqa: E402
-    get_image_for_destination,
+    get_cache_stats as get_unsplash_memory_stats,
 )
 from app.services.unsplash import (  # noqa: E402
-    get_memory_cache_stats as get_unsplash_memory_stats,
+    get_image_for_destination,
 )
 from app.sse_state import (  # noqa: E402
     MAX_SSE_PER_IP,
@@ -954,7 +955,8 @@ async def exempt_options_from_rate_limit(request: Request, call_next):
 
 
 @app.get("/health")
-def health():
+@limiter.limit("120/minute")
+def health(request: Request):
     return {
         "status": "ok",
         "env": settings.env,
@@ -966,20 +968,6 @@ def health():
 
 # Photo proxy server-side cache: 500 photos × ~50KB = ~25MB peak memory
 _photo_bytes_cache: MemoryCache = MemoryCache(maxsize=500, ttl=86400)
-
-# Shared httpx client for photo proxy (connection pooling across requests)
-_photo_proxy_client: httpx.AsyncClient | None = None
-_photo_proxy_lock = asyncio.Lock()
-
-
-async def _get_photo_proxy_client() -> httpx.AsyncClient:
-    global _photo_proxy_client
-    if _photo_proxy_client is not None and not _photo_proxy_client.is_closed:
-        return _photo_proxy_client
-    async with _photo_proxy_lock:
-        if _photo_proxy_client is None or _photo_proxy_client.is_closed:
-            _photo_proxy_client = httpx.AsyncClient(timeout=10.0, follow_redirects=True)
-    return _photo_proxy_client
 
 
 @app.get("/api/media/google-places-photo")
@@ -1459,12 +1447,12 @@ async def admin_clear_all_caches(  # noqa: ARG001
 
     # 7. Clear Experience cache (L1 + L2)
     from app.services.experience_generator import (
-        clear_experience_cache,
-        clear_experience_db_cache,
+        clear_db_cache,
+        clear_memory_cache,
     )
 
-    experience_memory_count = clear_experience_cache()
-    experience_db_count = await clear_experience_db_cache(db)
+    experience_memory_count = clear_memory_cache()
+    experience_db_count = await clear_db_cache(db)
     results["caches_cleared"]["experience_memory"] = experience_memory_count
     results["caches_cleared"]["experience_database"] = experience_db_count
 
@@ -1481,7 +1469,41 @@ async def admin_clear_all_caches(  # noqa: ARG001
     results["caches_cleared"]["geocode_cache"] = geocode_cleared["geocode_cache"]
     results["caches_cleared"]["country_code_cache"] = geocode_cleared["country_code_cache"]
 
-    # 10. Summary
+    # 10. Clear Browse cache (L1 only)
+    from app.services.activity_browser import clear_browse_cache
+
+    browse_count = clear_browse_cache()
+    results["caches_cleared"]["browse_memory"] = browse_count
+
+    # 11. Clear Feasibility cache (L1 only)
+    from app.planner.services.feasibility_service import _feasibility_cache
+
+    feasibility_count = _feasibility_cache.clear()
+    results["caches_cleared"]["feasibility_memory"] = feasibility_count
+
+    # 12. Clear IATA cache (L1 only)
+    from app.planner.services.iata_resolver import clear_iata_cache
+
+    iata_count = clear_iata_cache()
+    results["caches_cleared"]["iata_memory"] = iata_count
+
+    # 13. Clear photo bytes cache (L1 only)
+    photo_count = _photo_bytes_cache.clear()
+    results["caches_cleared"]["photo_bytes_memory"] = photo_count
+
+    # 14. Clear Places enrichment cache (L1 only)
+    from app.tile_service.google_places_provider import _enrich_mem
+
+    enrich_count = _enrich_mem.clear()
+    results["caches_cleared"]["places_enrichment_memory"] = enrich_count
+
+    # 15. Cancel inflight cache population tasks
+    from app.planner.services.admin_utils import cancel_cache_population_tasks
+
+    inflight_cancelled = await cancel_cache_population_tasks()
+    results["caches_cleared"]["inflight_cancelled"] = inflight_cancelled
+
+    # Summary
     geocode_total = geocode_cleared["geocode_cache"] + geocode_cleared["country_code_cache"]
     total = (
         planner_cleared
@@ -1495,6 +1517,11 @@ async def admin_clear_all_caches(  # noqa: ARG001
         + experience_db_count
         + router_count
         + geocode_total
+        + browse_count
+        + feasibility_count
+        + iata_count
+        + photo_count
+        + enrich_count
     )
     results["total_entries_cleared"] = total
     results["before"] = {
@@ -1539,7 +1566,7 @@ async def admin_clear_l1_l2_caches(  # noqa: ARG001
     from app.planner.services.feasibility_service import _feasibility_cache
     from app.planner.services.iata_resolver import clear_iata_cache
     from app.services.activity_browser import clear_browse_cache
-    from app.services.experience_generator import clear_experience_cache
+    from app.services.experience_generator import clear_memory_cache
     from app.services.router_cache import clear_cache as clear_router_cache
     from app.services.specialist_cache import clear_memory_cache as clear_specialist_memory
     from app.services.tile_cache import clear_memory_cache as clear_tile_memory
@@ -1573,7 +1600,7 @@ async def admin_clear_l1_l2_caches(  # noqa: ARG001
         "specialist_memory": clear_specialist_memory(),
         "tile_memory": clear_tile_memory(),
         "experience_inflight": inflight_cancelled["experience"],
-        "experience_memory": clear_experience_cache(),
+        "experience_memory": clear_memory_cache(),
         "router_memory": clear_router_cache(),
         "feasibility_memory": _feasibility_cache.clear(),
         "browse_inflight": inflight_cancelled["browse"],
@@ -1606,7 +1633,7 @@ async def admin_clear_l1_l2_caches(  # noqa: ARG001
     total_l1 = sum(int(value) for value in l1_cleared.values())
     total_l2 = sum(int(value) for value in l2_cleared.values())
     return {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "before": {
             "l2": {
                 "response_cache_total": l2_before_total,
@@ -3284,7 +3311,7 @@ async def refresh_tiles(
         adults=branch.adults or ti.adults,
         children=branch.children or ti.children,
         requires_assistance=branch.requires_assistance or ti.requires_assistance,
-        verticals=verticals,  # type: ignore
+        verticals=verticals,  # type: ignore[arg-type]  # list[str] vs Sequence covariance
         # Pass current settings - cache key includes settings hash
         # so changed settings will cause cache miss and fresh fetch
         flight_settings=ti.flight_settings,
@@ -3309,7 +3336,7 @@ async def refresh_tiles(
 
     return TileRefreshResponse(
         tiles=tiles_response.tiles,
-        refreshed_at=datetime.utcnow().isoformat(),
+        refreshed_at=datetime.now(UTC).isoformat(),
         verticals_refreshed=verticals,
     )
 

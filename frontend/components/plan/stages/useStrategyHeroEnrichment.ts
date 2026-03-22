@@ -67,9 +67,18 @@ export function useStrategyHeroEnrichment(
       }
     }
 
-    let cancelled = false;
+    const abortController = new AbortController();
+    const { signal } = abortController;
     const maxPendingMs = 75_000;
     const startedAt = Date.now();
+
+    const abortableDelay = (ms: number) => {
+      if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
+      return new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, ms);
+        signal.addEventListener('abort', () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); }, { once: true });
+      });
+    };
 
     const run = async () => {
       setEnrichmentUiState('loading');
@@ -77,10 +86,9 @@ export function useStrategyHeroEnrichment(
       let transientErrors = 0;
       let pendingAttempts = 0;
 
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-      if (cancelled) return;
+      await abortableDelay(3000);
 
-      while (!cancelled) {
+      while (!signal.aborted) {
         let result: Awaited<ReturnType<typeof getSpecialistEnrichment>> = null;
         try {
           result = await getSpecialistEnrichment(section.id);
@@ -91,10 +99,10 @@ export function useStrategyHeroEnrichment(
             setEnrichmentErrorCode('network_error');
             return;
           }
-          await new Promise((resolve) => setTimeout(resolve, 2500));
+          await abortableDelay(2500);
           continue;
         }
-        if (cancelled) return;
+        if (signal.aborted) return;
         transientErrors = 0;
 
         if (!result) {
@@ -127,19 +135,20 @@ export function useStrategyHeroEnrichment(
         pendingAttempts += 1;
         const suggestedWait = result.retry_after_ms ?? 1500;
         const waitMs = Math.max(2000, Math.min(suggestedWait + pendingAttempts * 150, 5000));
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        await abortableDelay(waitMs);
       }
     };
 
-    run().catch(() => {
-      if (!cancelled) {
+    run().catch((err) => {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      if (!signal.aborted) {
         setEnrichmentUiState('failed');
         setEnrichmentErrorCode('network_error');
       }
     });
 
     return () => {
-      cancelled = true;
+      abortController.abort();
     };
   }, [
     documentExists,

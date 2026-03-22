@@ -324,10 +324,17 @@ export const DS = {
   // dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]
   // dark:shadow-[0_0_12px_-4px_rgba(16,185,129,0.15)]
   // dark:shadow-[0_0_16px_-4px_rgba(16,185,129,0.2)]
+  // dark:shadow-[0_0_12px_-3px_rgba(16,185,129,0.3)]
+  // dark:shadow-[0_0_16px_-3px_rgba(16,185,129,0.35)]
+  // dark:shadow-[0_0_16px_rgba(16,185,129,0.45)]
+  // dark:shadow-[0_0_12px_rgba(16,185,129,0.35)]
+  // dark:hover:shadow-[0_0_12px_-3px_rgba(16,185,129,0.3)]
+  // dark:hover:shadow-[0_0_16px_-3px_rgba(16,185,129,0.35)]
   // dark:shadow-[0_0_15px_-3px_rgba(16,185,129,0.4)]
   // dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]
   // dark:drop-shadow-[0_0_6px_rgba(16,185,129,0.6)]
   // dark:focus:shadow-[0_0_20px_-5px_rgba(16,185,129,0.15)]
+  // hover:shadow-[0_0_15px_-5px_rgba(16,185,129,0.15)]
   // hover:shadow-[0_6px_24px_rgba(16,185,129,0.45)]
   // hover:shadow-[0_4px_20px_rgba(16,185,129,0.35)]
   // dark:shadow-[0_0_6px_rgba(16,185,129,0.3)]
@@ -335,6 +342,15 @@ export const DS = {
   // shadow-[0_2px_8px_rgba(10,14,18,0.06)]
   // hover:shadow-[0_4px_12px_rgba(10,14,18,0.08)]
   // dark:shadow-[0_0_10px_-6px_rgba(255,255,255,0.18)]
+  // shadow-[0_-4px_24px_rgba(0,0,0,0.12)]
+  // shadow-[0_8px_30px_rgba(0,0,0,0.4)]
+  // shadow-[0_8px_30px_-8px_rgba(0,0,0,0.08)]
+  // dark:shadow-[0_8px_30px_-8px_rgba(0,0,0,0.3)]
+  // shadow-[0_25px_50px_rgba(0,0,0,0.15)]
+  // dark:shadow-[0_25px_50px_rgba(0,0,0,0.4)]
+  // shadow-[4px_0_24px_-12px_rgba(0,0,0,0.12),8px_0_40px_-20px_rgba(0,0,0,0.08)]
+  // shadow-[inset_2px_0_8px_rgba(16,185,129,0.15),var(--tw-shadow)]
+  // shadow-[inset_0_0_20px_-8px_rgba(16,185,129,0.15)]
   // ---------------------------------------------------------------------------
   glowClass: {
     /** Very subtle focus — opacity 0.1 (input focus in dark mode) */
@@ -371,6 +387,14 @@ export const DS = {
     mobileInputSm: 'shadow-[0_0_12px_-4px_rgba(16,185,129,0.15)]',
     /** Mobile input medium — opacity 0.2, tighter spread */
     mobileInputMd: 'shadow-[0_0_16px_-4px_rgba(16,185,129,0.2)]',
+    /** Chip hover — opacity 0.3, tighter spread (deeplink pill hover) */
+    chipHover: 'shadow-[0_0_12px_-3px_rgba(16,185,129,0.3)]',
+    /** Chip hover large — opacity 0.35, wider blur (larger deeplink pill hover) */
+    chipHoverLg: 'shadow-[0_0_16px_-3px_rgba(16,185,129,0.35)]',
+    /** Map marker active — opacity 0.45, no offset */
+    markerActive: 'shadow-[0_0_16px_rgba(16,185,129,0.45)]',
+    /** Map marker hover — opacity 0.35, tight */
+    markerHover: 'shadow-[0_0_12px_rgba(16,185,129,0.35)]',
     /** Dot indicator glow — tiny emerald pulse for separators */
     dotGlow: 'shadow-[0_0_6px_rgba(16,185,129,0.3)]',
     /** Command bar composite — elevation + subtle emerald tint + inset glass */
@@ -387,6 +411,38 @@ export const DS = {
     bubbleHover: 'shadow-[0_4px_12px_rgba(10,14,18,0.08)]',
     /** White surface self-glow in dark mode */
     bubbleWhite: 'shadow-[0_0_10px_-6px_rgba(255,255,255,0.18)]',
+    /** Bottom sheet upward shadow */
+    sheetUp: 'shadow-[0_-4px_24px_rgba(0,0,0,0.12)]',
+    /** Hero image overlay — deep elevation */
+    heroOverlay: 'shadow-[0_8px_30px_rgba(0,0,0,0.4)]',
+    /** Input bar resting shadow (light mode) */
+    inputBar: 'shadow-[0_8px_30px_-8px_rgba(0,0,0,0.08)]',
+    /** Input bar resting shadow (dark mode) */
+    inputBarDark: 'shadow-[0_8px_30px_-8px_rgba(0,0,0,0.3)]',
+    /** Drag preview card — elevated float */
+    dragPreview: 'shadow-[0_25px_50px_rgba(0,0,0,0.15)]',
+    /** Drag preview card — elevated float (dark mode) */
+    dragPreviewDark: 'shadow-[0_25px_50px_rgba(0,0,0,0.4)]',
+    /** Chat panel edge shadow — composite rightward cast */
+    panelEdge: 'shadow-[4px_0_24px_-12px_rgba(0,0,0,0.12),8px_0_40px_-20px_rgba(0,0,0,0.08)]',
+    /** Chat panel edge shadow — dark mode */
+    panelEdgeDark: 'shadow-[4px_0_12px_rgba(0,0,0,0.3)]',
+    /** Mobile input resting elevation */
+    mobileInputRest: 'shadow-[0_4px_16px_-4px_rgba(0,0,0,0.06)]',
+    /** Mobile input resting elevation — dark mode */
+    mobileInputRestDark: 'shadow-[0_4px_16px_-4px_rgba(0,0,0,0.3)]',
+    /** Emerald inset accent — left-border glow on emerald activity cards */
+    emeraldInset: 'shadow-[inset_2px_0_8px_rgba(16,185,129,0.15),var(--tw-shadow)]',
+    /** Drop target inset glow — DnD hover state */
+    dropTargetInset: 'shadow-[inset_0_0_20px_-8px_rgba(16,185,129,0.15)]',
+  },
+
+  // ---------------------------------------------------------------------------
+  // 7d. GRADIENTS (Reusable CSS gradient strings as Tailwind arbitrary values)
+  // ---------------------------------------------------------------------------
+  gradient: {
+    /** Emerald shimmer sweep — decorative scan effect */
+    emeraldSweep: 'bg-[linear-gradient(90deg,transparent,rgba(16,185,129,0.28),transparent)]',
   },
 
   // ---------------------------------------------------------------------------
@@ -418,7 +474,16 @@ export const DS = {
   },
 
   // ---------------------------------------------------------------------------
-  // 10. MAP COLORS (Marker palette)
+  // 10. TILE RAIL CARD SIZES
+  // ---------------------------------------------------------------------------
+  tileRail: {
+    hotelWidth: 'w-[180px] md:w-[220px]',
+    activityWidth: 'w-[164px] md:w-[200px]',
+    imageHeight: 'h-[72px]',
+  },
+
+  // ---------------------------------------------------------------------------
+  // 11. MAP COLORS (Marker palette)
   // ---------------------------------------------------------------------------
   map: {
     flight: '#60a5fa',

@@ -18,15 +18,15 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
       {section.specialist_type === 'local_expert' && section.destination_gallery && section.destination_gallery.length > 0 && (
         <div className="mb-2">
           <div className="flex gap-2 overflow-x-auto pb-3 snap-x no-scrollbar md:hidden">
-            {section.destination_gallery.filter(img => Boolean(img.image_url)).map((img, idx) => (
-              <div key={idx} className="shrink-0 snap-center relative w-64 h-40 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-200 dark:border-white/10">
+            {section.destination_gallery.filter(img => Boolean(img.image_url)).map((img) => (
+              <div key={img.image_url} className="shrink-0 snap-center relative w-64 h-40 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-200 dark:border-white/10">
                 <Image src={img.image_url} alt={img.label} fill className="object-cover" />
               </div>
             ))}
           </div>
           <div className="hidden md:grid grid-cols-3 gap-4">
-            {section.destination_gallery.filter(img => Boolean(img.image_url)).map((img, idx) => (
-              <div key={idx} className="relative h-48 md:h-64 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-100 dark:border-white/10 group">
+            {section.destination_gallery.filter(img => Boolean(img.image_url)).map((img) => (
+              <div key={img.image_url} className="relative h-48 md:h-64 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-100 dark:border-white/10 group">
                 <Image src={img.image_url} alt={img.label} fill className="object-cover transition-transform duration-500 group-hover:scale-105" />
               </div>
             ))}
@@ -43,8 +43,8 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
             <ShieldCheck size={12} className="text-emerald-600 dark:text-emerald-400" /> Applied Constraints
           </h5>
           <div className="space-y-2">
-            {section.constraints_applied.map((c, idx) => (
-              <div key={idx} className="flex items-start gap-2">
+            {section.constraints_applied.map((c) => (
+              <div key={c.rule} className="flex items-start gap-2">
                 <div className="shrink-0 mt-0.5 w-5 h-5 rounded-full bg-emerald-50 dark:bg-emerald-500/20 flex items-center justify-center">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                 </div>
@@ -65,8 +65,8 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
             <Lightbulb size={12} className="text-emerald-600 dark:text-emerald-400" /> Expert Recommendations
           </h5>
           <div className="grid gap-2">
-            {section.content_added.map((c, idx) => (
-              <div key={idx} className={cn('rounded-xl border transition-colors p-4 flex gap-2', 'bg-white border-zinc-200 hover:border-emerald-500/30 shadow-card', 'dark:bg-zinc-900 dark:border-white/10 dark:hover:border-white/20 dark:shadow-none')}>
+            {section.content_added.map((c, i) => (
+              <div key={`${c.title}-${i}`} className={cn('rounded-xl border transition-colors p-4 flex gap-2', 'bg-white border-zinc-200 hover:border-emerald-500/30 shadow-card', 'dark:bg-zinc-900 dark:border-white/10 dark:hover:border-white/20 dark:shadow-none')}>
                 {c.image_url && (
                   <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-100 dark:bg-zinc-900">
                     <Image src={c.image_url} alt={c.title} width={64} height={64} className="object-cover w-full h-full" />
@@ -107,7 +107,7 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
           <h5 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-2">Optional upgrades</h5>
           <ul className="space-y-1.5">
             {section.optional_upgrades.slice(0, 3).map((item, idx) => (
-              <li key={idx} className="text-xs text-zinc-500 dark:text-zinc-400 flex items-start gap-2">
+              <li key={`${item}-${idx}`} className="text-xs text-zinc-500 dark:text-zinc-400 flex items-start gap-2">
                 <span className="text-zinc-400 dark:text-zinc-500 mt-0.5">+</span><RichText>{item}</RichText>
               </li>
             ))}
@@ -121,7 +121,7 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
           <h5 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide mb-2">Logistics</h5>
           <ul className="space-y-1.5">
             {section.logistics_notes.slice(0, 4).map((item, idx) => (
-              <li key={idx} className="text-xs text-zinc-500 dark:text-zinc-400 flex items-start gap-2">
+              <li key={`${item}-${idx}`} className="text-xs text-zinc-500 dark:text-zinc-400 flex items-start gap-2">
                 <span className="text-zinc-400/50 dark:text-zinc-500/50 mt-0.5">-</span><RichText>{item}</RichText>
               </li>
             ))}
@@ -139,7 +139,7 @@ export function S2AgentCardExpanded({ section }: { section: StrategySection }) {
       {section.impact_areas && section.impact_areas.length > 0 && (
         <div className="flex items-center gap-2 pt-2 border-t border-zinc-200/30 dark:border-white/10">
           <span className="text-xs text-zinc-500 dark:text-zinc-400">Impact:</span>
-          {section.impact_areas.map((area, i) => <span key={i} className="text-xs px-1.5 py-0.5 topic-badge rounded">{area}</span>)}
+          {section.impact_areas.map((area, i) => <span key={`${area}-${i}`} className="text-xs px-1.5 py-0.5 topic-badge rounded">{area}</span>)}
         </div>
       )}
 

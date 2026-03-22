@@ -87,6 +87,7 @@ mkdir -p "$RESULTS_DIR"
 find "$RESULTS_DIR" -maxdepth 1 -type f \( -name "*.log" -o -name "*.txt" \) -delete 2>/dev/null || true
 
 ANALYZER="$SCRIPT_DIR/analyze_flow_logs.py"
+VALIDATORS="$SCRIPT_DIR/curl_flow_validators.py"
 BACKEND_LOG="$RESULTS_DIR/backend_full.log"
 CONSOLE_FULL="$RESULTS_DIR/console_full.log"
 > "$BACKEND_LOG"
@@ -557,6 +558,296 @@ _flow() {
   else FLOW_FAIL=$((FLOW_FAIL+1)); echo "  ══ Flow $2 FAIL ══"; fi
 }
 
+# ── Quality validator wrappers ───────────────────────────────────────────────
+# Each wrapper calls a Python validator from curl_flow_validators.py, parses
+# its key=value stdout, and feeds results into check()/check_gte().
+# All parsing uses python3 (no grep -oP — macOS incompatible).
+
+_vparse() {
+  # Extract value for a key from "key1=val1 key2=val2" output.
+  # Usage: VAL=$(_vparse "$OUTPUT" "key_name" "default")
+  python3 -c "
+import sys
+out, key, default = sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv)>3 else ''
+for tok in out.split():
+    if tok.startswith(key+'='):
+        print(tok.split('=',1)[1])
+        break
+else:
+    print(default)
+" "$1" "$2" "${3:-}" 2>/dev/null
+}
+
+# Validate tile quality: no zombies, valid geo.
+# Usage: validate_tiles "$TILES_JSON" "F3" || F=false
+validate_tiles() {
+  local tiles_json="$1" label="${2:-V}"
+  local result
+  result=$(printf '%s' "$tiles_json" | python3 "$VALIDATORS" tile_quality 2>/dev/null)
+  [ -z "$result" ] && { echo "  ⚠  ${label}: tile validator returned nothing"; return 0; }
+
+  local total zombies geo_invalid
+  total=$(_vparse "$result" "total" "0")
+  zombies=$(_vparse "$result" "zombies" "0")
+  geo_invalid=$(_vparse "$result" "geo_invalid" "0")
+
+  [ "$total" -eq 0 ] 2>/dev/null && { echo "  ⚠  ${label}: no tiles to validate"; return 0; }
+
+  echo "  ℹ  ${label}: $total tiles, $zombies zombies, $geo_invalid invalid geo"
+
+  # Fail if >20% zombies
+  local threshold=$(( total / 5 ))
+  [ "$threshold" -lt 1 ] && threshold=1
+  if [ "$zombies" -ge "$threshold" ] 2>/dev/null; then
+    local zombie_ids
+    zombie_ids=$(_vparse "$result" "zombie_ids" "")
+    echo "  ✗ ${label}: $zombies/$total zombie tiles (>$threshold threshold) — $zombie_ids"
+    FAIL=$((FAIL+1)); return 1
+  else
+    echo "  ✓ ${label}: zombie rate acceptable ($zombies/$total)"
+    PASS=$((PASS+1))
+  fi
+
+  if [ "$geo_invalid" -gt 0 ] 2>/dev/null; then
+    echo "  ⚠  ${label}: $geo_invalid tiles with invalid geo (null island or out of bounds)"
+  fi
+  return 0
+}
+
+# Validate day_card block quality: no hollow activity blocks.
+# Usage: validate_blocks "$DAY_CARDS_JSON" "F9" || F=false
+validate_blocks() {
+  local cards_json="$1" label="${2:-V}"
+  local result
+  result=$(printf '%s' "$cards_json" | python3 "$VALIDATORS" block_quality 2>/dev/null)
+  [ -z "$result" ] && { echo "  ⚠  ${label}: block validator returned nothing"; return 0; }
+
+  local total hollow
+  total=$(_vparse "$result" "total_activity_blocks" "0")
+  hollow=$(_vparse "$result" "hollow" "0")
+
+  [ "$total" -eq 0 ] 2>/dev/null && { echo "  ⚠  ${label}: no activity blocks to validate"; return 0; }
+
+  echo "  ℹ  ${label}: $total activity blocks, $hollow hollow"
+
+  # Fail if >20% hollow
+  local threshold=$(( total / 5 ))
+  [ "$threshold" -lt 1 ] && threshold=1
+  if [ "$hollow" -ge "$threshold" ] 2>/dev/null; then
+    local hollow_ids
+    hollow_ids=$(_vparse "$result" "hollow_ids" "")
+    echo "  ✗ ${label}: $hollow/$total hollow activity blocks — $hollow_ids"
+    FAIL=$((FAIL+1)); return 1
+  else
+    echo "  ✓ ${label}: block quality acceptable ($hollow/$total hollow)"
+    PASS=$((PASS+1))
+  fi
+  return 0
+}
+
+# Validate block->tile reference integrity.
+# Usage: validate_refs "$TILES_JSON" "$DAY_CARDS_JSON" "F14" || F=false
+validate_refs() {
+  local tiles_json="$1" cards_json="$2" label="${3:-V}"
+  local combined
+  combined=$(python3 -c "
+import json,sys
+try:
+    t=json.loads(sys.argv[1])
+    c=json.loads(sys.argv[2])
+    print(json.dumps({'tiles':t,'day_cards':c}))
+except: print('{}')
+" "$tiles_json" "$cards_json" 2>/dev/null)
+
+  local result
+  result=$(printf '%s' "$combined" | python3 "$VALIDATORS" block_tile_refs 2>/dev/null)
+  [ -z "$result" ] && return 0
+
+  local total_refs orphans
+  total_refs=$(_vparse "$result" "total_refs" "0")
+  orphans=$(_vparse "$result" "orphans" "0")
+
+  [ "$total_refs" -eq 0 ] 2>/dev/null && { echo "  ⚠  ${label}: no booked_tile refs to validate"; return 0; }
+
+  # Allow up to 20% orphans
+  local threshold=$(( total_refs / 5 ))
+  [ "$threshold" -lt 1 ] && threshold=1
+
+  echo "  ℹ  ${label}: $total_refs tile refs, $orphans orphans"
+
+  if [ "$orphans" -ge "$threshold" ] 2>/dev/null; then
+    local orphan_ids
+    orphan_ids=$(_vparse "$result" "orphan_ids" "")
+    echo "  ✗ ${label}: $orphans/$total_refs orphan tile refs — $orphan_ids"
+    FAIL=$((FAIL+1)); return 1
+  else
+    echo "  ✓ ${label}: tile ref integrity acceptable ($orphans/$total_refs orphans)"
+    PASS=$((PASS+1))
+  fi
+  return 0
+}
+
+# Validate strategy section content: feasible sections have content_added.
+# Usage: validate_sections "$SECS_JSON" "F3" || F=false
+validate_sections() {
+  local secs_json="$1" label="${2:-V}"
+  local result
+  result=$(printf '%s' "$secs_json" | python3 "$VALIDATORS" section_content 2>/dev/null)
+  [ -z "$result" ] && return 0
+
+  local feasible empty_content
+  feasible=$(_vparse "$result" "feasible" "0")
+  empty_content=$(_vparse "$result" "empty_content" "0")
+
+  [ "$feasible" -eq 0 ] 2>/dev/null && { echo "  ⚠  ${label}: no feasible sections to validate"; return 0; }
+
+  if [ "$empty_content" -gt 0 ] 2>/dev/null; then
+    local empty_types
+    empty_types=$(_vparse "$result" "empty_types" "")
+    echo "  ✗ ${label}: $empty_content/$feasible feasible sections have empty content_added — $empty_types"
+    FAIL=$((FAIL+1)); return 1
+  else
+    echo "  ✓ ${label}: all $feasible feasible sections have content"
+    PASS=$((PASS+1))
+  fi
+  return 0
+}
+
+# Validate no SSE error events in response.
+# Usage: validate_no_errors "F1" || F=false
+# NOTE: Operates on $RESP (global SSE response file path).
+validate_no_errors() {
+  local label="${1:-V}"
+  local result
+  result=$(echo "$RESP" | python3 "$VALIDATORS" no_sse_errors 2>/dev/null)
+  [ -z "$result" ] && return 0
+
+  local error_count
+  error_count=$(_vparse "$result" "error_count" "0")
+
+  if [ "$error_count" -gt 0 ] 2>/dev/null; then
+    local first_error
+    first_error=$(_vparse "$result" "first_error" "")
+    echo "  ✗ ${label}: $error_count SSE error events — $first_error"
+    FAIL=$((FAIL+1)); return 1
+  elif [ "$error_count" -eq 0 ] 2>/dev/null; then
+    echo "  ✓ ${label}: no SSE error events"
+    PASS=$((PASS+1))
+  fi
+  return 0
+}
+
+# Validate assistant message quality for planning turns.
+# Usage: validate_message "$ASSISTANT_MSG" "$TOOLS" "$DESTINATION" "F14" || F=false
+validate_message() {
+  local msg="$1" tools="$2" dest="$3" label="${4:-V}"
+  local payload
+  payload=$(python3 -c "
+import json,sys
+print(json.dumps({
+    'assistant_message': sys.argv[1],
+    'tools_called': sys.argv[2],
+    'destination': sys.argv[3]
+}))
+" "$msg" "$tools" "$dest" 2>/dev/null)
+
+  local result
+  result=$(printf '%s' "$payload" | python3 "$VALIDATORS" assistant_message 2>/dev/null)
+  [ -z "$result" ] && return 0
+
+  local quality detail
+  quality=$(_vparse "$result" "quality" "ok")
+  detail=$(_vparse "$result" "detail" "")
+
+  case "$quality" in
+    ok)
+      echo "  ✓ ${label}: message quality ok ($detail)"
+      PASS=$((PASS+1))
+      ;;
+    too_short)
+      echo "  ✗ ${label}: message too short for planning turn ($detail)"
+      FAIL=$((FAIL+1)); return 1
+      ;;
+    canned)
+      echo "  ✗ ${label}: canned response ($detail)"
+      FAIL=$((FAIL+1)); return 1
+      ;;
+    *)
+      echo "  ⚠  ${label}: message quality=$quality ($detail)"
+      ;;
+  esac
+  return 0
+}
+
+# Validate grounding: assistant_message only references payload names.
+# Usage: validate_grounding_check "F14" || F=false
+# NOTE: Operates on $RESP (global SSE response file path).
+validate_grounding_check() {
+  local label="${1:-V}"
+  local result
+  result=$(echo "$RESP" | python3 "$VALIDATORS" grounding 2>/dev/null)
+  [ -z "$result" ] && return 0
+
+  local status
+  status=$(_vparse "$result" "status" "grounded")
+
+  if echo "$status" | grep -q "^grounded"; then
+    echo "  ✓ ${label}: assistant message grounded to payload"
+    PASS=$((PASS+1))
+  else
+    echo "  ✗ ${label}: ungrounded names in assistant message — $status"
+    FAIL=$((FAIL+1)); return 1
+  fi
+  return 0
+}
+
+# Validate duplicate activity tiles by title.
+# Usage: validate_tile_dedup "$TILES_JSON" "F14" || F=false
+validate_tile_dedup() {
+  local tiles_json="$1" label="${2:-V}"
+  local result
+  result=$(printf '%s' "$tiles_json" | python3 "$VALIDATORS" tile_dedup 2>/dev/null)
+  [ -z "$result" ] && { echo "  ⚠  ${label}: tile_dedup validator returned nothing"; return 0; }
+
+  local dup_titles
+  dup_titles=$(_vparse "$result" "dup_titles" "0")
+
+  if [ "$dup_titles" -gt 0 ] 2>/dev/null; then
+    local dup_examples
+    dup_examples=$(_vparse "$result" "dup_examples" "")
+    echo "  ✗ ${label}: $dup_titles duplicate activity tile titles — $dup_examples"
+    FAIL=$((FAIL+1)); return 1
+  else
+    echo "  ✓ ${label}: no duplicate activity tile titles"
+    PASS=$((PASS+1))
+  fi
+  return 0
+}
+
+# Validate token stream has meaningful content.
+# Usage: validate_token_content "F1" || F=false
+# NOTE: Operates on $RESP (global SSE response file path).
+validate_token_content() {
+  local label="${1:-V}"
+  local result
+  result=$(echo "$RESP" | python3 "$VALIDATORS" token_content 2>/dev/null)
+  [ -z "$result" ] && return 0
+
+  local total_chars
+  total_chars=$(_vparse "$result" "total_chars" "0")
+
+  if [ "$total_chars" -lt 20 ] 2>/dev/null; then
+    local token_events
+    token_events=$(_vparse "$result" "token_events" "0")
+    echo "  ✗ ${label}: token stream too short ($total_chars chars across $token_events events)"
+    FAIL=$((FAIL+1)); return 1
+  else
+    echo "  ✓ ${label}: token stream has content ($total_chars chars)"
+    PASS=$((PASS+1))
+  fi
+  return 0
+}
+
 
 # ── Start server ─────────────────────────────────────────────────────────────
 
@@ -601,6 +892,9 @@ check_contains "plan_view_state is S0" "$PVS" "S0" || F=false
 # session_state returned (needed for multi-turn)
 SS=$(extract_top "session_state")
 check_not_empty "session_state returned" "$SS" || F=false
+
+validate_no_errors "F1" || F=false
+validate_token_content "F1" || F=false
 
 else F=false; fi; else F=false; fi
 $F && _flow pass 1 || _flow fail 1
@@ -739,6 +1033,10 @@ try:
 except: print('false')
 " 2>/dev/null || echo "false")
 check "Diving tiles present (specialist or tagged)" "$HAS_DIVING_TILES" "true" || F=false
+
+validate_tiles "$TILES" "F3" || F=false
+validate_sections "$SECS" "F3" || F=false
+validate_no_errors "F3" || F=false
 
 else F=false; fi; else F=false; fi
 $F && _flow pass 3 || _flow fail 3
@@ -971,6 +1269,9 @@ check_gte "day_cards ≥ 1" "$DC_CT" 1 || F=false
 
 PVS=$(extract_doc "plan_view_state")
 check_contains "plan_view_state is S3" "$PVS" "S3" || F=false
+
+validate_no_errors "F9" || F=false
+validate_blocks "$DAY_CARDS" "F9" || F=false
 
 else F=false; fi; else F=false; fi; else F=false; fi
 $F && _flow pass 9 || _flow fail 9
@@ -1246,6 +1547,9 @@ except: print(0)
 " 2>/dev/null || echo "0")
 check_gte "Days with 2+ activities ≥ 1" "$MULTI_ACT_DAYS" 1 || F=false
 
+validate_blocks "$DAY_CARDS" "F13" || F=false
+validate_no_errors "F13" || F=false
+
 else F=false; fi; else F=false; fi; else F=false; fi
 $F && _flow pass 13 || _flow fail 13
 _flow_end 13
@@ -1508,6 +1812,16 @@ PYEOF
 )
 check_contains "Turn 2: assistant_message stays grounded to payload names" "$GROUNDING_OK" "grounded" || F=false
 
+validate_tiles "$TILES" "F14" || F=false
+validate_blocks "$DAY_CARDS" "F14" || F=false
+validate_refs "$TILES" "$DAY_CARDS" "F14" || F=false
+validate_sections "$SECS2" "F14" || F=false
+validate_message "$ASSISTANT_MSG" "$TOOLS" "$DEST2" "F14" || F=false
+validate_tile_dedup "$TILES" "F14" || F=false
+validate_token_content "F14" || F=false
+validate_grounding_check "F14" || F=false
+validate_no_errors "F14" || F=false
+
 else F=false; fi; else F=false; fi; else F=false; fi
 $F && _flow pass 14 || _flow fail 14
 _flow_end 14
@@ -1675,6 +1989,12 @@ if [ "$FLIGHT_BLOCK_DL_OK" = "skip" ]; then
 else
   check "Flight blocks carry booked deeplinks" "$FLIGHT_BLOCK_DL_OK" "true" || F=false
 fi
+
+validate_tiles "$TILES" "F15" || F=false
+validate_tile_dedup "$TILES" "F15" || F=false
+F15_DAY_CARDS=$(extract_doc "day_cards")
+validate_blocks "$F15_DAY_CARDS" "F15" || F=false
+validate_no_errors "F15" || F=false
 
 else F=false; fi; else F=false; fi; else F=false; fi
 $F && _flow pass 15 || _flow fail 15
@@ -1933,6 +2253,9 @@ except: print('false')
 " 2>/dev/null || echo "false")
 check "≥50% tiles have price_estimate" "$TILE_PRICE_OK" "true" || F=false
 
+validate_blocks "$DAY_CARDS" "F18" || F=false
+validate_no_errors "F18" || F=false
+
 else F=false; fi; else F=false; fi; else F=false; fi
 $F && _flow pass 18 || _flow fail 18
 _flow_end 18
@@ -2076,6 +2399,10 @@ check "Turn 4: ≥50% interior days have activities" "$FILL_RATE" "true" || F=fa
 DEST_T4=$(extract_top "session_state.trip_plan.destination")
 check_not_empty "Turn 4: destination preserved" "$DEST_T4" || F=false
 
+F19_DAY_CARDS=$(extract_doc "day_cards")
+validate_blocks "$F19_DAY_CARDS" "F19" || F=false
+validate_no_errors "F19" || F=false
+
 else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi
 $F && _flow pass 19 || _flow fail 19
 _flow_end 19
@@ -2175,6 +2502,12 @@ echo "  ℹ  Turn 4: $TOTAL_ACT_CT total activity blocks (cultural+hiking)"
 CULTURAL_FLOOR=$(( CULTURAL_ACT_CT > 2 ? CULTURAL_ACT_CT - 2 : 1 ))
 check_gte "Turn 4: activity blocks ≥ cultural baseline - 2 ($TOTAL_ACT_CT ≥ $CULTURAL_FLOOR)" "$TOTAL_ACT_CT" "$CULTURAL_FLOOR" || F=false
 
+validate_tiles "$TILES" "F20" || F=false
+validate_blocks "$DC_T4" "F20" || F=false
+F20_SECS=$(extract_doc "strategy_sections")
+validate_sections "$F20_SECS" "F20" || F=false
+validate_no_errors "F20" || F=false
+
 else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi
 $F && _flow pass 20 || _flow fail 20
 _flow_end 20
@@ -2267,6 +2600,10 @@ try:
 except: print('false')
 " 2>/dev/null || echo "false")
 check "Turn 4: filler days ≤ 50% of interior" "$FILLER_OK" "true" || F=false
+
+validate_tiles "$TILES" "F21" || F=false
+validate_blocks "$DC_T4" "F21" || F=false
+validate_no_errors "F21" || F=false
 
 else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi
 $F && _flow pass 21 || _flow fail 21
@@ -2400,6 +2737,11 @@ check_gte "Turn 2: day_cards ≥ 5 (itinerary preserved)" "$DC_CT_T2" 5 || F=fal
 TOOLS_T2=$(extract_tools)
 echo "  ℹ  Turn 2 tools: $TOOLS_T2"
 check_not_contains "Turn 2: get_specialist_advice NOT called (no re-dispatch)" "$TOOLS_T2" "get_specialist_advice" || F=false
+
+F22_TILES=$(extract_doc "tiles")
+validate_tiles "$F22_TILES" "F22" || F=false
+validate_sections "$SECS_T2" "F22" || F=false
+validate_no_errors "F22" || F=false
 
 else F=false; fi; else F=false; fi; else F=false; fi
 $F && _flow pass 22 || _flow fail 22
@@ -2569,6 +2911,10 @@ check "Diving tiles present" "$HAS_DIVING_TILES" "true" || F=false
 # ── Tokens streamed ──
 TOKEN_CT=$(count_sse "token")
 check_gt "Tokens streamed" "$TOKEN_CT" 0 || F=false
+
+validate_tiles "$TILES" "F24" || F=false
+validate_sections "$SECS" "F24" || F=false
+validate_no_errors "F24" || F=false
 
 else F=false; fi; else F=false; fi
 $F && _flow pass 24 || _flow fail 24
@@ -3014,6 +3360,12 @@ except Exception as e: print(f'error:{e}')
 " 2>/dev/null || echo "error")
 check "Day card Viator deeplinks are activity-level" "$BLOCK_DL_FMT" "valid" || F=false
 
+validate_tiles "$TILES_RAW" "F27" || F=false
+validate_blocks "$DAY_CARDS" "F27" || F=false
+validate_refs "$TILES_RAW" "$DAY_CARDS" "F27" || F=false
+validate_grounding_check "F27" || F=false
+validate_no_errors "F27" || F=false
+
 else F=false; fi; else F=false; fi; else F=false; fi
 
 fi
@@ -3145,6 +3497,10 @@ check_gte "Turn 3: day_cards ≥ 5" "$DC_CT_T3" 5 || F=false
 # Tokens should have been streamed (conversationalist ran)
 TOKEN_CT=$(count_sse "token")
 check_gt "Turn 3: tokens streamed" "$TOKEN_CT" 0 || F=false
+
+validate_blocks "$DC_T3" "F28" || F=false
+validate_sections "$SECS" "F28" || F=false
+validate_no_errors "F28" || F=false
 
 else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi
 $F && _flow pass 28 || _flow fail 28

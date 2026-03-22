@@ -9,8 +9,8 @@ const mockState = vi.hoisted(() => ({
   requestScrollTo: vi.fn(),
 }));
 
-vi.mock('@/lib/api', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/api')>();
+vi.mock('@/lib/api-streaming', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api-streaming')>();
   return {
     ...actual,
     streamGraphPlan: mockState.streamGraphPlan,
@@ -49,7 +49,7 @@ import {
   nextEnvelopeBufferGeneration,
   useDocumentStore,
 } from '@/state/documentStore';
-import type { DayCard, StrategySection } from '@/types/plan-envelope';
+import type { DayCard, PlanViewState, StrategySection } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
 function makeSection(
@@ -93,7 +93,7 @@ type SeedDocumentOptions = {
   strategySections?: StrategySection[];
   dayCards?: DayCard[];
   tiles?: Record<string, Tile>;
-  planViewState?: string;
+  planViewState?: PlanViewState;
 };
 
 function seedDocument(options: StrategySection[] | SeedDocumentOptions = []): void {
@@ -164,11 +164,16 @@ function createRefs(requestId: string): ChatSseRefs {
 function createLoaders() {
   return {
     delayedLoader: {
+      isVisible: false,
       startLoading: vi.fn(),
       onTangibleOutput: vi.fn(),
       reset: vi.fn(),
     },
     actionLoader: {
+      isVisible: false,
+      loaderState: null,
+      title: '',
+      subtext: '',
       startLoading: vi.fn(),
       onTangibleOutput: vi.fn(),
       reset: vi.fn(),

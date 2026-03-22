@@ -3,7 +3,7 @@
 Unit tests for router_extraction.py.
 
 This file covers:
-- _parse_day_preferences: JSON day-count parsing with hallucination guard
+
 - _clamp_date_str: YYYY-MM-DD clamping to valid month end
 - RouterOutput: Pydantic schema validation and defaults
 - IntentClassification: Pydantic schema validation and defaults
@@ -18,86 +18,8 @@ from app.planner.nodes.router_extraction import (
     RouterOutput,
     _build_specialist_keyword_prompt,
     _clamp_date_str,
-    _parse_day_preferences,
     _validate_extraction,
 )
-
-# =============================================================================
-# _parse_day_preferences
-# =============================================================================
-
-
-class TestParseDayPreferences:
-    """Parses JSON day counts with hallucination guard (requires digits in user_text)."""
-
-    def test_none_raw_returns_empty(self) -> None:
-        result = _parse_day_preferences(None, "I want to go diving")
-        assert result == {}
-
-    def test_empty_string_raw_returns_empty(self) -> None:
-        result = _parse_day_preferences("", "3 days diving")
-        assert result == {}
-
-    def test_no_digits_in_user_text_returns_empty(self) -> None:
-        """Hallucination guard: LLM invented day counts user never stated."""
-        result = _parse_day_preferences('{"diving": 3}', "I want to go diving in Bali")
-        assert result == {}
-
-    def test_parses_valid_json_with_digits_in_text(self) -> None:
-        result = _parse_day_preferences('{"diving": 3, "hiking": 2}', "3 days diving and 2 hiking")
-        assert result == {"diving": 3, "hiking": 2}
-
-    def test_keys_are_lowercased(self) -> None:
-        result = _parse_day_preferences('{"Diving": 3, "HIKING": 2}', "3 days Diving")
-        assert "diving" in result
-        assert "hiking" in result
-        assert "Diving" not in result
-        assert "HIKING" not in result
-
-    def test_keys_are_stripped(self) -> None:
-        result = _parse_day_preferences('{" diving ": 3}', "3 days diving")
-        assert "diving" in result
-
-    def test_invalid_json_returns_empty(self) -> None:
-        result = _parse_day_preferences("not-valid-json", "3 days diving")
-        assert result == {}
-
-    def test_invalid_json_curly_returns_empty(self) -> None:
-        result = _parse_day_preferences("{diving: 3}", "3 days diving")
-        assert result == {}
-
-    def test_single_activity_with_digit(self) -> None:
-        result = _parse_day_preferences('{"surfing": 5}', "5 days of surfing")
-        assert result == {"surfing": 5}
-
-    def test_empty_user_text_bypasses_digit_guard(self) -> None:
-        """Empty user_text is falsy: 'user_text and ...' short-circuits to False.
-        The guard is not triggered, so valid JSON is parsed normally."""
-        result = _parse_day_preferences('{"diving": 3}', "")
-        assert result == {"diving": 3}
-
-    def test_digit_in_user_text_allows_parse(self) -> None:
-        """A single digit anywhere in user_text satisfies the guard."""
-        result = _parse_day_preferences('{"yoga": 1}', "at least 1 session of yoga")
-        assert result == {"yoga": 1}
-
-    def test_non_dict_json_returns_empty(self) -> None:
-        """JSON array is not a dict — returns {}."""
-        result = _parse_day_preferences("[3, 2]", "3 days diving")
-        assert result == {}
-
-    def test_value_coerced_to_int(self) -> None:
-        """Values must be cast to int; floats should work if int()-able."""
-        result = _parse_day_preferences('{"diving": 3}', "3 days")
-        assert result["diving"] == 3
-        assert isinstance(result["diving"], int)
-
-    def test_float_json_value_coerced_to_int(self) -> None:
-        """LLM may emit float JSON values (3.0); int() coercion must handle them."""
-        result = _parse_day_preferences('{"diving": 3.0}', "3 days")
-        assert result["diving"] == 3
-        assert isinstance(result["diving"], int)
-
 
 # =============================================================================
 # _clamp_date_str

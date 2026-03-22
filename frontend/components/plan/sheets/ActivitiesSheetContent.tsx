@@ -1,39 +1,17 @@
 'use client';
 
-import { Leaf, Sun, Ticket, Zap } from 'lucide-react';
+import { Ticket } from 'lucide-react';
 
 import { Stepper } from '@/components/ui/stepper';
 import { Switch } from '@/components/ui/switch';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
+import { ALL_CATEGORIES, PACE_OPTIONS } from './activitiesSheetHelpers';
 import { GatingBlocker } from './GatingBlocker';
 
-// Activity categories -- flat list, no visual distinction between tiers.
-// Tier 1 (specialist) vs Tier 2 (experience) is a backend implementation detail.
-export const ALL_CATEGORIES = [
-  { value: 'diving', label: 'Diving', icon: '\u{1F93F}' },
-  { value: 'hiking', label: 'Hiking', icon: '\u{1F97E}' },
-  { value: 'skiing', label: 'Skiing', icon: '\u26F7\uFE0F' },
-  { value: 'cycling', label: 'Cycling', icon: '\u{1F6B4}' },
-  { value: 'sailing', label: 'Sailing', icon: '\u26F5' },
-  { value: 'surfing', label: 'Surfing', icon: '\u{1F3C4}' },
-  { value: 'cooking', label: 'Cooking', icon: '\u{1F373}' },
-  { value: 'yoga', label: 'Yoga', icon: '\u{1F9D8}' },
-  { value: 'cultural', label: 'Cultural', icon: '\u{1F3DB}\uFE0F' },
-  { value: 'tours', label: 'Tours', icon: '\u{1F39F}\uFE0F' },
-  { value: 'temples', label: 'Temples', icon: '\u26E9\uFE0F' },
-  { value: 'nightlife', label: 'Nightlife', icon: '\u{1F389}' },
-  { value: 'beach', label: 'Beach', icon: '\u{1F3D6}\uFE0F' },
-  { value: 'shopping', label: 'Shopping', icon: '\u{1F6CD}\uFE0F' },
-  { value: 'photography', label: 'Photography', icon: '\u{1F4F8}' },
-];
-
-export const PACE_OPTIONS = [
-  { value: 1, label: 'Relaxed', icon: Leaf },
-  { value: 2, label: 'Moderate', icon: Sun },
-  { value: 3, label: 'Packed', icon: Zap },
-] as const;
+// Re-export so existing consumers keep working
+export { ALL_CATEGORIES } from './activitiesSheetHelpers';
 
 export interface ActivitiesSheetContentProps {
   localEnabled: boolean;

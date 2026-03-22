@@ -12,7 +12,7 @@ import { TravelIntelligencePanel } from './StrategyHeroTravelIntelligence';
 import { formatConstraintRule, getConstraintIcon, getTopicLabel, renderTopicIcon } from './StrategyHeroUtils';
 
 // Shared recommendation list used across layout branches
-export function RecommendationList({
+function RecommendationList({
   items,
   headingLabel,
 }: {
@@ -24,7 +24,7 @@ export function RecommendationList({
       <h4 className={DS.text.label}>{headingLabel}</h4>
       <div className="space-y-2">
         {items.map((item, i) => (
-          <div key={i} className={cn('rounded-xl border p-3 flex gap-2', 'bg-white border-zinc-200 dark:bg-zinc-900 dark:border-zinc-700')}>
+          <div key={`${item.title}-${i}`} className={cn('rounded-xl border p-3 flex gap-2', 'bg-white border-zinc-200 dark:bg-zinc-900 dark:border-zinc-700')}>
             {item.image_url && (
               <div className="relative w-16 h-16 rounded-lg overflow-hidden shrink-0 bg-zinc-100 dark:bg-zinc-800">
                 <Image src={item.image_url} alt={item.title} fill className="object-cover" sizes="64px" />
@@ -82,8 +82,8 @@ export function CompactSheetContent({ section, constraints }: CompactSheetConten
                 </div>
               )}
               <div className="grid grid-rows-2 gap-2 h-full">
-                {section.vibe_trio.slice(1, 3).filter(v => v.image_url).map((vibe, i) => (
-                  <div key={i} className="relative h-full">
+                {section.vibe_trio.slice(1, 3).filter(v => v.image_url).map((vibe) => (
+                  <div key={vibe.label || vibe.image_url} className="relative h-full">
                     <Image src={vibe.image_url} alt={vibe.label || 'Trip vibe'} fill className="object-cover" sizes="200px" />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-3">
                       <span className={`text-white ${DS.textSize.micro} font-bold uppercase tracking-wider drop-shadow-md`}>{vibe.label}</span>
@@ -99,7 +99,7 @@ export function CompactSheetContent({ section, constraints }: CompactSheetConten
             <h4 className={DS.text.label}>Destination Vibe</h4>
             <div className="grid grid-cols-2 gap-2">
               {section.content_added.filter(item => item.image_url).slice(0, 4).map((item, i) => (
-                <div key={i} className="relative aspect-square rounded-xl overflow-hidden bg-zinc-100 dark:bg-zinc-900">
+                <div key={`${item.title}-${i}`} className="relative aspect-square rounded-xl overflow-hidden bg-zinc-100 dark:bg-zinc-900">
                   <Image src={item.image_url!} alt={item.title} fill className="object-cover" sizes="200px" />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
                   <span className="absolute bottom-2 left-2 text-xs font-bold text-white drop-shadow-md">{item.title}</span>
@@ -118,7 +118,7 @@ export function CompactSheetContent({ section, constraints }: CompactSheetConten
             <h4 className={DS.text.label}>Trip Highlights</h4>
             <ul className="space-y-2">
               {section.principles.map((p, i) => (
-                <li key={i} className="flex gap-2 items-start text-sm text-zinc-600 dark:text-zinc-300">
+                <li key={`${p}-${i}`} className="flex gap-2 items-start text-sm text-zinc-600 dark:text-zinc-300">
                   <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />{p}
                 </li>
               ))}
@@ -135,8 +135,8 @@ export function CompactSheetContent({ section, constraints }: CompactSheetConten
         <div className="space-y-2">
           <h4 className={DS.text.label}>Destination Preview</h4>
           <div className="flex gap-2 overflow-x-auto pb-2 snap-x no-scrollbar -mx-4 px-4">
-            {section.destination_gallery.filter(img => img.image_url).map((img, idx) => (
-              <div key={idx} className="shrink-0 snap-center relative w-56 h-36 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-200 dark:border-zinc-700/50">
+            {section.destination_gallery.filter(img => img.image_url).map((img) => (
+              <div key={img.image_url} className="shrink-0 snap-center relative w-56 h-36 rounded-xl overflow-hidden shadow-card dark:shadow-none border border-zinc-200 dark:border-zinc-700/50">
                 <Image src={img.image_url} alt={img.label || 'Destination image'} fill className="object-cover" sizes="224px" />
               </div>
             ))}
@@ -146,7 +146,7 @@ export function CompactSheetContent({ section, constraints }: CompactSheetConten
         {section.principles && section.principles.length > 0 && (
           <div className="space-y-4"><h4 className={DS.text.label}>Key Principles</h4>
             <ul className="space-y-2">{section.principles.map((p, i) => (
-              <li key={i} className="flex gap-2 items-start text-sm text-zinc-600 dark:text-zinc-300"><CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />{p}</li>
+              <li key={`${p}-${i}`} className="flex gap-2 items-start text-sm text-zinc-600 dark:text-zinc-300"><CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />{p}</li>
             ))}</ul>
           </div>
         )}
@@ -175,15 +175,15 @@ export function CompactSheetContent({ section, constraints }: CompactSheetConten
       {section.one_liner && <div className="space-y-2"><h4 className={DS.text.label}>Strategy Logic</h4><p className={DS.text.body}>{section.one_liner}</p></div>}
       {constraints.length > 0 && (
         <div className="space-y-4"><h4 className={DS.text.label}>Applied Constraints</h4>
-          <div className="grid gap-2">{constraints.map((c, i) => (
-            <div key={i} className={DS.infoBox.container}><div className="flex gap-2">{getConstraintIcon(c.type)}<div className="flex-1 min-w-0"><p className="font-medium text-sm text-zinc-900 dark:text-zinc-100">{formatConstraintRule(c.rule)}</p>{c.reason && <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{c.reason}</p>}</div></div></div>
+          <div className="grid gap-2">{constraints.map((c) => (
+            <div key={c.rule} className={DS.infoBox.container}><div className="flex gap-2">{getConstraintIcon(c.type)}<div className="flex-1 min-w-0"><p className="font-medium text-sm text-zinc-900 dark:text-zinc-100">{formatConstraintRule(c.rule)}</p>{c.reason && <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{c.reason}</p>}</div></div></div>
           ))}</div>
         </div>
       )}
       {section.principles && section.principles.length > 0 && (
         <div className="space-y-4"><h4 className={DS.text.label}>Key Principles</h4>
           <ul className="space-y-2">{section.principles.map((p, i) => (
-            <li key={i} className="flex gap-2 items-start text-sm text-zinc-600 dark:text-zinc-300"><CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />{p}</li>
+            <li key={`${p}-${i}`} className="flex gap-2 items-start text-sm text-zinc-600 dark:text-zinc-300"><CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />{p}</li>
           ))}</ul>
         </div>
       )}
@@ -191,7 +191,7 @@ export function CompactSheetContent({ section, constraints }: CompactSheetConten
       {section.logistics_notes && section.logistics_notes.length > 0 && (
         <div className="space-y-4"><h4 className={DS.text.label}>Logistics Notes</h4>
           <ul className="space-y-1.5">{section.logistics_notes.map((note, i) => (
-            <li key={i} className="text-xs text-zinc-600 dark:text-zinc-400 flex items-start gap-2"><span className="text-zinc-400 mt-0.5">•</span>{note}</li>
+            <li key={`${note}-${i}`} className="text-xs text-zinc-600 dark:text-zinc-400 flex items-start gap-2"><span className="text-zinc-400 mt-0.5">•</span>{note}</li>
           ))}</ul>
         </div>
       )}

@@ -37,7 +37,7 @@ export function DragPreviewCard({ block }: DragPreviewCardProps) {
         'backdrop-blur-xl',
         'border border-zinc-200 dark:border-white/10',
         // Elevated shadow
-        'shadow-[0_25px_50px_rgba(0,0,0,0.15)] dark:shadow-[0_25px_50px_rgba(0,0,0,0.4)]',
+        `${DS.shadow.dragPreview} dark:${DS.shadow.dragPreviewDark}`,
         // Emerald accent ring
         'ring-1 ring-emerald-500/30 dark:ring-emerald-500/20',
       )}
