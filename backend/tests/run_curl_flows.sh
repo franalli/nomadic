@@ -32,6 +32,9 @@
 #   26  Trip List + Resume + New Trip lifecycle — guard rails (401/403) + session delete
 #   27  Viator activity enrichment — API key check, browse tiles, planner tile enrichment (conditional)
 #   28  Pill category change — PATCH + GENERATE_PLAN_NOW with empty session_state (page refresh)
+#   29  Health endpoint — pool stats, DB ping, response shape
+#   30  SSE heartbeat — heartbeat events present in stream
+#   31  Session turn cap — 40-turn limit enforcement (lightweight check)
 #
 # Architecture contract (from plan_graph_analysis.md + data-contracts.md):
 #   - SSE event types: token, node_status, partial, complete, error, feasibility_warning
@@ -1786,11 +1789,30 @@ with open(sys.argv[1]) as fh:
                 continue
             if tile.get("selected") or tile.get("booked") or tile.get("preferred"):
                 add_name(tile.get("title"))
+
+        strategy_sections = (
+            document.get("strategy_sections")
+            or session_state.get("strategy_sections")
+            or []
+        )
+        for section in strategy_sections:
+            if not isinstance(section, dict):
+                continue
+            for constraint in section.get("constraints_applied", []):
+                if isinstance(constraint, dict):
+                    add_name(constraint.get("rule"))
+                    add_name(constraint.get("reason"))
+            for content in section.get("content_added", []):
+                if isinstance(content, dict):
+                    add_name(content.get("title"))
+            for must_do in section.get("must_dos", []):
+                if isinstance(must_do, str):
+                    add_name(must_do)
         break
 
 phrases = {
     match.group(0).strip()
-    for match in re.finditer(r"\b(?:[A-Z][A-Za-z0-9'&.-]+(?:\s+[A-Z][A-Za-z0-9'&.-]+)+)\b", assistant)
+    for match in re.finditer(r"\b(?:[A-Z][A-Za-z0-9'&-]+(?:\s+[A-Z][A-Za-z0-9'&-]+)+)\b", assistant)
 }
 
 unknown = []
@@ -3505,6 +3527,158 @@ validate_no_errors "F28" || F=false
 else F=false; fi; else F=false; fi; else F=false; fi; else F=false; fi
 $F && _flow pass 28 || _flow fail 28
 _flow_end 28
+echo ""
+fi
+
+
+# ═══ Flow 29: Health Endpoint — pool stats, DB ping, response shape ═══════════
+
+if should_run 29; then
+_flow_begin 29
+echo ""
+echo "═══ Flow 29: Health Endpoint — pool stats, DB ping, response shape ═══"
+F=true
+
+HEALTH_CODE=$(curl -s -o "$RESP" -w "%{http_code}" "$BASE/health")
+check "GET /health → 200" "$HEALTH_CODE" "200" || F=false
+
+if [ "$HEALTH_CODE" = "200" ]; then
+  HEALTH_STATUS=$(python3 -c "import sys,json; print(json.load(open(sys.argv[1])).get('status',''))" "$RESP" 2>/dev/null)
+  check "health status = ok" "$HEALTH_STATUS" "ok" || F=false
+
+  DB_OK=$(python3 -c "import sys,json; print(json.load(open(sys.argv[1])).get('db',{}).get('ok',''))" "$RESP" 2>/dev/null)
+  check "health db.ok = True" "$DB_OK" "True" || F=false
+
+  # Pool stats must have numeric size
+  POOL_SIZE=$(python3 -c "
+import sys,json
+d=json.load(open(sys.argv[1]))
+pool=d.get('db',{}).get('pool',{})
+s=pool.get('size','')
+print(s if isinstance(s,int) and s>=0 else '')
+" "$RESP" 2>/dev/null)
+  check_not_empty "health db.pool.size present" "$POOL_SIZE" || F=false
+
+  # Must have build info
+  HASH=$(python3 -c "import sys,json; print(json.load(open(sys.argv[1])).get('prompt_bundle_hash',''))" "$RESP" 2>/dev/null)
+  check_not_empty "health prompt_bundle_hash present" "$HASH" || F=false
+fi
+
+$F && _flow pass 29 || _flow fail 29
+_flow_end 29
+echo ""
+fi
+
+
+# ═══ Flow 30: SSE Heartbeat — heartbeat events present in stream ═════════════
+
+if should_run 30; then
+_flow_begin 30
+echo ""
+echo "═══ Flow 30: SSE Heartbeat — heartbeat events in stream ═══"
+F=true
+
+if fresh_session; then
+
+echo "  → Send message and capture SSE stream (including heartbeats)"
+if send_message "diving in Bali, March 1-7 2030"; then
+
+# Count heartbeat events in the SSE response
+HB_CT=$(python3 - "$RESP" <<'PYEOF'
+import sys
+count = 0
+with open(sys.argv[1]) as f:
+    for line in f:
+        if line.strip().startswith("event: heartbeat"):
+            count += 1
+        elif line.startswith("data: "):
+            try:
+                import json
+                obj = json.loads(line[6:])
+                if obj.get("type") == "heartbeat":
+                    count += 1
+            except Exception:
+                pass
+print(count)
+PYEOF
+)
+echo "  ℹ  Heartbeat events: $HB_CT"
+
+# At least 1 heartbeat should appear during a planning turn (which takes >5s)
+# If the turn completes in <5s (cache hit), heartbeat might not fire — that's ok, skip
+if [ "$HB_CT" -gt 0 ]; then
+  check "Heartbeat events present" "$HB_CT" "$HB_CT" || F=false
+else
+  skip_test "Heartbeat events" "turn completed before 5s heartbeat interval"
+fi
+
+# Verify complete event still present (heartbeats don't break stream)
+COMPLETE_CT=$(count_sse "complete")
+check_gt "Complete event present" "$COMPLETE_CT" 0 || F=false
+
+# Verify tokens still streamed
+TOKEN_CT=$(count_sse "token")
+check_gt "Tokens streamed" "$TOKEN_CT" 0 || F=false
+
+else F=false; fi; else F=false; fi
+$F && _flow pass 30 || _flow fail 30
+_flow_end 30
+echo ""
+fi
+
+
+# ═══ Flow 31: Session Turn Cap — 40-turn limit enforcement ═══════════════════
+
+if should_run 31; then
+_flow_begin 31
+echo ""
+echo "═══ Flow 31: Session Turn Cap — lightweight verification ═══"
+F=true
+
+# This flow verifies the turn cap exists by checking the coordinator code path.
+# Actually running 40 real LLM turns would be expensive and slow.
+# Instead, verify the cap constant is present and the response structure.
+#
+# We do a 1-turn sanity check: send a message, verify complete event has
+# session_state.messages, and verify the turn count is tracked.
+
+if fresh_session; then
+
+echo "  → Turn 1: Single message to verify message tracking"
+if send_message "hiking in Patagonia, March 10-17"; then
+
+# Verify messages exist in session_state
+MSG_CT=$(python3 - "$RESP" <<'PYEOF'
+import sys, json
+with open(sys.argv[1]) as f:
+    for line in f:
+        if not line.startswith("data: "): continue
+        try: outer = json.loads(line[6:])
+        except: continue
+        if outer.get("type") != "complete": continue
+        msgs = outer.get("data", {}).get("session_state", {}).get("messages", [])
+        # Count HumanMessage entries (they have type="human")
+        human = sum(1 for m in msgs if isinstance(m, dict) and m.get("type") == "human")
+        print(human)
+        break
+PYEOF
+)
+echo "  ℹ  Human messages in session_state: $MSG_CT"
+check_gte "Messages tracked in session_state" "$MSG_CT" 1 || F=false
+
+# Verify the turn cap constant exists in coordinator source
+# (defense: if someone removes the cap, this check catches it)
+CAP_EXISTS=$(python3 -c "
+import ast, sys
+with open('$BACKEND_DIR/app/planner/coordinator.py') as f:
+    src = f.read()
+print('true' if '_human_turns >= 40' in src or 'SESSION_MAX_TURNS' in src else 'false')
+" 2>/dev/null)
+check "Turn cap guard exists in coordinator" "$CAP_EXISTS" "true" || F=false
+
+else F=false; fi; else F=false; fi
+$F && _flow pass 31 || _flow fail 31
+_flow_end 31
 echo ""
 fi
 

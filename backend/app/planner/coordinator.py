@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json as _json
 import logging
 import re
 import time
@@ -53,6 +54,20 @@ from app.planner.specialist_registry import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _structured_log(
+    event: str,
+    *,
+    session_id: str = "",
+    level: int = logging.INFO,
+    **fields: Any,
+) -> None:
+    """Emit a structured JSON log line for key coordinator events."""
+    logger.log(
+        level, "%s", _json.dumps({"event": event, "session_id": session_id, **fields}, default=str)
+    )
+
 
 # Derived from specialist_registry — per-person price estimate fallbacks
 # for specialist tiles when content_added items don't carry a price.
@@ -615,6 +630,147 @@ def _flatten_tiles_payload(tiles: Dict[str, Any]) -> Dict[str, Any]:
                 if tile_id:
                     flattened[str(tile_id)] = _normalize_tile_fields(tile)
     return flattened
+
+
+def _flatten_tiles_payload_filtered(
+    tiles: Dict[str, Any],
+    categories: tuple[str, ...],
+) -> Dict[str, Any]:
+    """Flatten only specified category keys into ID-keyed map."""
+    return _flatten_tiles_payload({k: v for k, v in tiles.items() if k in categories})
+
+
+def _pre_sign_envelope_photos(
+    tiles: Dict[str, Any],
+    day_cards: list,
+    browseable_activities: list,
+    session_id: str,
+) -> None:
+    """Sign all raw photo_name references in-place before envelope emission.
+
+    Covers hotel tiles, browseable activities, and day-card blocks that may
+    carry a ``photo_name`` without a signed ``image_url``.  Activity tiles are
+    already signed by ``_prepare_activity_tiles_for_build``; this catches the
+    remaining surfaces.  Pure HMAC computation — zero network calls.
+    """
+    if not session_id:
+        return
+    from app.tile_service.google_places_provider import build_signed_photo_url
+
+    def _sign(tile: dict) -> None:
+        if not isinstance(tile, dict):
+            return
+        photo_name = (tile.get("meta") or {}).get("photo_name") or tile.get("photo_name") or ""
+        if photo_name and not (tile.get("image_url") or "").startswith("/api/media/"):
+            signed = build_signed_photo_url(session_id, photo_name)
+            if signed:
+                tile["image_url"] = signed
+
+    for category_tiles in tiles.values():
+        if not isinstance(category_tiles, list):
+            continue
+        for tile in category_tiles:
+            _sign(tile)
+
+    for ba in browseable_activities:
+        _sign(ba)
+
+    for card in day_cards:
+        if not isinstance(card, dict):
+            continue
+        for block in card.get("blocks", []):
+            if not isinstance(block, dict):
+                continue
+            booked = block.get("booked_tile")
+            if isinstance(booked, dict):
+                _sign(booked)
+            _sign(block)
+
+
+def _compute_trip_cost_estimate(
+    tiles: Dict[str, Any],
+    day_cards: list,
+    trip_plan: Dict[str, Any],
+) -> Dict[str, Any] | None:
+    """Compute trip cost estimate from tile prices.  Pure arithmetic, no LLM."""
+    adults = trip_plan.get("adults", 1) or 1
+    trip_nights = max(0, len(day_cards) - 1) if day_cards else 0
+    currency = trip_plan.get("currency", "USD")
+
+    # Use selected hotel if set (frontend action), otherwise cheapest available.
+    hotel_cost = 0.0
+    best_hotel_price = float("inf")
+    for ht in tiles.get("hotels") or []:
+        if not isinstance(ht, dict):
+            continue
+        hp = ht.get("price_estimate") or ht.get("live_price") or 0
+        try:
+            hp = float(hp)
+        except (ValueError, TypeError):
+            hp = 0
+        if hp <= 0:
+            continue
+        is_selected = ht.get("selected")
+        if is_selected:
+            best_hotel_price = hp
+            break
+        if hp < best_hotel_price:
+            best_hotel_price = hp
+    if best_hotel_price < float("inf"):
+        basis = "per_night"  # default hotel pricing
+        hotel_cost = best_hotel_price * trip_nights if basis == "per_night" else best_hotel_price
+
+    flight_cost = 0.0
+    flight_tiles = tiles.get("flights") or []
+    if flight_tiles:
+        prices: list[float] = []
+        for ft in flight_tiles:
+            if not isinstance(ft, dict):
+                continue
+            fp = ft.get("price_estimate") or 0
+            try:
+                fp = float(fp)
+            except (ValueError, TypeError):
+                fp = 0
+            if fp > 0:
+                prices.append(fp)
+        if prices:
+            ft0 = flight_tiles[0] if isinstance(flight_tiles[0], dict) else {}
+            basis = ft0.get("price_basis", "per_person")
+            cheapest = min(prices)
+            flight_cost = cheapest * adults if basis == "per_person" else cheapest
+
+    activity_cost = 0.0
+    activity_count = 0
+    for at in tiles.get("activities") or []:
+        if not isinstance(at, dict):
+            continue
+        ap = at.get("price_estimate") or 0
+        try:
+            ap = float(ap)
+        except (ValueError, TypeError):
+            ap = 0
+        if ap > 0:
+            basis = at.get("price_basis", "per_person")
+            activity_cost += ap * adults if basis == "per_person" else ap
+            activity_count += 1
+
+    total = hotel_cost + flight_cost + activity_cost
+    if total <= 0:
+        return None
+
+    return {
+        "hotel_total": round(hotel_cost, 2) if hotel_cost else None,
+        "hotel_per_night": round(hotel_cost / trip_nights, 2)
+        if hotel_cost and trip_nights
+        else None,
+        "flight_total": round(flight_cost, 2) if flight_cost else None,
+        "activities_total": round(activity_cost, 2),
+        "activity_count": activity_count,
+        "estimated_total": round(total, 2),
+        "currency": currency,
+        "note": "Excludes meals and local transport",
+    }
 
 
 def _requested_specialist_topics(topics: List[str]) -> List[str]:
@@ -1988,10 +2144,49 @@ async def _run_itinerary_enrichment_pipeline(
     if destination and activity_tiles and (has_viator or has_gyg):
         from app.services.partner_enrichment import enrich_tiles_with_partners
 
-        await enrich_tiles_with_partners(activity_tiles, destination, currency)
+        # Only enrich tiles placed in the itinerary to avoid wasted partner API calls
+        placed_ids: set[str] = set()
+        for dc in day_cards:
+            if not isinstance(dc, dict):
+                continue
+            for block in dc.get("blocks", []):
+                if not isinstance(block, dict):
+                    continue
+                bid = block.get("id")
+                if bid:
+                    placed_ids.add(bid)
+                bt = block.get("booked_tile")
+                if isinstance(bt, dict) and bt.get("id"):
+                    placed_ids.add(bt["id"])
+
+        tiles_to_enrich = (
+            [t for t in activity_tiles if t.get("id") in placed_ids]
+            if placed_ids
+            else activity_tiles
+        )
+        await enrich_tiles_with_partners(tiles_to_enrich, destination, currency)
         _apply_activity_tile_enrichment_to_day_cards(activity_tiles, day_cards)
 
-    if day_cards:
+    # Skip GP enrichment when all placed blocks already have partner or GP data.
+    _blocks_needing_gp = 0
+    for dc in day_cards:
+        if not isinstance(dc, dict):
+            continue
+        for block in dc.get("blocks", []):
+            if not isinstance(block, dict) or block.get("is_buffer"):
+                continue
+            at = (block.get("activity_type") or "").lower()
+            if at in ("arrival", "departure", "check_in", "check_out", "free_day"):
+                continue
+            has_data = bool(
+                block.get("deeplink") or block.get("image_url") or block.get("google_place_id")
+            )
+            if not has_data:
+                _blocks_needing_gp += 1
+
+    if _blocks_needing_gp == 0 and day_cards:
+        logger.info("[coordinator] All placed blocks have partner/GP data — skipping GP enrichment")
+    elif day_cards:
         shadow_state = {
             "trip_plan": trip_plan,
             "tiles": {"activities": activity_tiles},
@@ -2442,6 +2637,7 @@ def _apply_classifier_to_state(
     # Clear stale IATA codes when location changes so the resolver re-resolves.
     if "destination" in fields_changed:
         trip_plan.pop("destination_iata", None)
+        trip_plan.pop("country_code", None)  # re-resolve at envelope build
     if "origin" in fields_changed:
         trip_plan.pop("origin_iata", None)
 
@@ -5017,6 +5213,10 @@ def _build_envelope(
         if not ba.get("deeplink") and ba.get("deeplink_url"):
             ba["deeplink"] = ba["deeplink_url"]
 
+    # Pre-sign any raw photo_name references so the frontend never needs to
+    # issue individual /api/media/google-places-photo-url signing requests.
+    _pre_sign_envelope_photos(tiles, day_cards, browseable_activities, session_id)
+
     # Stub fix: resolve stuck "pending" local_expert_enrichment states.
     # Phase B (async enrichment) may not have completed yet on this turn.
     # If the section has populated content, mark it "ready"; if empty, "not_available".
@@ -5091,6 +5291,7 @@ def _build_envelope(
         "ack_status": ack_status,
         "ack_updates": ack_updates,
         "applied_updates": _canonicalize_applied_updates(fields_changed),
+        "trip_cost_estimate": _compute_trip_cost_estimate(tiles, day_cards, trip_plan),
         "_debug": {"applied_updates_raw": fields_changed},
     }
 
@@ -5107,6 +5308,8 @@ def _build_envelope(
         "document": document,
         "errors": [],
         "coordinator_reset": coordinator_reset,
+        "response_degraded": bool(turn_meta.get("response_degraded")),
+        "response_error_type": turn_meta.get("response_error_type"),
     }
 
 
@@ -5339,25 +5542,46 @@ async def _execute_step(
             session_id=session_id,
         )
         state["tiles"] = tiles
-        partial_data: dict[str, Any] = {
-            "kind": "tiles",
-            "payload": _flatten_tiles_payload(tiles),
-        }
-        # Propagate tiles_replaced flag so frontend replaces immediately
-        # (don't wait for complete envelope).
         turn_meta = state.get("turn_meta") or {}
-        if turn_meta.get("tiles_replaced"):
-            partial_data["tiles_replaced"] = True
-        tiles_partial = {"type": "partial", "data": partial_data}
+        tiles_replaced = bool(turn_meta.get("tiles_replaced"))
 
-        # Emit date flex suggestion as a second partial when available
+        # Split emission: hotels+flights first, activities second
+        hotel_flight_payload = _flatten_tiles_payload_filtered(tiles, ("hotels", "flights"))
+        activity_payload = _flatten_tiles_payload_filtered(tiles, ("activities",))
+
+        events: list[dict[str, Any]] = []
+
+        # tiles_replaced is a turn-level signal: attach to whichever partial fires first
+        replaced_emitted = False
+
+        if hotel_flight_payload:
+            hf_data: dict[str, Any] = {"kind": "tiles", "payload": hotel_flight_payload}
+            if tiles_replaced and not replaced_emitted:
+                hf_data["tiles_replaced"] = True
+                replaced_emitted = True
+            events.append({"type": "partial", "data": hf_data})
+
+        if activity_payload:
+            act_data: dict[str, Any] = {"kind": "tiles", "payload": activity_payload}
+            if tiles_replaced and not replaced_emitted:
+                act_data["tiles_replaced"] = True
+                replaced_emitted = True
+            events.append({"type": "partial", "data": act_data})
+
+        if not events:
+            combined: dict[str, Any] = {"kind": "tiles", "payload": _flatten_tiles_payload(tiles)}
+            if tiles_replaced:
+                combined["tiles_replaced"] = True
+            events.append({"type": "partial", "data": combined})
+
+        # Emit date flex suggestion when available
         date_flex = turn_meta.get("date_flex_suggestion")
         if isinstance(date_flex, dict) and date_flex:
-            return [
-                tiles_partial,
-                {"type": "partial", "data": {"kind": "date_flex_suggestion", "payload": date_flex}},
-            ]
-        return tiles_partial
+            events.append(
+                {"type": "partial", "data": {"kind": "date_flex_suggestion", "payload": date_flex}}
+            )
+
+        return events[0] if len(events) == 1 else events
 
     if step_type == StepType.BUILD_ITINERARY:
         # Snapshot tile IDs before build to detect new specialist-injected tiles
@@ -5581,6 +5805,22 @@ async def execute_turn(
             state["turn_meta"]["fields_changed"] = list(_patch_changed)
         _normalize_specialist_plan_keys(state)
 
+        # Session turn cap — prevent runaway LLM spend
+        _human_turns = sum(1 for m in (state.get("messages") or []) if isinstance(m, HumanMessage))
+        if _human_turns >= 40:
+            _cap_msg = (
+                "You've reached the conversation limit for this session. "
+                "Please start a new trip to continue planning."
+            )
+            yield {"type": "token", "data": _cap_msg}
+            state.setdefault("messages", []).append(HumanMessage(content=user_message))
+            state["messages"].append(AIMessage(content=_cap_msg))
+            yield {
+                "type": "complete",
+                "data": _build_envelope(state, user_message, session_id, _cap_msg),
+            }
+            return
+
         # Step 1: Merge document settings
         _merge_doc_settings(state, doc_settings)
         _rehydrate_trimmed_booked_tiles(state)
@@ -5601,11 +5841,12 @@ async def execute_turn(
 
             classifier = await classify_change(user_message, summary)
 
-        logger.info(
-            "[coordinator] Classified: intent=%s change_type=%s affects=%s",
-            classifier.intent,
-            classifier.change_type.value,
-            classifier.affects,
+        _structured_log(
+            "turn_start",
+            session_id=session_id,
+            intent=classifier.intent,
+            change_type=classifier.change_type.value,
+            affects=classifier.affects,
         )
 
         # Fire Unsplash prefetch as early as possible so cache is warm by tile
@@ -5655,58 +5896,65 @@ async def execute_turn(
         elif classifier.intent == "RESET":
             pass
 
-        # Step 4a: Preview the plan before feasibility work so response-only
-        # reuse can skip all precheck I/O on true no-op turns.
-        plan = plan_turn(classifier, state)
-
-        # Step 4b: Pre-check feasibility for geographic-constrained specialists.
-        # Runs before the final plan so _compute_dispatch_list() can filter out
-        # infeasible topics — preventing phantom DISPATCH_SPECIALISTS steps.
-        # Skip on GPN triggers — plan already exists, feasibility was checked earlier.
+        # Step 4a: Speculatively start feasibility check BEFORE plan_turn() so
+        # the LLM call (~600ms) overlaps with plan computation.  We use a
+        # lightweight heuristic (PLANNING intent + not GPN) to decide; the
+        # response-only guard is checked after plan_turn() when we await.
         is_gpn_trigger = user_message.strip().upper() in (
             "GENERATE_PLAN_NOW",
             "GENERATE_PLAN_TRIGGER",
         ) or (classifier.reasoning and "GENERATE_PLAN_NOW" in classifier.reasoning)
-        if (
-            classifier.intent == "PLANNING"
-            and not is_gpn_trigger
-            and not _is_response_only_plan(plan)
-        ):
+        _feasibility_task: asyncio.Task | None = None
+        if classifier.intent == "PLANNING" and not is_gpn_trigger:
             dest = state.get("trip_plan", {}).get("destination") or classifier.destination
-            # Determine candidate topics from activity settings (same source as _compute_dispatch_list)
             activity_settings_fc = state.get("trip_settings", {}).get("activity_settings", {})
-            candidate_topics = [
+            _feasibility_candidates = [
                 c for c in activity_settings_fc.get("categories", []) if c in TIER1_SPECIALIST_NAMES
             ]
-            # Skip feasibility re-check for topics that already have
-            # a specialist plan (plan exists → feasibility was confirmed).
             existing_plans = state.get("specialist_plans", {})
             if existing_plans:
-                candidate_topics = [
-                    t for t in candidate_topics if t not in existing_plans or not existing_plans[t]
+                _feasibility_candidates = [
+                    t
+                    for t in _feasibility_candidates
+                    if t not in existing_plans or not existing_plans[t]
                 ]
-            if dest and candidate_topics:
+            if dest and _feasibility_candidates:
                 from app.planner.services.feasibility_service import batch_feasibility_precheck
 
-                feasibility_prechecks = await batch_feasibility_precheck(candidate_topics, dest)
-                if feasibility_prechecks:
-                    state["turn_meta"]["feasibility_prechecks"] = feasibility_prechecks
-                    logger.info(
-                        "[coordinator] Feasibility pre-check: %s",
-                        {t: s for t, (s, _, _) in feasibility_prechecks.items()},
-                    )
-                    # Emit SSE warnings for immediate frontend toast feedback
-                    for topic, (status, reason, alternative) in feasibility_prechecks.items():
-                        if status == "infeasible":
-                            yield {
-                                "type": "feasibility_warning",
-                                "data": {
-                                    "topic": topic,
-                                    "status": status,
-                                    "reason": reason,
-                                    "alternative": alternative,
-                                },
-                            }
+                _feasibility_task = asyncio.create_task(
+                    batch_feasibility_precheck(_feasibility_candidates, dest)
+                )
+
+        # Step 4b: Compute plan while feasibility runs in the background.
+        plan = plan_turn(classifier, state)
+
+        # Step 4c: Await feasibility results and re-plan if infeasible topics found.
+        # Cancel the speculative task for response-only plans (no dispatch needed).
+        if _feasibility_task is not None and _is_response_only_plan(plan):
+            _feasibility_task.cancel()
+            _feasibility_task = None
+        if _feasibility_task is not None:
+            try:
+                feasibility_prechecks = await _feasibility_task
+            except Exception:
+                feasibility_prechecks = None
+            if feasibility_prechecks:
+                state["turn_meta"]["feasibility_prechecks"] = feasibility_prechecks
+                logger.info(
+                    "[coordinator] Feasibility pre-check: %s",
+                    {t: s for t, (s, _, _) in feasibility_prechecks.items()},
+                )
+                for topic, (status, reason, alternative) in feasibility_prechecks.items():
+                    if status == "infeasible":
+                        yield {
+                            "type": "feasibility_warning",
+                            "data": {
+                                "topic": topic,
+                                "status": status,
+                                "reason": reason,
+                                "alternative": alternative,
+                            },
+                        }
 
             plan = plan_turn(classifier, state)
 
@@ -5903,9 +6151,26 @@ async def execute_turn(
             yield _node_status("response", "started", "Writing response...", "message-square", 800)
 
             response_chunks: List[str] = []
-            async for chunk in _generate_response_streaming(state, classifier, user_message):
-                response_chunks.append(chunk)
-                yield {"type": "token", "data": chunk}
+            try:
+                async for chunk in _generate_response_streaming(state, classifier, user_message):
+                    response_chunks.append(chunk)
+                    yield {"type": "token", "data": chunk}
+            except Exception as resp_err:
+                logger.error(
+                    "[coordinator] Response generation failed: %s",
+                    resp_err,
+                    exc_info=True,
+                )
+                _tm = state.setdefault("turn_meta", {})
+                _tm["response_degraded"] = True
+                # Classify error type for frontend retry UX
+                err_str = str(resp_err).lower()
+                if "429" in err_str or "quota" in err_str or "rate" in err_str:
+                    _tm["response_error_type"] = "rate_limit"
+                elif "timeout" in err_str or isinstance(resp_err, TimeoutError):
+                    _tm["response_error_type"] = "timeout"
+                else:
+                    _tm["response_error_type"] = "generation_error"
 
             assistant_message = "".join(response_chunks)
             if not assistant_message.strip():
@@ -5937,10 +6202,12 @@ async def execute_turn(
         envelope = _build_envelope(state, user_message, session_id, assistant_message)
 
         wall_ms = int((time.monotonic() - wall_start) * 1000)
-        logger.info(
-            "[coordinator] Turn complete: %s (%d ms)",
-            plan.reason,
-            wall_ms,
+        _structured_log(
+            "turn_complete",
+            session_id=session_id,
+            reason=plan.reason,
+            wall_ms=wall_ms,
+            steps=len(plan.steps),
         )
 
         yield {"type": "complete", "data": envelope}
@@ -5987,6 +6254,13 @@ async def execute_turn(
 
     except Exception as exc:
         await _cleanup_unsplash_task(cancel=True)
+        _structured_log(
+            "llm_error",
+            session_id=session_id,
+            level=logging.ERROR,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
         logger.error("[coordinator] Turn failed: %s", exc, exc_info=True)
         yield {"type": "error", "message": str(exc)}
     finally:

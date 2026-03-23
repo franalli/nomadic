@@ -1889,6 +1889,19 @@ class ItineraryBuilder:
                     )
                     remaining[spec] = trimmed
 
+        # Arrival/departure day capacity: limit to 1 activity for trips >=3 days.
+        # Applied in Phase D co-scheduling and round-robin placement.  Cross-domain
+        # Phase A/C (dive→buffer→altitude) takes priority over this cap since safety
+        # ordering matters more than arrival-day comfort.
+        # Defined early so Phase D and round-robin can reference it.
+        _arrival_departure_cap: dict[int, int] = {}
+        if len(days) >= 3:
+            if 0 in available_day_indices:
+                _arrival_departure_cap[0] = 1
+            last_idx = len(days) - 1
+            if last_idx in available_day_indices and last_idx != 0:
+                _arrival_departure_cap[last_idx] = 1
+
         # ─────────────────────────────────────────────────────────
         # Cross-domain clustering: diving before altitude with buffer
         # ─────────────────────────────────────────────────────────
@@ -2076,6 +2089,12 @@ class ItineraryBuilder:
                         if eff_hours < activity_hours or eff_blocks < 1:
                             continue
 
+                        # Arrival/departure day cap
+                        if candidate_idx in _arrival_departure_cap:
+                            _non_buf = sum(1 for b in candidate_day.blocks if not b.is_buffer)
+                            if _non_buf >= _arrival_departure_cap[candidate_idx]:
+                                continue
+
                         # Max 1 activity per specialist per day
                         spec_count = sum(
                             1
@@ -2161,6 +2180,48 @@ class ItineraryBuilder:
                 f"placed={phase_d_placed}, deferred={len(phase_d_unplaced)}"
             )
 
+        # Geographic proximity reordering: sort each specialist's activities so
+        # geographically close ones are adjacent.  The round-robin then places
+        # nearby activities on consecutive days, reducing wasted transit time.
+        from app.utils.geo import haversine_km
+
+        for spec, acts in remaining.items():
+            if len(acts) < 3:
+                continue
+            geocoded = []
+            for idx, a in enumerate(acts):
+                coords = getattr(a, "coordinates", None)
+                if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                    # coordinates are [lng, lat]; haversine expects (lat, lng)
+                    try:
+                        geocoded.append((idx, (float(coords[1]), float(coords[0]))))
+                    except (TypeError, ValueError):
+                        pass
+            if len(geocoded) < 3:
+                continue
+            # Nearest-neighbor chain starting from the first geocoded activity
+            ordered_indices: list[int] = [geocoded[0][0]]
+            used = {geocoded[0][0]}
+            gc_map = {i: c for i, c in geocoded}
+            for _ in range(len(geocoded) - 1):
+                last_coord = gc_map[ordered_indices[-1]]
+                best_idx, best_dist = -1, float("inf")
+                for gi, gc in geocoded:
+                    if gi in used:
+                        continue
+                    d = haversine_km(last_coord, gc)
+                    if d < best_dist:
+                        best_dist = d
+                        best_idx = gi
+                if best_idx >= 0:
+                    ordered_indices.append(best_idx)
+                    used.add(best_idx)
+            # Append non-geocoded activities at end (preserve their relative order)
+            for idx in range(len(acts)):
+                if idx not in used:
+                    ordered_indices.append(idx)
+            remaining[spec] = [acts[i] for i in ordered_indices]
+
         # Even distribution: spread activities across all available days
         # Strategy: cycle through days, placing 1 activity per day per round
         # This ensures Days 6-7 get activities before Days 2-3 get their 2nd
@@ -2218,6 +2279,9 @@ class ItineraryBuilder:
             # Check if day is truly full (respect user's activities-per-day preference)
             non_buffer_blocks = [b for b in current_day.blocks if not b.is_buffer]
             max_for_day = min(MAX_BLOCKS_PER_DAY, self._activities_per_day)
+            # Arrival/departure days: reduced capacity (1 light activity max)
+            if day_idx in _arrival_departure_cap:
+                max_for_day = min(max_for_day, _arrival_departure_cap[day_idx])
             if len(non_buffer_blocks) >= max_for_day:
                 day_ptr += 1
                 if day_ptr >= len(round_robin_day_indices):

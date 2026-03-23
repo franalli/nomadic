@@ -22,6 +22,48 @@ from app.validation import prewarm_cache
 logger = logging.getLogger(__name__)
 
 
+async def _cleanup_expired_sessions() -> None:
+    """Background task: delete sessions inactive for 14+ days, 100 at a time."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import delete, select, update
+
+    from app.db import _get_async_session_factory
+    from app.db_models import ChatMessage, PlanDocument, Session, TripContext
+
+    INTERVAL_S = 6 * 3600  # every 6 hours
+
+    while True:
+        try:
+            cutoff = datetime.now(UTC) - timedelta(days=14)
+            factory = _get_async_session_factory()
+            async with factory() as db:
+                result = await db.execute(
+                    select(Session.id).where(Session.last_activity_at < cutoff).limit(100)
+                )
+                stale_ids = [row[0] for row in result.all()]
+                if not stale_ids:
+                    await asyncio.sleep(INTERVAL_S)
+                    continue
+                await db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(stale_ids)))
+                await db.execute(delete(PlanDocument).where(PlanDocument.session_id.in_(stale_ids)))
+                # Null out self-referential FK before deleting TripContext rows
+                await db.execute(
+                    update(TripContext)
+                    .where(TripContext.session_id.in_(stale_ids))
+                    .values(parent_trip_context_id=None)
+                )
+                await db.execute(delete(TripContext).where(TripContext.session_id.in_(stale_ids)))
+                await db.execute(delete(Session).where(Session.id.in_(stale_ids)))
+                await db.commit()
+                logger.info("[cleanup] Deleted %d expired sessions", len(stale_ids))
+            await asyncio.sleep(INTERVAL_S)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.warning("[cleanup] Session cleanup failed", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
     """Application lifespan hooks.
@@ -94,10 +136,20 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         f"(insufficient_suggestions={template_validation.get('insufficient_suggestions', {})})"
     )
 
+    cleanup_task = asyncio.create_task(_cleanup_expired_sessions())
+
     yield
 
     # ── Shutdown cleanup ──────────────────────────────────────────
     logger.info("[Shutdown] Cleaning up resources...")
+
+    # 0. Cancel session cleanup background task
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    logger.info("[Shutdown] Cancelled session cleanup task")
 
     # 1. Cancel tracked background tasks
     from app.services.task_tracker import cancel_all as _cancel_bg_tasks

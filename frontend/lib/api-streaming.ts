@@ -129,6 +129,8 @@ interface SSECompleteEvent {
     changes_made: boolean;
     request_id: string;
     observability?: unknown;
+    response_degraded?: boolean;
+    response_error_type?: string;
   };
 }
 
@@ -265,7 +267,11 @@ export interface SSEFeasibilityWarningEvent {
   };
 }
 
-type SSEEvent = SSETokenEvent | SSECompleteEvent | SSEErrorEvent | SSENodeStatusEvent | SSEPartialEvent | SSEFeasibilityWarningEvent;
+export interface SSEHeartbeatEvent {
+  type: 'heartbeat';
+}
+
+type SSEEvent = SSETokenEvent | SSECompleteEvent | SSEErrorEvent | SSENodeStatusEvent | SSEPartialEvent | SSEFeasibilityWarningEvent | SSEHeartbeatEvent;
 
 /**
  * Callbacks for streaming graph plan responses.
@@ -283,6 +289,8 @@ interface StreamGraphPlanCallbacks {
   onPartial?: (data: SSEPartialEvent['data']) => void;
   /** Called when a feasibility warning is received (e.g., activity impossible at destination) */
   onFeasibilityWarning?: (data: SSEFeasibilityWarningEvent['data']) => void;
+  /** Called when a heartbeat event is received (connection keepalive) */
+  onHeartbeat?: () => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -395,6 +403,8 @@ export function streamGraphPlan(
                     callbacks.onPartial?.(parsed.data);
                   } else if (parsed.type === 'feasibility_warning') {
                     callbacks.onFeasibilityWarning?.(parsed.data);
+                  } else if (parsed.type === 'heartbeat') {
+                    callbacks.onHeartbeat?.();
                   } else if (parsed.type === 'complete') {
                     callbacks.onComplete(parsed.data);
                   } else if (parsed.type === 'error') {

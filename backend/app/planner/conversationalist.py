@@ -564,6 +564,18 @@ def _build_destination_knowledge_block(
         "('gorilla trekking permits in Volcanoes National Park typically cost ~$1,500') "
         "rather than referencing a specific operator not in the plan.",
     ]
+    start_date = (state.get("trip_plan") or {}).get("start_date")
+    if start_date:
+        try:
+            from datetime import datetime as _dt_sc
+
+            month_name = _dt_sc.strptime(str(start_date)[:7], "%Y-%m").strftime("%B")
+            lines.append(
+                f"The trip is in {month_name}. Mention one relevant seasonal insight "
+                f"about {destination} in {month_name} (weather, crowds, wildlife, pricing)."
+            )
+        except (ValueError, TypeError):
+            pass
     return "\n".join(lines)
 
 
@@ -854,7 +866,8 @@ _VOICE_BASE: str = """\
 - Reference SPECIFIC names, places, and constraints from the specialist data above.
 - If specialist data is empty, be brief and direct — don't fabricate details.
 - COUNT YOUR SENTENCES. If the voice rule says "2 MAX", write exactly 2 or fewer.
-- NEVER repeat a constraint or warning you already mentioned in a previous message.\
+- NEVER repeat a constraint or warning you already mentioned in a previous message.
+When the user builds on earlier choices, acknowledge continuity naturally (e.g., "Great addition to the diving..."). Never repeat information from prior turns.\
 """
 
 _VOICE_DESTINATION_SET: str = """\
@@ -924,6 +937,15 @@ Sentence count: 3-5 depending on complexity.
 Tone: knowledgeable friend who's actually been there.\
 """
 
+_VOICE_DESTINATION_EXPLORE: str = """\
+## Voice: Destination Exploration
+Sentence count: 3-5 MAX.
+The user hasn't picked a destination yet. Be a decisive, opinionated guide.
+Suggest 2-3 specific destinations with one concrete reason each (season, activity match, value).
+End with one sharp question that narrows their preferences.
+Tone: enthusiastic travel editor pitching their top picks.\
+"""
+
 _VOICE_GREETING: str = """\
 ## Voice: Greeting / Casual
 Sentence count: 1 MAX.
@@ -960,6 +982,7 @@ _SENTENCE_LIMIT: Dict[str, int] = {
     _VOICE_ACTIVITY_CHANGE: 2,
     _VOICE_PREFERENCE_CHANGE: 2,
     _VOICE_QUESTION: 5,
+    _VOICE_DESTINATION_EXPLORE: 5,
     _VOICE_GREETING: 1,
     _VOICE_FALLBACK: 3,
     _VOICE_INFEASIBLE_ACTIVITY: 4,
@@ -1021,6 +1044,10 @@ def _resolve_voice_block(
 
     change_key = classifier.change_type.value
     day_cards = state.get("day_cards", [])
+
+    # No destination + question → exploration voice
+    if change_key == "question" and not state.get("trip_plan", {}).get("destination"):
+        return _VOICE_DESTINATION_EXPLORE
 
     # swap_activity intentionally stays at ACTIVITY_CHANGE — a swap is a
     # minor tweak, not a full rebuild, so 2-3 sentences (not 3-4) is right.

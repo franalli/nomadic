@@ -236,6 +236,24 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
   useEffect(() => {
     let cancelled = false;
 
+    /** Try to auto-resume the most recent saved trip for authenticated users. */
+    async function tryAutoResume(): Promise<boolean> {
+      const userState = useUserStore.getState();
+      if (!userState.user) return false;
+      try {
+        await userState.fetchTrips({ force: true });
+        const latestTrips = useUserStore.getState().trips;
+        if (latestTrips.length > 0) {
+          debugLog('[useSessionHydration] Auto-resuming most recent trip');
+          const resumed = await userState.resumeTrip(latestTrips[0].trip_id);
+          if (resumed) return true; // triggers page reload
+        }
+      } catch (e) {
+        debugLog('[useSessionHydration] Auto-resume failed, starting fresh', e);
+      }
+      return false;
+    }
+
     async function hydrateSessionDocument() {
       debugLog('[useSessionHydration] 🚀 Starting hydration...');
       try {
@@ -253,7 +271,7 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
         // Check for session expiration before fetching document
         // This prevents loading stale data that may cause issues
         if (isSessionExpired()) {
-          debugLog('[useSessionHydration] ⏰ Session expired (>24 hours old), starting fresh session');
+          debugLog('[useSessionHydration] Session expired (>24 hours old), starting fresh session');
           // Clear session timestamp and notify parent
           clearSessionTimestamp();
           onSessionExpired?.();
@@ -265,6 +283,9 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
           setTilesBranchId(null);
           // Set new session timestamp for fresh session
           setSessionTimestamp();
+
+          if (await tryAutoResume()) return;
+
           onToast('Your previous session has expired. Starting a new trip planning session.');
           return;
         }
@@ -287,7 +308,10 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
 
         // Handle no document case
         if (!doc) {
-          debugLog('[useSessionHydration] ⚠️ No document returned, starting fresh');
+          debugLog('[useSessionHydration] No document returned, starting fresh');
+
+          if (await tryAutoResume()) return;
+
           if (getSessionTimestamp() === null) {
             setSessionTimestamp();
           }

@@ -3548,7 +3548,10 @@ class TestDeferredActivityTileRehydration:
         finally:
             unsplash_release.set()
 
-        assert events[-1]["type"] == "error"
+        # Response generation failure is now non-fatal (Item P: LLM failure recovery).
+        # The coordinator catches it, sets response_degraded, and emits a complete envelope.
+        assert events[-1]["type"] == "complete"
+        assert events[-1]["data"].get("response_degraded") is True
         assert len(cancel_calls) >= 1
 
 

@@ -100,6 +100,7 @@ export function ActivityCardPhoto({
   resolvedTitle,
 }: ActivityCardPhotoProps) {
   const [imageErrored, setImageErrored] = useState(false);
+  const [imageLoaded, setImageLoaded] = useState(false);
   const [signedGooglePhotoUrl, setSignedGooglePhotoUrl] = useState<string | undefined>(undefined);
 
   const photoName = useMemo(() => resolveActivityPhotoName(block), [block]);
@@ -147,6 +148,7 @@ export function ActivityCardPhoto({
 
   useEffect(() => {
     setImageErrored(false);
+    setImageLoaded(false);
   }, [primaryImageUrl, block.id, block.booked_tile?.id]);
 
   return (
@@ -154,13 +156,21 @@ export function ActivityCardPhoto({
       {/* Thumbnail -- full-width landscape banner */}
       {cardImageUrl ? (
         <div className="relative w-full h-36 rounded-xl overflow-hidden">
+          <div className={cn(
+            "absolute inset-0 z-0 animate-pulse bg-zinc-200/50 dark:bg-zinc-700/50 transition-opacity duration-500",
+            imageLoaded && "opacity-0 pointer-events-none"
+          )} />
           <Image
             src={cardImageUrl}
             alt={block.summary}
             fill
-            className="object-cover object-[center_30%]"
+            className={cn(
+              "object-cover object-[center_30%] z-10 transition-opacity duration-700",
+              !imageLoaded && "opacity-0"
+            )}
             sizes="(min-width: 1024px) 480px, 100vw"
             unoptimized={cardImageUrl.startsWith('/') || isGooglePlacesPhotoProxyUrl(cardImageUrl)}
+            onLoad={() => setImageLoaded(true)}
             onError={() => {
               if (!imageErrored) {
                 setImageErrored(true);

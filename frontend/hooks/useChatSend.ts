@@ -16,6 +16,7 @@ import { type ChatSseRefs, useChatSse } from '@/hooks/useChatSse';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { type SSEFeasibilityWarningEvent, type streamGraphPlan } from '@/lib/api-streaming';
 import { debugLog } from '@/lib/debug';
+import { claimActiveTab, isActiveTab } from '@/lib/tabGuard';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { nextEnvelopeBufferGeneration, useDocumentStore } from '@/state/documentStore';
 import type { ChatMessage } from '@/types/chat';
@@ -171,6 +172,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
   const [triggerContext, setTriggerContext] = useState<TriggerContext | null>(null);
 
   // Refs
+  const sendMessageCoreRef = useRef<(msg: string) => void>(() => {});
   const isSendingRef = useRef(false);
   const lastMessageSentAtRef = useRef(0);
   const lastGenerateClickedAtRef = useRef(0);
@@ -230,6 +232,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         toast(data.reason);
       }
     }, [toast]),
+    onRetry: (msg: string) => sendMessageCoreRef.current(msg),
   });
 
   // Stop streaming when user clicks the stop button
@@ -326,6 +329,14 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         request_id: requestId,
         destination: useDocumentStore.getState().document?.trip_inputs?.destination,
       });
+
+      // Multi-tab guard (advisory)
+      if (!isActiveTab()) {
+        toast('This trip is being edited in another tab.');
+        restoreDraftIfBlocked();
+        return;
+      }
+      claimActiveTab();
 
       const guardReason = getSendBurstGuardReason({
         isGenerateTrigger,
@@ -645,6 +656,7 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
       // streamingMessageId REMOVED — using ref instead
     ]
   );
+  sendMessageCoreRef.current = sendMessageCore;
 
   const addAssistantMessage = useCallback((message: string) => {
     const assistantMessage: ChatMessage = {

@@ -155,7 +155,7 @@ class TestPostItinerary:
             day_cards=[{"day": 1, "activities": []}],
         )
         chips = _generate_chips_from_state(state)
-        assert len(chips) <= 3
+        assert len(chips) <= 4
         assert len(chips) > 0
 
     def test_browse_activities_chip_present(self) -> None:
@@ -318,3 +318,172 @@ class TestTilesPresent:
         chips = _generate_chips_from_state(state)
         messages = [c["message"].lower() for c in chips]
         assert any("activit" in m for m in messages)
+
+
+# =============================================================================
+# Departure city personalization
+# =============================================================================
+
+
+class TestDepartureCityPersonalization:
+    """Verify destination name appears in departure city chip across all paths."""
+
+    def test_post_itinerary_personalizes_departure(self) -> None:
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+            trip_settings={"activity_settings": {"categories": ["diving"]}},
+            day_cards=[{"day": 1}],
+        )
+        chips = _generate_chips_from_state(state)
+        dep_chips = [c for c in chips if "departure" in c["message"].lower()]
+        assert dep_chips, "Expected a departure city chip"
+        assert "Bali" in dep_chips[0]["message"]
+
+    def test_has_tiles_no_itinerary_personalizes_departure(self) -> None:
+        state = _make_state(
+            trip_plan={
+                "destination": "Tokyo",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-07",
+            },
+            tiles={"hotels": [{"id": "h1"}]},
+        )
+        chips = _generate_chips_from_state(state)
+        dep_chips = [c for c in chips if "departure" in c["message"].lower()]
+        assert dep_chips, "Expected a departure city chip"
+        assert "Tokyo" in dep_chips[0]["message"]
+
+    def test_dest_dates_no_activities_personalizes_departure(self) -> None:
+        state = _make_state(
+            trip_plan={
+                "destination": "Paris",
+                "start_date": "2026-05-01",
+                "end_date": "2026-05-07",
+            },
+        )
+        chips = _generate_chips_from_state(state)
+        dep_chips = [c for c in chips if "departure" in c["message"].lower()]
+        assert dep_chips, "Expected a departure city chip"
+        assert "Paris" in dep_chips[0]["message"]
+
+
+# =============================================================================
+# Must-dos injection from local expert
+# =============================================================================
+
+
+class TestMustDosInjection:
+    """Verify local expert must_dos inject as contextual chips post-itinerary.
+
+    The must_dos gate fires when ``len(chips) < 3``. With origin+budget set,
+    only 2 standard chips are generated (Browse + Change hotel), leaving room.
+    """
+
+    _BASE_PLAN = {
+        "destination": "Bali",
+        "start_date": "2026-03-01",
+        "end_date": "2026-03-07",
+        "origin": "San Francisco",
+        "budget": 5000,
+    }
+
+    def _local_expert_section(self, must_dos: list) -> dict:
+        return {
+            "id": "strategy_local_expert",
+            "specialist_type": "local_expert",
+            "title": "Bali Trip Overview",
+            "must_dos": must_dos,
+        }
+
+    def test_must_do_string_appears_in_chips(self) -> None:
+        state = _make_state(
+            trip_plan=self._BASE_PLAN,
+            trip_settings={"activity_settings": {"categories": ["diving"]}},
+            day_cards=[{"day": 1}],
+            strategy_sections=[self._local_expert_section(["Visit Uluwatu Temple"])],
+        )
+        chips = _generate_chips_from_state(state)
+        messages = [c["message"] for c in chips]
+        assert "Visit Uluwatu Temple" in messages
+
+    def test_up_to_two_must_dos_injected(self) -> None:
+        state = _make_state(
+            trip_plan=self._BASE_PLAN,
+            trip_settings={"activity_settings": {"categories": ["diving"]}},
+            day_cards=[{"day": 1}],
+            strategy_sections=[
+                self._local_expert_section(["Visit Uluwatu Temple", "Try Nasi Goreng"])
+            ],
+        )
+        chips = _generate_chips_from_state(state)
+        messages = [c["message"] for c in chips]
+        assert "Visit Uluwatu Temple" in messages
+        assert "Try Nasi Goreng" in messages
+
+    def test_must_do_over_60_chars_skipped(self) -> None:
+        long_text = "A" * 61
+        state = _make_state(
+            trip_plan=self._BASE_PLAN,
+            trip_settings={"activity_settings": {"categories": ["diving"]}},
+            day_cards=[{"day": 1}],
+            strategy_sections=[self._local_expert_section([long_text, "Short one"])],
+        )
+        chips = _generate_chips_from_state(state)
+        messages = [c["message"] for c in chips]
+        assert long_text not in messages
+        assert "Short one" in messages
+
+    def test_must_dos_only_from_local_expert_section(self) -> None:
+        state = _make_state(
+            trip_plan=self._BASE_PLAN,
+            trip_settings={"activity_settings": {"categories": ["diving"]}},
+            day_cards=[{"day": 1}],
+            strategy_sections=[
+                {"specialist_type": "diving", "must_dos": ["USAT Liberty Wreck"]},
+            ],
+        )
+        chips = _generate_chips_from_state(state)
+        messages = [c["message"] for c in chips]
+        assert "USAT Liberty Wreck" not in messages
+
+    def test_post_itinerary_cap_at_four(self) -> None:
+        state = _make_state(
+            trip_plan={**self._BASE_PLAN, "origin": None, "budget": None},
+            trip_settings={"activity_settings": {"categories": ["diving"]}},
+            day_cards=[{"day": 1}],
+            strategy_sections=[self._local_expert_section(["Must do 1", "Must do 2"])],
+        )
+        chips = _generate_chips_from_state(state)
+        # 3 standard chips (browse + departure + budget) + must_dos capped at 4
+        assert len(chips) <= 4
+
+    def test_must_dos_category_is_destination(self) -> None:
+        state = _make_state(
+            trip_plan=self._BASE_PLAN,
+            trip_settings={"activity_settings": {"categories": ["diving"]}},
+            day_cards=[{"day": 1}],
+            strategy_sections=[self._local_expert_section(["Visit Tanah Lot"])],
+        )
+        chips = _generate_chips_from_state(state)
+        dest_chips = [c for c in chips if c["category"] == "destination"]
+        assert len(dest_chips) >= 1
+
+    def test_must_dos_blocked_when_three_standard_chips(self) -> None:
+        """When origin and budget are missing, 3 standard chips fill slots."""
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+            trip_settings={"activity_settings": {"categories": ["diving"]}},
+            day_cards=[{"day": 1}],
+            strategy_sections=[self._local_expert_section(["Should not appear"])],
+        )
+        chips = _generate_chips_from_state(state)
+        messages = [c["message"] for c in chips]
+        assert "Should not appear" not in messages

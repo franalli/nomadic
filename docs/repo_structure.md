@@ -307,6 +307,7 @@ backend/
 │   ├── test_tile_service.py             # Tile service tests
 │   ├── test_vertical_specialist_node.py # Vertical specialist node tests
 │   ├── test_logistics_tile_scaling.py # Logistics tile scaling tests
+│   ├── test_plan_items_infra.py      # Plan items infrastructure tests
 │   ├── test_post_arrangement_constraints.py  # Post-arrangement constraint recomputation tests
 │   ├── test_constraint_guard_merge.py # Constraint guard merge/dedup regression tests
 │   ├── test_graph_plan_utils.py       # Graph plan helper contract tests
@@ -691,6 +692,7 @@ frontend/
 │   ├── streamParser.ts         # Stream parsing utilities
 │   ├── summary.ts              # Summary utilities
 │   ├── theme.ts                # Theme mode constants for app-level styling
+│   ├── tabGuard.ts             # Advisory multi-tab guard (BroadcastChannel-based, prevents concurrent SSE)
 │   ├── tileSelectors.ts        # Tile selection logic
 │   ├── tileUtils.ts            # Tile utilities
 │   ├── travelIntel.ts          # Travel intelligence data helpers
@@ -764,6 +766,7 @@ frontend/
 │   ├── useBranchManager.test.tsx       # Immediate plan-result apply + missing-flight refresh timing tests
 │   ├── useChatScrolling.test.tsx       # Forced bottom-settle and user-scroll cancellation tests
 │   ├── useChatSend.optimistic-extension.test.tsx  # Optimistic extension rollback tests for chat send
+│   ├── tabGuard.test.ts                  # Multi-tab guard BroadcastChannel tests
 │   ├── useChatSse.test.tsx               # SSE connection manager tests
 │   ├── useTripInputsWithFallback.test.tsx  # Trip-input fallback subscription behavior tests
 │   ├── userStore.test.ts               # Auth/recent-trips store tests

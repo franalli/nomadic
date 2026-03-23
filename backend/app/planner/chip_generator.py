@@ -19,7 +19,7 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Generate template-based suggestion chips from agent state.
 
     This is a lightweight chip generator for the agent path that does
-    not depend on GraphState.  It produces 1-3 actionable chips based on
+    not depend on GraphState.  It produces 1-4 actionable chips based on
     what data is available in the current state.
     """
     trip_plan: dict[str, Any] = state.get("trip_plan", {})
@@ -105,7 +105,7 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
         if not origin:
             chips.append(
                 _chip(
-                    "Add departure city",
+                    f"Add departure city for {dest} flights" if dest else "Add departure city",
                     "follow_up",
                     "core_fields",
                     "plane",
@@ -136,7 +136,23 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
                     action_target="budget",
                 )
             )
-        return chips[:3]
+
+        # Inject contextual chip from local expert must_dos (initial plan only)
+        if len(chips) < 3:
+            strategy_sections = state.get("strategy_sections", [])
+            for section in strategy_sections:
+                if not isinstance(section, dict):
+                    continue
+                if section.get("specialist_type") != "local_expert":
+                    continue
+                must_dos = section.get("must_dos") or []
+                for md in must_dos[:2]:
+                    text = md.get("title", "") if isinstance(md, dict) else str(md)
+                    if text and len(text) < 60:
+                        chips.append(_chip(text, "follow_up", "destination", "compass"))
+                break
+
+        return chips[:4]
 
     # Has tiles but no itinerary yet: suggest building
     if tiles and (tiles.get("flights") or tiles.get("hotels") or tiles.get("activities")):
@@ -155,7 +171,7 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
             if not origin:
                 chips.append(
                     _chip(
-                        "Add departure city",
+                        f"Add departure city for {dest} flights" if dest else "Add departure city",
                         "cta",
                         "core_fields",
                         "plane",
@@ -279,7 +295,7 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
         if not origin:
             chips.append(
                 _chip(
-                    "Add departure city",
+                    f"Add departure city for {dest} flights" if dest else "Add departure city",
                     "cta",
                     "core_fields",
                     "plane",

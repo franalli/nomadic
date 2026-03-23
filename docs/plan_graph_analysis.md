@@ -128,7 +128,7 @@ backend/app/planner/
 | `CLASSIFY` | `router_extraction.classify_change()` | Intent + extracted fields + change classification | `trip_inputs` (after apply) |
 | `DISPATCH_SPECIALISTS` | `_dispatch_specialists_parallel()` + `vertical_specialist.dispatch_specialist_with_brief()` | Replan only affected Tier 1 domains | `specialist_preview`, `strategy_sections` (streamed progressively as each specialist finishes via `_stream_specialist_dispatch_events()` async generator) |
 | `LOCAL_INTEL` | `_run_local_intel()` | Build/update local expert section | `strategy_sections` |
-| `SEARCH_TILES` | `_search_tiles()` | Refresh flights/hotels/activities by change type | `tiles` |
+| `SEARCH_TILES` | `_search_tiles()` | Refresh flights/hotels/activities by change type | `tiles` (split emission: hotels+flights first, activities second via `_flatten_tiles_payload_filtered()`) |
 | `BUILD_ITINERARY` | `_build_itinerary()` | Run pure-Python itinerary builder + store `builder_result` | `day_cards` (enriched payload via `_day_cards_partial_event()` including tiles, strategy_sections, plan_view_state, itinerary context: overview, assumptions, constraint violations, warnings; emits `[]` when the itinerary clears) |
 | `GENERATE_RESPONSE` | `conversationalist.generate_response_streaming()` | Stream final assistant response | token stream |
 | `SHORT_CIRCUIT` | `_short_circuit_message()` and state reset helpers | Deterministic greeting/reset handling (GREETING emits canned message; RESET sets `_reset_pending` flag) | none |
@@ -140,7 +140,7 @@ backend/app/planner/
 - `_execute_parallel_group()` now yields `(step, events, completed)` tuples as each parallel task completes via an `asyncio.Queue`, instead of gathering all results with `asyncio.gather`. This means `node_status` completed events fire as each parallel step finishes, not after the whole group. Step results that are async generators (e.g. specialist dispatch) are consumed incrementally -- each yielded event is forwarded to the caller as it arrives.
 - `_dispatch_specialists_parallel()` is now an `AsyncGenerator` that yields `(topic, result)` pairs as each specialist completes (via `asyncio.as_completed`), instead of returning a collected dict. The step executor returns a streaming async generator `_stream_specialist_dispatch_events()` that emits `specialist_preview` and `strategy_sections` partials after each specialist finishes.
 - `LOCAL_INTEL` remains sequential to avoid concurrent writes to `strategy_sections`.
-- `execute_turn()` now previews `plan_turn()` before geographic feasibility prechecks. If the provisional plan is response-only (`[GENERATE_RESPONSE]`), coordinator skips feasibility I/O entirely and preserves the existing itinerary/strategy for true no-op turns.
+- `execute_turn()` speculatively starts feasibility pre-checks as an `asyncio.Task` BEFORE `plan_turn()`, overlapping the LLM call (~600ms) with plan computation. If the resulting plan is response-only, the speculative task is cancelled. Otherwise results are awaited and infeasible topics yield `feasibility_warning` events before re-planning.
 - Partial failures in parallel groups are recorded in `turn_meta["partial_failures"]` and surfaced via `ack_updates`.
 
 ### Idempotent / Short-Circuit Routing
@@ -149,6 +149,10 @@ backend/app/planner/
 - A dedicated `INITIAL_PLAN` guard also skips full recomputation when an itinerary already exists and no fields changed; otherwise it continues with selective tile/build steps when strategy is already present.
 - Full-invalidation artifact clearing is now gated by `_should_clear_planning_artifacts()`: no-op turns do not wipe derived planning data unless the turn actually carries changed fields, while `GENERATE_PLAN_NOW` still keeps its reuse fast-path except when `activity_categories` changed (including a post-refresh `PATCH /api/document` flow with rebuilt `trip_settings` from the document).
 - `DATE_CHANGE` no longer blindly re-dispatches every Tier 1 specialist. Preserve-vs-dispatch now keys off the specialist midpoint month bucket plus target-count continuity: equal-duration date moves can reuse the existing plan immediately, while longer trips only preserve on same-destination tail extensions that still have reusable specialist content. Coordinator logs `Date change continuity` with explicit `dispatch`/`preserve` topic sets for flow auditing.
+- **Session turn cap:** `execute_turn()` counts `HumanMessage` entries; at ≥40 it emits a capped message and envelope without executing any steps, preventing runaway LLM spend.
+- **Response degradation:** `GENERATE_RESPONSE` wraps the streaming call in `try/except`. On failure, `turn_meta["response_degraded"]=True` and `turn_meta["response_error_type"]` is set (`rate_limit`, `timeout`, or `generation_error`). The envelope still builds with whatever tokens were collected.
+- **Destination change side effects:** `_apply_classifier_to_state()` now clears both `destination_iata` and `country_code` from `trip_plan` when destination changes, forcing re-resolution.
+- **Structured logging:** Key coordinator events (`turn_start`, `turn_complete`, `llm_error`) emit JSON log lines via `_structured_log()` with session_id and event-specific fields for observability.
 
 ---
 
@@ -159,9 +163,11 @@ backend/app/planner/
 Core behaviors:
 - Builds `trip_inputs` from `trip_plan` + `trip_settings`
 - Computes `plan_view_state` (`S0_BOOTSTRAP` / `S2_STRATEGY_READY` / `S3_*`)
-- Generates chips via `chip_generator._generate_chips_from_state()`
+- Generates chips via `chip_generator._generate_chips_from_state()` (up to 4 chips; injects contextual chips from local expert `must_dos` when slots remain)
 - Sets `ack_status` from route violations, applied field changes, and partial failures
 - Emits `constraints_validated`, `constraint_violations`, `applied_updates`, `ack_updates`
+- Computes `trip_cost_estimate` from tile prices (hotels, flights, activities) — pure arithmetic, no LLM
+- Pre-signs all raw `photo_name` references in tiles, day-card blocks, and browseable activities via `_pre_sign_envelope_photos()` (HMAC only, zero network calls)
 - Serializes state with `state_serde.serialize_agent_state()`
 
 `_compute_coordinator_s3_state()` maps builder outcomes:
@@ -272,6 +278,7 @@ Domain specialist with LLM-first architecture. 8 specialists (diving, hiking, sk
 
 **Behavior notes:**
 - `_build_specialist_prompt()` returns `(system, user, max_acts)` and applies category-aware, density-aware capping. It caps specialist `available_days` at 60% of trip duration to preserve room for mixed non-specialist activities.
+- Seasonal context: when `start_date` is set, the user prompt includes the travel month with guidance to consider weather, visibility, wildlife, crowds, closures, and pricing for the destination.
 - `TripBrief` flows into `_BriefAsTripPlan` with `activities_per_day` and active `categories` to bias distribution across specialists.
 - Specialist outputs are additionally capped after parsing so `max_acts` is never exceeded in cacheable payloads.
 - Structured function-calling responses fail closed: `parsed=None` raises immediately, and `_coerce_llm_specialist_output()` rejects partial payloads that would otherwise validate through default `"feasible"` / empty-list fallbacks.
@@ -310,7 +317,7 @@ Flight/hotel/activity fetching with safety logic.
 - Separate cache key hashes for hotels/activities/flights
 - Two-tier activity system (Tier 1 specialist + Tier 2 experience)
 - No-fly safety logic (registry-driven via `_has_nofly_constraints()`)
-- Hotels and activities fetched in parallel via `asyncio.gather()`
+- Hotels and activities fetched in parallel via `asyncio.gather()`; for pure Tier 1 trips (all selected categories are Tier 1), browse activities are pre-fetched in the same gather (~600ms saving)
 - Google Places hotel providers cap hotel results at top-3 per fetch (cost guard for photo-proxy traffic)
 - `build_signed_photo_url()` now returns `None` when photos are disabled, caps requested TTL by `settings.google_places_photo_signed_ttl_max` (default max 3600s; default request 1800s), and resolves its signing secret through `config.get_media_signing_secret()` so the tile signer and `/api/media/google-places-photo*` verifier share the same fallback chain.
 - Hotel-star filtering now cascades down (`min_stars-1 ... 1`) before fallback-to-originals, with applied threshold tracked in `state.metadata`.
@@ -318,7 +325,7 @@ Flight/hotel/activity fetching with safety logic.
 - Generic Tier 2 discovery now shares a canonical `TIER2_BROWSE_CATEGORIES` rotation (`cultural`, `food`, `nature`, `spa`, `tours`, `shopping`). Logistics uses it for general-interest browse pools, and fill-day generation rotates one category per day when the caller omits `categories` instead of inventing a synthetic `"activities"` label.
 - Experience tiles are stashed into `metadata["browseable_activities"]`, and Google Places backfill now propagates rating/review_count/deeplink when available.
 - When generated Tier 2 tiles are below expected density (`free_days * activities_per_day`), logistics executes a browse fallback using mapped alternative categories, appends successful backfill tiles, and preserves them in browseable activity metadata.
-- `enrich_tiles_with_partners()` (in `services/partner_enrichment.py`) is an optional pre-build enrichment pass for activity tiles. When Viator and/or GYG are enabled, it searches both providers in parallel via `asyncio.gather`, picks the best match per tile (highest rating, lowest price tiebreaker), throttles requests with `asyncio.Semaphore(5)`, and mutates tiles in place with live pricing, ratings, images, affiliate deeplinks, partner/provider metadata.
+- `enrich_tiles_with_partners()` (in `services/partner_enrichment.py`) is an optional pre-build enrichment pass for activity tiles. Only tiles placed in the itinerary (matched by block IDs from day_cards) are enriched to avoid wasted partner API calls. When Viator and/or GYG are enabled, it searches both providers in parallel via `asyncio.gather`, picks the best match per tile (highest rating, lowest price tiebreaker), throttles requests with `asyncio.Semaphore(5)`, and mutates tiles in place with live pricing, ratings, images, affiliate deeplinks, partner/provider metadata.
 - **Date flex suggestion:** When `grouped_prices` fallback is used, Aviasales provider returns a `FlightSearchResult` dataclass containing `tiles`, `nearby_prices` (full month date→price map), `requested_date_price`, `cheapest_date`, and `cheapest_price` (±3-day window). If the cheapest date saves ≥10% vs the requested date and the trip is >7 days out, logistics_node populates `state.metadata["date_flex_suggestion"]` which the coordinator threads to `turn_meta` and emits as a `date_flex_suggestion` SSE partial.
 - Coordinator tile refresh planning now treats `DAY_COUNT` as a full logistics refresh. Activity/preference mutations can also pull flights when the current or upcoming specialist set has no-fly buffers, while `persistent_meta["user_disabled_booking_types"]` prevents those safety refreshes from silently turning flights back on after a user explicitly disabled them.
 
@@ -360,6 +367,8 @@ Coordinator/build path usage -- called from `coordinator._build_itinerary()` and
 │  2b.   Early Conflict Detection - Irreconcilable check         │
 │  3.    Anchor Placement - Arrival/departure from flights       │
 │  4.    Buffer Injection - Safety blocks by severity            │
+│  4.5   Arrival/Departure Cap - 1 activity max on first/last day│
+│  4.6   Geo Proximity Reorder - Nearest-neighbor chain per spec │
 │  5.    Activity Distribution - Round-robin interleaving        │
 │        (includes day preference capping internally; periods      │
 │        avoid duplicate morning/afternoon/evening collisions)   │
@@ -424,7 +433,7 @@ Builder enrichment follows this order:
 The matched tile object is stored on each enriched activity (`activity._matched_tile`) and drives `booked_tile` assignment in
 `ItineraryBuilder._assign_booked_tiles_for_frontend()`, which powers richer photos/metadata in frontend cards.
 
-**Post-build enrichment** (`_post_build_enrich_placed_activities`) runs after the builder returns day cards. It enriches only
+**Post-build enrichment** (`_post_build_enrich_placed_activities`) runs after the builder returns day cards. Skipped entirely when all placed blocks already have partner or GP data (deeplink, image_url, or google_place_id). Otherwise enriches only
 blocks that were actually placed in the itinerary and lack a `google_place_id`, using `enrich_activities_with_places` with
 `path_label="post_build_enrich"`. This defers expensive Google Places API calls to after placement, so only placed blocks
 (typically 3-5) incur API cost instead of all candidate tiles (10+). Enriched fields (coordinates, google_place_id, deeplink,
@@ -481,6 +490,14 @@ Day 7: Hike 2 (Campuhan Ridge)
 Day 8: Hike 3 (Sekumpul)
 Day 9: Departure
 ```
+
+**Phase 4.5: Arrival/Departure Day Cap**
+
+For trips ≥3 days, arrival (day 0) and departure (last day) are capped at 1 activity each. Enforced in both Phase D co-scheduling and round-robin placement. Cross-domain safety ordering (dive→buffer→altitude) takes priority over this cap.
+
+**Phase 4.6: Geographic Proximity Reordering**
+
+Before round-robin, each specialist's remaining activities are reordered by nearest-neighbor chain (using `haversine_km`). Activities with coordinates are sorted so geographically close ones are adjacent; non-geocoded activities are appended at end. This reduces wasted transit time when round-robin places nearby activities on consecutive days. Only triggers when a specialist has ≥3 geocoded activities.
 
 **Day Preference Capping (internal to Phase 5)**
 
@@ -1150,7 +1167,7 @@ backend/app/prompts/
 
 1. **Persona** -- destination-aware (with local culture/style hints) or generic persona block
 2. Trip context block (`_build_trip_context_block`)
-3. **Destination knowledge unlock** (`_build_destination_knowledge_block`) -- injected only for `question` and `destination_change` intents. Gives the LLM explicit permission to use parametric destination knowledge (landmarks, neighborhoods, cultural experiences) while keeping bookable-entity grounding intact.
+3. **Destination knowledge unlock** (`_build_destination_knowledge_block`) -- injected only for `question` and `destination_change` intents. Gives the LLM explicit permission to use parametric destination knowledge (landmarks, neighborhoods, cultural experiences) while keeping bookable-entity grounding intact. When `start_date` is set, includes a seasonal insight prompt for the travel month (weather, crowds, wildlife, pricing).
 4. **"What the User Sees Right Now"** -- rendered dynamically when `day_cards` or `strategy_sections` exist in state, including day/activity counts and visible hotel/itinerary context while avoiding direct UI description
 5. Specialist findings (`_build_specialist_findings_block`)
 6. Itinerary status (`_build_itinerary_status_block`)
@@ -1175,6 +1192,7 @@ This keeps the final assistant turn aligned with what the backend just applied, 
 | `_VOICE_DESTINATION_SET` | 3 | Destination set / changed |
 | `_VOICE_FALLBACK` | 3 | Unmatched change types |
 | `_VOICE_INFEASIBLE_ACTIVITY` | 4 | Impossible activity redirect |
+| `_VOICE_DESTINATION_EXPLORE` | 5 | No destination yet + question intent — suggests 2-3 destinations with reasons |
 | `_VOICE_QUESTION` | 5 | Destination questions (unlocks world knowledge) |
 | `_VOICE_INITIAL_PLAN` | 5 | First plan reveal |
 
@@ -1233,7 +1251,8 @@ The coordinator also respects `cancel_event` -- if set (e.g. client disconnect),
 | `token` | `string` | Response text streamed from `conversationalist.generate_response_streaming()` |
 | `partial` | `{kind: "trip_inputs"\|"specialist_preview"\|"strategy_sections"\|"tiles"\|"day_cards"\|"tile_enrichment"\|"date_flex_suggestion", payload: any, ...}` | Progressive render from coordinator step outputs. `date_flex_suggestion` is emitted alongside tiles when Aviasales grouped_prices found a cheaper nearby date (≥10% savings). `specialist_preview` surfaces lightweight specialist highlights plus the current authoritative `strategy_sections`, and the frontend defers the immediately following compatibility `strategy_sections` merge by one animation frame so the preview can paint without an immediate duplicate merge. `day_cards` partials now carry enriched payloads via `_day_cards_partial_payload()` (tiles, strategy_sections, plan_view_state, itinerary context: overview, assumptions, constraint violations, warnings). `tile_enrichment` is a new post-response kind emitted after pending itinerary enrichment completes but before `complete`; it carries the enriched day_cards + tiles with `day_cards_changed` and `tiles_changed` boolean flags so the frontend can selectively re-render only what changed. If day_cards or tiles changed, dedicated `day_cards` and `tiles` partials follow immediately after the `tile_enrichment` partial. |
 | `feasibility_warning` | `{topic, status, reason, alternative}` | Coordinator feasibility signal. Forwarded by `generate_sse()` as a public SSE event for frontend toast display. |
-| `complete` | `{document, session_state, version, updated_at, ...}` | Public SSE payload built in `generate_sse()` after `apply_planner_update()`, wrapping/normalizing coordinator `_build_envelope()` output |
+| `heartbeat` | `{type: "heartbeat"}` | Connection keepalive emitted every 5s by `generate_sse()` via a background `_heartbeat_emitter` task. Frontend resets the SSE watchdog timer; no state mutation. |
+| `complete` | `{document, session_state, version, response_degraded?, response_error_type?, ...}` | Public SSE payload built in `generate_sse()` after `apply_planner_update()`, wrapping/normalizing coordinator `_build_envelope()` output. When `response_degraded=true`, the LLM response generation failed and `response_error_type` indicates the cause (`rate_limit`, `timeout`, `generation_error`). |
 | `error` | `{message}` | Error information |
 
 ### Step-to-node mapping (`_step_node_name`)
@@ -1246,7 +1265,7 @@ The coordinator also respects `cancel_event` -- if set (e.g. client disconnect),
 
 ### Complete Envelope (`_build_envelope()`)
 
-Coordinator complete payload includes `plan_view_state`, `tiles`, `strategy_sections`, `itinerary_day_cards`, `constraints_validated`, `constraint_violations`, `ack_status`, `ack_updates`, and `applied_updates`. `ack_status` now supports `partial` when only partial-failure updates were generated.
+Coordinator complete payload includes `plan_view_state`, `tiles`, `strategy_sections`, `itinerary_day_cards`, `constraints_validated`, `constraint_violations`, `ack_status`, `ack_updates`, `applied_updates`, and `trip_cost_estimate`. `ack_status` now supports `partial` when only partial-failure updates were generated.
 
 `coordinator._build_envelope()` also emits envelope-level `trip_settings` (fresh booking/hotel/activity settings), plus `itinerary_overview`, `itinerary_assumptions`, and `hotel_filter_cascaded` when present in turn/persistent metadata.
 When destination geocoding has already cached an ISO country code, `_build_envelope()` injects `trip_plan.country_code` into the returned document payload so frontend country-aware UI can render without a second lookup.

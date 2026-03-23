@@ -376,12 +376,14 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
     onPlanResult,
     onAutoExpandItinerary,
     onFeasibilityWarning,
+    onRetry,
     scrollToBottom,
     scrollPanelIntoView,
   } = callbacks;
 
   const reconcileTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pendingPlanScrollTimeoutRef = useRef<number | null>(null);
+  const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tripCreatedFiredRef = useRef(false);
   const itineraryGeneratedFiredRef = useRef(false);
   const queueCompletionScroll = useCallback(() => {
@@ -400,6 +402,10 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
       if (pendingPlanScrollTimeoutRef.current !== null) {
         window.clearTimeout(pendingPlanScrollTimeoutRef.current);
         pendingPlanScrollTimeoutRef.current = null;
+      }
+      if (watchdogTimerRef.current !== null) {
+        clearTimeout(watchdogTimerRef.current);
+        watchdogTimerRef.current = null;
       }
     };
   }, []);
@@ -540,8 +546,44 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
           }
         };
 
+        // Connection watchdog — detect dead streams
+        const WATCHDOG_TIMEOUT_MS = 15_000;
+
+        const resetWatchdog = () => {
+          if (watchdogTimerRef.current !== null) clearTimeout(watchdogTimerRef.current);
+          watchdogTimerRef.current = setTimeout(() => {
+            if (isStaleRequest()) return;
+            abortStreamRef.current?.();
+            abortStreamRef.current = null;
+            toast('Connection lost. Your progress is saved.', {
+              type: 'error',
+              duration: 8000,
+              action: { label: 'Retry', onClick: () => onRetry?.(body.message) },
+            });
+            // Clean up streaming state
+            setStreamingMessageId(null);
+            activeNodeStatuses.clear();
+            visibleNodeKey = null;
+            setNodeStatus(null);
+            delayedLoader.reset();
+            actionLoader.reset();
+            setTriggerContext(null);
+            setIsLoading(false);
+            isSendingRef.current = false;
+            activeStreamRequestIdRef.current = null;
+            if (sseSetRegenFlag) {
+              useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
+              sseSetRegenFlag = false;
+            }
+            resolve('error');
+          }, WATCHDOG_TIMEOUT_MS);
+        };
+
+        resetWatchdog(); // Start watchdog
+
         abortStreamRef.current = streamGraphPlan(body, {
           onToken: (token: string) => {
+            resetWatchdog();
             if (isStaleRequest()) return;
             setHasReceivedFirstToken(true);
             delayedLoader.onTangibleOutput();
@@ -552,6 +594,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
           },
 
           onNodeStatus: (status: SSENodeStatusEvent['data']) => {
+            resetWatchdog();
             if (isStaleRequest()) return;
             if (status.status === 'started') {
               const nextStatus: ActiveNodeStatus = {
@@ -577,6 +620,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
           },
 
           onPartial: (data: SSEPartialEvent['data']) => {
+            resetWatchdog();
             if (isStaleRequest()) return;
             try {
               const store = useDocumentStore.getState();
@@ -660,11 +704,17 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
           },
 
           onFeasibilityWarning: (data: SSEFeasibilityWarningEvent['data']) => {
+            resetWatchdog();
             if (isStaleRequest()) return;
             onFeasibilityWarning?.(data);
           },
 
+          onHeartbeat: () => {
+            resetWatchdog();
+          },
+
           onComplete: (response) => {
+            if (watchdogTimerRef.current !== null) { clearTimeout(watchdogTimerRef.current); watchdogTimerRef.current = null; }
             if (isStaleRequest()) {
               debugLog('[SSE] Ignoring stale stream complete event');
               if (sseSetRegenFlag) {
@@ -805,6 +855,34 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               trackEvent('itinerary_generated', doc.trip_inputs?.destination, {
                 day_count: doc.day_cards?.length ?? 0,
               });
+            }
+
+            // Check for degraded response (LLM failure with fallback message)
+            if (response.response_degraded) {
+              const errorType = response.response_error_type;
+              toast(
+                errorType === 'rate_limit'
+                  ? 'Response was limited due to high demand. Your plan changes were saved.'
+                  : 'Response generation had an issue. Your plan changes were saved.',
+                {
+                  type: 'warning',
+                  duration: 6000,
+                  action: { label: 'Retry', onClick: () => onRetry?.(body.message) },
+                }
+              );
+            }
+
+            // Fallback: if streaming produced no tokens but envelope has a message,
+            // populate the empty bubble so user sees content instead of blank.
+            if (!isSilentPlanGeneration && response.response_degraded) {
+              const msgs = useChatStore.getState().messages;
+              const streamedMsg = msgs.find((m) => m.id === streamingMsgId);
+              if (streamedMsg && !streamedMsg.content?.trim()) {
+                const fallbackMsg = doc?.assistant_message;
+                if (fallbackMsg?.trim()) {
+                  updateMessage(streamingMsgId, { content: fallbackMsg });
+                }
+              }
             }
 
             if (hasTiles) {
@@ -1041,6 +1119,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
           },
 
           onError: (error: Error) => {
+            if (watchdogTimerRef.current !== null) { clearTimeout(watchdogTimerRef.current); watchdogTimerRef.current = null; }
             if (isStaleRequest()) {
               debugLog('[SSE] Ignoring stale stream error event');
               if (sseSetRegenFlag) {
@@ -1130,6 +1209,7 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
       onPlanResult,
       onAutoExpandItinerary,
       onFeasibilityWarning,
+      onRetry,
       queueCompletionScroll,
       toast,
     ]

@@ -192,12 +192,14 @@ class TestComputeTilesPerCategory:
         )
 
         # specialist_days=2, free=6, total_placeable=8
-        # base = max(2, (8*1)//1) = 8, cap = 4 (specialist_days > 0)
-        # APD=1: no needed lift. tiles = min(8, 4) = 4
-        # Coverage floor (1.5x): needed=ceil(6*1*1.5)=9, planned=4<9
-        # min_needed=ceil(9/1)=9, tiles=max(4,min(9,12))=9
+        # base = max(2, (8*1)//1) = 8, cap = max(4, min(ceil(8/1), 12)) = 8
+        # APD=1: no needed lift. tiles = min(8, 8) = 8
+        # Coverage floor (1.5x): needed=ceil(8*1*1.5)=12, planned=8<12
+        # min_needed=ceil(12/1)=12, tiles=max(8,min(12,12))=12
         result = _compute_tiles_per_category(state, {"yoga"})
-        assert result == 9, f"APD=1 mixed trip with coverage floor should be 9, got {result}"
+        assert result == 12, (
+            f"APD=1 mixed trip with co-schedule coverage should be 12, got {result}"
+        )
 
     def test_apd2_multiple_tier2_categories(self):
         """APD=2, 3 Tier2 categories: cap must scale per-category for density."""

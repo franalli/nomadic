@@ -78,6 +78,7 @@ export interface ChatSseCallbacks {
   }) => void;
   onAutoExpandItinerary?: (options?: { forceFullRebuild?: boolean }) => void;
   onFeasibilityWarning?: (data: SSEFeasibilityWarningEvent['data']) => void;
+  onRetry?: (message: string) => void;
   scrollToBottom: (force?: boolean) => void;
   scrollPanelIntoView: () => void;
 }

@@ -4,6 +4,7 @@ from app.planner.conversationalist import (
     _SENTENCE_LIMIT,
     _VOICE_ACTIVITY_CHANGE,
     _VOICE_DATES_SET,
+    _VOICE_DESTINATION_EXPLORE,
     _VOICE_DESTINATION_SET,
     _VOICE_FALLBACK,
     _VOICE_GREETING,
@@ -188,7 +189,13 @@ class TestResolveVoiceBlock:
 
     def test_question(self):
         c = _make_classifier(ChangeType.QUESTION)
-        assert _resolve_voice_block(c, {}, "what is best?") == _VOICE_QUESTION
+        state = {"trip_plan": {"destination": "Bali"}}
+        assert _resolve_voice_block(c, state, "what is best?") == _VOICE_QUESTION
+
+    def test_question_no_destination(self):
+        """Question with no destination → destination exploration voice."""
+        c = _make_classifier(ChangeType.QUESTION)
+        assert _resolve_voice_block(c, {}, "where should I go?") == _VOICE_DESTINATION_EXPLORE
 
     def test_initial_plan(self):
         c = _make_classifier(ChangeType.INITIAL_PLAN)
@@ -249,6 +256,7 @@ class TestSentenceLimitDict:
             _VOICE_ACTIVITY_CHANGE,
             _VOICE_PREFERENCE_CHANGE,
             _VOICE_QUESTION,
+            _VOICE_DESTINATION_EXPLORE,
             _VOICE_GREETING,
             _VOICE_FALLBACK,
             _VOICE_INFEASIBLE_ACTIVITY,

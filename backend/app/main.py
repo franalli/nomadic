@@ -956,13 +956,34 @@ async def exempt_options_from_rate_limit(request: Request, call_next):
 
 @app.get("/health")
 @limiter.limit("120/minute")
-def health(request: Request):
+async def health(request: Request):
+    from sqlalchemy import text
+
+    from app.db import _get_async_engine
+
+    db_ok = True
+    pool_stats = {}
+    try:
+        eng = _get_async_engine()
+        pool = eng.pool
+        pool_stats = {
+            "size": pool.size(),
+            "checkedin": pool.checkedin(),
+            "checkedout": pool.checkedout(),
+            "overflow": pool.overflow(),
+        }
+        async with eng.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception:
+        db_ok = False
+
     return {
-        "status": "ok",
+        "status": "ok" if db_ok else "degraded",
         "env": settings.env,
         "prompt_bundle_hash": PROMPT_BUNDLE_HASH,
         "planner_build_id": PLANNER_BUILD_ID,
         "cache_schema_version": CACHE_SCHEMA_VERSION,
+        "db": {"ok": db_ok, "pool": pool_stats},
     }
 
 

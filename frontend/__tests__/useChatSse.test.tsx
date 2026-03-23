@@ -1048,7 +1048,12 @@ describe('useChatSse', () => {
     expect(useDocumentStore.getState().document?.tiles).not.toHaveProperty(
       staleActivityTile.id
     );
-    expect(mockState.toast).toHaveBeenCalledTimes(1);
+    // Builder warning toast fires once; watchdog timer may also fire during
+    // vi.runAllTimers() since no onComplete/onError has arrived yet.
+    expect(mockState.toast).toHaveBeenCalledWith(warningMessage, {
+      type: 'warning',
+      duration: 4000,
+    });
 
     act(() => {
       streamCallbacks.onError(new Error('stop test stream'));

@@ -462,6 +462,20 @@ set feasibility_status to "infeasible" with reason"""
         trip_context_parts.append(
             f"- Trip vibe: {_trip_vibe}. Tailor activity tone and intensity accordingly."
         )
+    # Seasonal context — surface weather/visibility/crowds for travel month
+    if trip_plan.start_date:
+        try:
+            from datetime import datetime as _dt_sc
+
+            _month_name = _dt_sc.strptime(str(trip_plan.start_date)[:7], "%Y-%m").strftime("%B")
+            trip_context_parts.append(
+                f"- Travel month: {_month_name}. Consider seasonal conditions "
+                f"(weather, visibility, wildlife, crowds, closures, pricing) for "
+                f"{destination} in {_month_name}. Mention the most important seasonal factor."
+            )
+        except (ValueError, TypeError):
+            pass
+
     if trip_context_parts:
         user_prompt += "\n\nTRIP CONTEXT:\n" + "\n".join(trip_context_parts)
 

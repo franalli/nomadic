@@ -1385,8 +1385,69 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
 
     # Fetch hotels and activities in PARALLEL (unless activities are explicitly disabled).
     # booking_types.activities='off' means "never show or search activities".
+    #
+    # Pre-compute Pure Tier 1 browse eligibility so we can include browse_activities
+    # in the same gather (saves ~600ms by overlapping with hotel fetch).
+    from app.planner.specialist_registry import TIER1_SPECIALIST_NAMES as _T1_NAMES
+    from app.planner.specialist_registry import TIER2_BROWSE_CATEGORIES as _BROWSE_CATS
+
+    _executed_pre = state.metadata.get("executed_strategy_topics", [])
+    _has_niche_pre = any(t in _T1_NAMES for t in _executed_pre)
+    _selected_pre = (
+        set(get_trip_settings(state).activity_settings.categories) if _has_niche_pre else set()
+    )
+    _pure_tier1 = _has_niche_pre and not (_selected_pre - _T1_NAMES)
+    _browse_prefetched: list[dict] | None = None
+
+    async def _safe_browse() -> list[dict]:
+        try:
+            from app.services.activity_browser import browse_activities as _ba
+
+            _gc = (dest_lat, dest_lng) if dest_lat is not None and dest_lng is not None else None
+            return await _ba(
+                destination=plan.destination or "",
+                center=_gc,
+                categories=list(_BROWSE_CATS),
+                date=start_date or None,
+            )
+        except Exception as _e:
+            log("LOGISTICS", f"[BROWSE] Parallel fetch failed: {_e}")
+            return []
+
     _gather_t0 = time.time()
-    if activities_requested:
+    if activities_requested and _pure_tier1:
+        hotel_dicts, activity_dicts, _browse_prefetched = await asyncio.gather(
+            _fetch_hotels(
+                async_session_factory,
+                plan,
+                hotel_settings,
+                provider,
+                dest_key,
+                start_date,
+                end_date,
+                activity_settings,
+                flight_settings,
+                dest_lat=dest_lat,
+                dest_lng=dest_lng,
+            ),
+            _fetch_activities(
+                async_session_factory,
+                plan,
+                activity_settings,
+                provider,
+                dest_key,
+                start_date,
+                end_date,
+                hotel_settings,
+                flight_settings,
+                max_results=activity_max_results,
+                dest_lat=dest_lat,
+                dest_lng=dest_lng,
+                activity_categories=activity_categories,
+            ),
+            _safe_browse(),
+        )
+    elif activities_requested:
         hotel_dicts, activity_dicts = await asyncio.gather(
             _fetch_hotels(
                 async_session_factory,
@@ -1728,23 +1789,30 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
             existing = state.tiles.get("activities", [])
             existing_list = existing if isinstance(existing, list) else []
 
-            # Per-category fetch via activity_browser (parallel, L1-cached)
-            from app.services.activity_browser import browse_activities as _browse_activities
+            # Use pre-fetched browse results from gather if available,
+            # otherwise fall back to sequential fetch.
+            if _browse_prefetched is not None:
+                browse_tiles = _browse_prefetched
+            else:
+                from app.services.activity_browser import browse_activities as _browse_activities
 
-            geo_center: tuple[float, float] | None = (
-                (dest_lat, dest_lng) if dest_lat is not None and dest_lng is not None else None
-            )
-            browse_date = start_date or None
-            try:
-                browse_tiles = await _browse_activities(
-                    destination=plan.destination or "",
-                    center=geo_center,
-                    categories=_DEFAULT_BROWSE_CATEGORIES,
-                    date=browse_date,
+                geo_center: tuple[float, float] | None = (
+                    (dest_lat, dest_lng) if dest_lat is not None and dest_lng is not None else None
                 )
-            except Exception as _be:
-                log("LOGISTICS", f"[BROWSE] Per-category fetch failed: {_be} — fallback to generic")
-                browse_tiles = []
+                browse_date = start_date or None
+                try:
+                    browse_tiles = await _browse_activities(
+                        destination=plan.destination or "",
+                        center=geo_center,
+                        categories=_DEFAULT_BROWSE_CATEGORIES,
+                        date=browse_date,
+                    )
+                except Exception as _be:
+                    log(
+                        "LOGISTICS",
+                        f"[BROWSE] Per-category fetch failed: {_be} — fallback to generic",
+                    )
+                    browse_tiles = []
 
             if browse_tiles:
                 # activity_browser tiles have a 'category' field; alias to browse_category
@@ -2008,13 +2076,17 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
                     )
                     _spec_days_bf += len(set(_titled_bf)) + _untitled_bf
                 _free_bf = max(0, _trip_days_bf - _spec_days_bf - 2)
-                _needed_bf = _free_bf * _apd_bf
+                _co_schedule_days = (
+                    max(0, min(_spec_days_bf, _trip_days_bf - 2)) if _free_bf == 0 else 0
+                )
+                _needed_bf = max(_free_bf * _apd_bf, _co_schedule_days)
                 if _free_bf == 0 and _spec_days_bf >= _trip_days_bf - 2:
                     log(
                         "LOGISTICS",
-                        "Specialist saturation — skipping Tier 2 backfill",
+                        "Specialist saturation — allowing co-schedule backfill "
+                        f"({_co_schedule_days} co-schedule slots)",
                     )
-                elif len(experience_tiles) < _needed_bf:
+                if len(experience_tiles) < _needed_bf:
                     _shortfall_bf = _needed_bf - len(experience_tiles)
                     logger.info(
                         "[logistics_node] Tier 2 backfill: have %d tiles, need %d "
@@ -2446,7 +2518,7 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
     base = max(2, (total_placeable * target_apd) // len(tier2_cats))
 
     if specialist_days > 0:
-        cap = 4
+        cap = max(4, min(math.ceil(total_placeable / max(len(tier2_cats), 1)), tile_cap_ceiling))
     elif free_days > 7:
         cap = min(tile_cap_ceiling, max(4, math.ceil(free_days / len(tier2_cats))))
     else:
@@ -2459,11 +2531,11 @@ def _compute_tiles_per_category(state: GraphState, tier2_cats: set[str]) -> int:
         cap = min(max(cap, needed_per_cat), tile_cap_ceiling)
     tiles_per_cat = min(base, cap)
 
-    # Coverage floor: when specialists consume days, the cap of 4 can
-    # under-provision Tier 2 tiles for the remaining free days.
-    # Lift tiles_per_cat to fill free days, capped at 12.
+    # Coverage floor: when specialists consume days, the cap can
+    # under-provision Tier 2 tiles for placeable days.
+    # Lift tiles_per_cat to fill placeable days (free + co-schedulable), capped at ceiling.
     total_tiles_planned = tiles_per_cat * max(len(tier2_cats), 1)
-    total_tiles_needed = int(math.ceil(free_days * target_apd * 1.5))
+    total_tiles_needed = int(math.ceil(total_placeable * target_apd * 1.5))
     if total_tiles_planned < total_tiles_needed:
         min_needed = math.ceil(total_tiles_needed / max(len(tier2_cats), 1))
         tiles_per_cat = max(tiles_per_cat, min(min_needed, tile_cap_ceiling))

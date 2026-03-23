@@ -168,6 +168,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
               isGenerating={isGenerating}
               hasBranches={hasBranches}
               hasDestination={hasDestination}
+              messageCount={visibleMessages.length}
               planViewState={planViewState ?? undefined}
               inputRef={inputRef}
             />

@@ -3,11 +3,20 @@
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 
 import { ArrowUp } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
-import { isBootstrap } from '@/components/plan/planStateHelpers';
+import { isBootstrap, ITINERARY_STATES } from '@/components/plan/planStateHelpers';
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 import type { PlanViewState } from '@/types/plan-envelope';
+
+const INSPIRATION_PLACEHOLDERS = [
+  '10 days diving in Southeast Asia',
+  'Where should I go for a week in May?',
+  'Family ski trip over Christmas',
+  'Best destinations for hiking and food',
+  'Weekend getaway from New York',
+];
 
 interface ChatInputBarProps {
   input: string;
@@ -23,6 +32,7 @@ interface ChatInputBarProps {
   hasBranches?: boolean;
   hasDestination?: boolean;
   planViewState?: PlanViewState;
+  messageCount?: number;
   onStopStreaming: () => void;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
 }
@@ -40,12 +50,30 @@ export function ChatInputBar({
   isGenerating,
   hasBranches,
   hasDestination,
+  messageCount,
   planViewState,
   onStopStreaming,
   inputRef,
 }: ChatInputBarProps) {
+  const [placeholderIdx, setPlaceholderIdx] = useState(0);
+  useEffect(() => {
+    if ((messageCount ?? 1) > 0) return;
+    const interval = setInterval(
+      () => setPlaceholderIdx(i => (i + 1) % INSPIRATION_PLACEHOLDERS.length),
+      4000,
+    );
+    return () => clearInterval(interval);
+  }, [messageCount]);
+
   return (
     <>
+      {/* Input affordance hints — visible when itinerary exists and idle */}
+      {planViewState && ITINERARY_STATES.has(planViewState) && !isLoading && !isInputDisabledByPlanState && (
+        <p className={cn(DS.textSize.mini, 'text-center text-zinc-400 dark:text-zinc-600 pb-1')}>
+          Try: &ldquo;add hiking&rdquo; &middot; &ldquo;change hotel&rdquo; &middot; &ldquo;make it 5 days&rdquo;
+        </p>
+      )}
+
       {/* Action Bar: Unified Capsule Design with "Living Void" Effect */}
       {/* Input and button merged into one continuous capsule (like Perplexity/ChatGPT) */}
       {/* During AI processing: the input BECOMES the status indicator (emerald glow + pulse) */}
@@ -79,13 +107,15 @@ export function ChatInputBar({
             aria-label="Chat message"
             className="w-full h-11 min-h-11 bg-transparent text-zinc-900 dark:text-white pl-6 pr-2 py-2.5 text-sm font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
             placeholder={
-              isInputDisabledByPlanState
-                ? 'Updating...'
-                : readyToGenerate
-                  ? 'Type to refine...'
-                  : !hasDestination
-                    ? 'Where to?'
-                    : 'Tell me more...'
+              (messageCount ?? 1) === 0 && !isInputDisabledByPlanState
+                ? INSPIRATION_PLACEHOLDERS[placeholderIdx]
+                : isInputDisabledByPlanState
+                  ? 'Updating...'
+                  : readyToGenerate
+                    ? 'Type to refine...'
+                    : !hasDestination
+                      ? 'Where to?'
+                      : 'Tell me more...'
             }
             value={input}
             onChange={(e) => {

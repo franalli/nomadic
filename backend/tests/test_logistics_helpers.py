@@ -411,11 +411,11 @@ class TestComputeTilesPerCategory:
         # 10-day trip, 3 specialist days (from strategy_sections), 2 categories
         # trip_days = 10, specialist_days = 3, free = max(0,10-3-2) = 5
         # total_placeable = min(5+3, 10) = 8
-        # apd=2: base=max(2,(8*2)//2)=8, cap=4 (specialist_days>0)
+        # apd=2: base=max(2,(8*2)//2)=8, cap=max(4,min(ceil(8/2),12))=4
         # APD>1: needed=ceil(5*2/2)=5, cap=min(max(4,5),12)=5
         # tiles=min(8,5)=5
-        # Coverage floor (1.5x): needed=ceil(5*2*1.5)=15, planned=5*2=10<15
-        # min_needed=ceil(15/2)=8, tiles=max(5,min(8,12))=8
+        # Coverage floor (1.5x): needed=ceil(8*2*1.5)=24, planned=5*2=10<24
+        # min_needed=ceil(24/2)=12, tiles=max(5,min(12,12))=12
         tp = TripPlan(
             destination="Bali",
             start_date="2026-03-01",
@@ -436,7 +436,7 @@ class TestComputeTilesPerCategory:
             },
         )
         result = _compute_tiles_per_category(state, {"yoga", "nightlife"})
-        assert result == 8
+        assert result == 12
 
     def test_local_expert_sections_not_counted_as_specialist_days(self):
         # local_expert and general sections are excluded from specialist_days

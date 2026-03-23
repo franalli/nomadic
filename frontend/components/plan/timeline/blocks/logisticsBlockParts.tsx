@@ -6,6 +6,7 @@ import {
   PlaneTakeoff,
 } from 'lucide-react';
 
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import type { DayBlock } from '@/types/plan-envelope';
 
@@ -87,35 +88,46 @@ export function ConstraintBadges({ constraints }: { constraints: ActiveConstrain
   if (constraints.length === 0) return null;
 
   return (
-    <div className="mt-4 space-y-2">
-      {constraints.map((constraint) => (
-        <div
-          key={constraint.id}
-          className={cn(
-            'flex items-start gap-2 p-3 rounded-lg text-xs',
-            constraint.severity === 'warning' && 'bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/40',
-            constraint.severity === 'info' && 'bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/40',
-            constraint.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/40',
-            constraint.severity === 'blocking' && 'bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/40'
-          )}
-        >
-          <span className="text-base flex-shrink-0">{constraint.icon}</span>
-          <div className="flex-1 min-w-0">
-            <div className={cn(
-              'font-semibold mb-0.5',
-              constraint.severity === 'warning' && 'text-amber-700 dark:text-amber-400',
-              constraint.severity === 'info' && 'text-blue-700 dark:text-blue-400',
-              constraint.severity === 'success' && 'text-emerald-700 dark:text-emerald-400',
-              constraint.severity === 'blocking' && 'text-red-700 dark:text-red-400'
-            )}>
-              {constraint.title}
-            </div>
-            <div className="text-zinc-600 dark:text-zinc-400">
+    <TooltipProvider delayDuration={300}>
+      <div className="mt-4 space-y-2">
+        {constraints.map((constraint) => (
+          <Tooltip key={constraint.id}>
+            <TooltipTrigger asChild>
+              <div
+                tabIndex={0}
+                role="group"
+                aria-label={`${constraint.title}: ${constraint.description}`}
+                className={cn(
+                  'flex items-start gap-2 p-3 rounded-lg text-xs cursor-default',
+                  constraint.severity === 'warning' && 'bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/40',
+                  constraint.severity === 'info' && 'bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/40',
+                  constraint.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/40',
+                  constraint.severity === 'blocking' && 'bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/40'
+                )}
+              >
+                <span className="text-base flex-shrink-0">{constraint.icon}</span>
+                <div className="flex-1 min-w-0">
+                  <div className={cn(
+                    'font-semibold mb-0.5',
+                    constraint.severity === 'warning' && 'text-amber-700 dark:text-amber-400',
+                    constraint.severity === 'info' && 'text-blue-700 dark:text-blue-400',
+                    constraint.severity === 'success' && 'text-emerald-700 dark:text-emerald-400',
+                    constraint.severity === 'blocking' && 'text-red-700 dark:text-red-400'
+                  )}>
+                    {constraint.title}
+                  </div>
+                  <div className="text-zinc-600 dark:text-zinc-400">
+                    {constraint.description}
+                  </div>
+                </div>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="top" sideOffset={4} className="max-w-xs text-xs">
               {constraint.description}
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
+            </TooltipContent>
+          </Tooltip>
+        ))}
+      </div>
+    </TooltipProvider>
   );
 }

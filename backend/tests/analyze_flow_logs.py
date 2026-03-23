@@ -217,6 +217,25 @@ FLOW_EXPECTED_TOOLS: dict[int, dict[str, Any]] = {
         "max_llm_calls": 18,  # 3 turns with post-refresh rebuild
         "expected_turns": 3,
     },
+    29: {
+        "name": "Health Endpoint",
+        "required_tools": [],
+        "forbidden_tools": [],
+        "max_llm_calls": 0,
+        "skip_sse": True,
+    },
+    30: {
+        "name": "SSE Heartbeat",
+        "required_tools": ["extract_trip_fields"],
+        "forbidden_tools": [],
+        "max_llm_calls": 8,
+    },
+    31: {
+        "name": "Session Turn Cap",
+        "required_tools": ["extract_trip_fields"],
+        "forbidden_tools": [],
+        "max_llm_calls": 8,
+    },
 }
 
 FLOW_TURN_WARN_BUDGETS_MS: dict[int, dict[int, tuple[int, str]]] = {
@@ -1446,7 +1465,7 @@ def check_image_urls(sse_data: str, flow_num: int, report: FlowReport) -> None:
                 continue
             total += 1
             img = tile.get("image_url", "")
-            if not img or not img.startswith("http"):
+            if not img or not (img.startswith("http") or img.startswith("/api/media/")):
                 missing += 1
 
     if missing > 0:

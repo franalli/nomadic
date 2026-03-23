@@ -14,7 +14,7 @@
  */
 
 import { ArrowUp } from 'lucide-react';
-import { memo, useCallback, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
@@ -47,6 +47,25 @@ function MobileChatInputInner({
         ? 'Where to?'
         : 'Tell me more...';
 
+  // Track iOS virtual keyboard height via visualViewport API
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const onResize = () => {
+      const offset = window.innerHeight - vv.height;
+      document.documentElement.style.setProperty(
+        '--keyboard-offset',
+        `${Math.max(0, offset)}px`,
+      );
+    };
+    vv.addEventListener('resize', onResize);
+    onResize();
+    return () => {
+      vv.removeEventListener('resize', onResize);
+      document.documentElement.style.removeProperty('--keyboard-offset');
+    };
+  }, []);
+
   const handleSubmit = useCallback(
     (e?: React.FormEvent) => {
       e?.preventDefault();
@@ -78,7 +97,7 @@ function MobileChatInputInner({
     <div
       className={cn(
         'shrink-0 px-3 pt-2 lg:hidden',
-        'pb-[max(0.5rem,env(safe-area-inset-bottom))]',
+        'pb-[max(0.5rem,calc(env(safe-area-inset-bottom)+var(--keyboard-offset,0px)))]',
         'border-t border-zinc-200 dark:border-white/5',
         'bg-white dark:bg-zinc-950',
         className

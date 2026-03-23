@@ -33,6 +33,7 @@ from app.planner.coordinator import (
     _day_cards_partial_event,
     _day_cards_partial_payload,
     _flatten_tiles_payload,
+    _flatten_tiles_payload_filtered,
     _has_partner_enrichment,
     _is_pure_tail_extension,
     _tile_enrichment_partial_event,
@@ -250,6 +251,40 @@ class TestFlattenTilesPayload:
         tiles = {"a": [{"id": "a1", "coordinates": [115.2, -8.5]}]}
         geo = _flatten_tiles_payload(tiles)["a1"].get("geo")
         assert geo == {"lat": -8.5, "lng": 115.2}
+
+
+# =============================================================================
+# Tier 1: _flatten_tiles_payload_filtered
+# =============================================================================
+
+
+class TestFlattenTilesPayloadFiltered:
+    """Tests for the category-filtered tile flattener used by split tile emission."""
+
+    _TILES = {
+        "hotels": [{"id": "h1", "title": "Beach Hotel"}],
+        "flights": [{"id": "f1", "title": "SFO→DPS"}],
+        "activities": [{"id": "a1", "title": "Dive"}, {"id": "a2", "title": "Hike"}],
+    }
+
+    def test_hotels_and_flights_only(self):
+        result = _flatten_tiles_payload_filtered(self._TILES, ("hotels", "flights"))
+        assert set(result.keys()) == {"h1", "f1"}
+
+    def test_activities_only(self):
+        result = _flatten_tiles_payload_filtered(self._TILES, ("activities",))
+        assert set(result.keys()) == {"a1", "a2"}
+
+    def test_empty_when_no_matching_categories(self):
+        result = _flatten_tiles_payload_filtered(self._TILES, ("ground_transport",))
+        assert result == {}
+
+    def test_empty_tiles_dict(self):
+        assert _flatten_tiles_payload_filtered({}, ("hotels",)) == {}
+
+    def test_all_categories(self):
+        result = _flatten_tiles_payload_filtered(self._TILES, ("hotels", "flights", "activities"))
+        assert set(result.keys()) == {"h1", "f1", "a1", "a2"}
 
 
 # =============================================================================

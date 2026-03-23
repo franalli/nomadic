@@ -42,6 +42,11 @@ export function TileCardMedia({
   const [signedPhotoUrl, setSignedPhotoUrl] = useState<string | undefined>(undefined);
 
   useEffect(() => {
+    setImageLoaded(false);
+    setImageError(false);
+  }, [tile.id, photoName]);
+
+  useEffect(() => {
     let isMounted = true;
     setSignedPhotoUrl(undefined);
     if (!photoName) return () => { isMounted = false; };
@@ -74,8 +79,11 @@ export function TileCardMedia({
           : 'aspect-[16/9]'
       )}
     >
-      {!imageLoaded && !isFlight && (
-        <div className="absolute inset-0 animate-pulse rounded-none bg-zinc-200/50 dark:bg-zinc-700/50" />
+      {!isFlight && (
+        <div className={cn(
+          "absolute inset-0 animate-pulse rounded-none bg-zinc-200/50 dark:bg-zinc-700/50 transition-opacity duration-500",
+          imageLoaded && "opacity-0 pointer-events-none"
+        )} />
       )}
       {isFlight ? (
         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm">

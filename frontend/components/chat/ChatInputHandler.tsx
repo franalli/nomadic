@@ -26,6 +26,7 @@ interface ChatInputHandlerProps {
   isGenerating?: boolean;
   hasBranches?: boolean;
   hasDestination?: boolean;
+  messageCount?: number;
   planViewState?: PlanViewState;
   inputRef: React.RefObject<HTMLTextAreaElement | null>;
 }
@@ -44,6 +45,7 @@ export function ChatInputHandler({
   isGenerating,
   hasBranches,
   hasDestination,
+  messageCount,
   planViewState,
   inputRef,
 }: ChatInputHandlerProps) {
@@ -61,6 +63,7 @@ export function ChatInputHandler({
       isGenerating={isGenerating}
       hasBranches={hasBranches}
       hasDestination={hasDestination}
+      messageCount={messageCount}
       planViewState={planViewState}
       onStopStreaming={onStopStreaming}
       inputRef={inputRef}

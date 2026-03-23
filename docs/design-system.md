@@ -723,7 +723,7 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | ChatPanel | `chat/ChatPanel.tsx` | Barrel export; implementation in `ChatPanelContent.tsx` which delegates S0 hero styling to `ChatBootstrapHero` and bubble styling to child chat components |
 | ChatBootstrapHero | `chat/ChatBootstrapHero.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText`, `DS.glowClass.cursor` (desktop bootstrap hero terminal text) |
 | ChatMessageList | `chat/ChatMessageList.tsx` | `DS.textSize.nano`, `DS.glowClass.dropText`, `DS.glowClass.cursor` (terminal status text) |
-| ChatInputBar | `chat/ChatInputBar.tsx` | `DS.glowClass.sm`, `DS.glowClass.md`, Living Void pattern (emerald glow + pulse), Stop button (monochrome square) |
+| ChatInputBar | `chat/ChatInputBar.tsx` | `DS.glowClass.sm`, `DS.glowClass.md`, Living Void pattern (emerald glow + pulse), Stop button (monochrome square). Rotating inspiration placeholders cycle every 4s when `messageCount=0`. Input affordance hints ("add hiking", "change hotel", etc.) shown below input when itinerary exists and idle. |
 | MobileChatInput | `chat/MobileChatInput.tsx` | `DS.glowClass.mobileInputSm`, `DS.glowClass.mobileInputMd`, `DS.glowClass.lg`; mobile textarea locks to `text-[16px]` to prevent iOS Safari auto-zoom on focus |
 | SmartLoader | `chat/SmartLoader.tsx` | `DS.textSize.micro` (mutating status line with dynamic Lucide icon) |
 | ChatSuggestionChips | `chat/ChatSuggestionChips.tsx` | Raw Tactile pills (suggestion chips), `Sparkles` icon (planning trigger), `SlidersHorizontal` icon (sheet actions) |
@@ -741,7 +741,7 @@ All sheets live at `frontend/components/plan/sheets/`. Sheets import `DS` direct
 | CategorySection | `plan/booking/CategorySection.tsx` | `DS.textSize.micro`, booking status dots/text with dark-aware zinc/emerald states |
 | NextStepBar | `plan/NextStepBar.tsx` | Command Island sticky CTA; `DS.text.label`, `DS.textSize.micro`, `DS.glowClass.action`, glass `dark:bg-zinc-900/95` |
 | GhostSlot | `plan/timeline/blocks/GhostSlot.tsx` | Dashed-border CTA slot; `border-dashed border-zinc-300 dark:border-white/10` pattern |
-| LogisticsBlock | `plan/timeline/blocks/LogisticsBlock.tsx` | Flight/transfer timeline block; type-specific bg patterns (see Section 31.5) |
+| LogisticsBlock | `plan/timeline/blocks/LogisticsBlock.tsx` | Flight/transfer timeline block; type-specific bg patterns (see Section 31.5). `ConstraintBadges` sub-component wraps each badge in `<Tooltip>` (from `ui/tooltip`) for touch/hover description reveal. |
 | MapErrorBoundary | `map/MapErrorBoundary.tsx` | Map error fallback; raw zinc pattern (`bg-zinc-100 dark:bg-zinc-900`, `text-zinc-500`) |
 | PlanFullDensityView | `plan/PlanFullDensityView.tsx` | Orchestrator (no direct DS tokens); section toggle chips use `ModuleChip` (Section 32.1) |
 | PreferenceAttributionBadge | `plan/timeline/blocks/PreferenceAttributionBadge.tsx` | Inline badge for user-preferred/ai-override tile states; `bg-emerald-500/15 text-emerald-600 dark:text-emerald-400` |
@@ -2549,6 +2549,7 @@ All disabled interactive elements (buttons, inputs, toggles, sections) use this 
 | **Light background** | `bg-zinc-200/50` |
 | **Dark background** | `bg-zinc-700/50` |
 | **Animation** | `animate-pulse` |
+| **Fade-out** | `transition-opacity duration-500`, `opacity-0 pointer-events-none` when loaded |
 | **Shape** | Matches the content element it replaces |
 
 ---

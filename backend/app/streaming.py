@@ -665,9 +665,40 @@ async def generate_sse(
                     event_source_closed = True
                     await event_source.aclose()
 
-                try:
-                    with spend_guard_scope(session_id):
-                        async for event in event_source:
+                _HEARTBEAT_INTERVAL_S = 5.0
+                _merged_q: asyncio.Queue[dict | None] = asyncio.Queue()
+
+                async def _heartbeat_emitter() -> None:
+                    try:
+                        while True:
+                            await asyncio.sleep(_HEARTBEAT_INTERVAL_S)
+                            await _merged_q.put({"type": "heartbeat"})
+                    except asyncio.CancelledError:
+                        pass
+
+                async def _coordinator_forwarder() -> None:
+                    try:
+                        async for ev in event_source:
+                            await _merged_q.put(ev)
+                    except Exception as fwd_exc:
+                        await _merged_q.put({"type": "error", "message": str(fwd_exc)})
+                    finally:
+                        await _merged_q.put(None)  # sentinel: coordinator done
+
+                with spend_guard_scope(session_id):
+                    _heartbeat_task = asyncio.create_task(_heartbeat_emitter())
+                    _forwarder_task = asyncio.create_task(_coordinator_forwarder())
+
+                    try:
+                        while True:
+                            event = await _merged_q.get()
+                            if event is None:  # sentinel from forwarder
+                                break
+
+                            if event["type"] == "heartbeat":
+                                yield f"event: heartbeat\ndata: {json.dumps(event)}\n\n"
+                                continue
+
                             if event["type"] == "complete":
                                 logger.debug(
                                     f"[{request_id}] Stream complete after {token_count} tokens"
@@ -735,8 +766,19 @@ async def generate_sse(
                                 error_payload = json.dumps({"type": "error", "message": error_msg})
                                 yield f"event: error\ndata: {error_payload}\n\n"
                                 return
-                finally:
-                    await _close_coordinator_event_source()
+                    finally:
+                        _heartbeat_task.cancel()
+                        try:
+                            await _heartbeat_task
+                        except asyncio.CancelledError:
+                            pass
+                        if not _forwarder_task.done():
+                            _forwarder_task.cancel()
+                            try:
+                                await _forwarder_task
+                            except asyncio.CancelledError:
+                                pass
+                        await _close_coordinator_event_source()
 
                 if final_result is None:
                     error_payload = json.dumps({"type": "error", "message": "No result from graph"})
@@ -1518,6 +1560,11 @@ async def generate_sse(
                         "ready_to_generate_now": ready_to_generate_now,
                     },
                 }
+
+                # Propagate response degradation status for frontend retry UX
+                if final_result.get("response_degraded"):
+                    full_response["response_degraded"] = True
+                    full_response["response_error_type"] = final_result.get("response_error_type")
 
                 # DEBUG: Verify strategy_sections in full_response before sending
                 doc_in_response = full_response.get("document", {})

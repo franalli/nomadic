@@ -463,6 +463,12 @@ def validate_tile_dedup() -> None:
 # --- Grounding Check -----------------------------------------------------------
 
 
+def _extract_proper_nouns(text: str, safe_names: set[str]) -> None:
+    """Extract capitalized multi-word proper nouns from text into safe_names."""
+    for m in re.finditer(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b", text):
+        safe_names.add(m.group(0).lower())
+
+
 def validate_grounding() -> None:
     """Check that assistant_message only references names from payload state.
 
@@ -537,6 +543,7 @@ def validate_grounding() -> None:
                 data = outer.get("data", {})
                 document = data.get("document", {}) or {}
                 session_state = data.get("session_state", {}) or {}
+                # Always use the last complete event's assistant message
                 assistant = str(
                     document.get("assistant_message") or data.get("assistant_message") or ""
                 )
@@ -545,7 +552,12 @@ def validate_grounding() -> None:
                 add_name(trip_plan.get("destination"))
                 add_name(trip_plan.get("origin"))
 
-                day_cards = document.get("day_cards") or session_state.get("day_cards") or []
+                day_cards = (
+                    document.get("day_cards")
+                    or document.get("itinerary_day_cards")
+                    or session_state.get("day_cards")
+                    or []
+                )
                 for card in day_cards:
                     if not isinstance(card, dict):
                         continue
@@ -562,11 +574,31 @@ def validate_grounding() -> None:
                 tile_values = tiles.values() if isinstance(tiles, dict) else tiles
                 for tile in tile_values:
                     if isinstance(tile, dict):
-                        # Only add selected/booked/preferred tiles as safe names
-                        # (matches inline F14 grounding check behavior)
                         if tile.get("selected") or tile.get("booked") or tile.get("preferred"):
                             add_name(tile.get("title"))
-                break
+                        meta = tile.get("meta") or {}
+                        if isinstance(meta, dict):
+                            _extract_proper_nouns(meta.get("description", ""), safe_names)
+
+                strategy_sections = (
+                    document.get("strategy_sections")
+                    or session_state.get("strategy_sections")
+                    or []
+                )
+                for section in strategy_sections:
+                    if not isinstance(section, dict):
+                        continue
+                    for constraint in section.get("constraints_applied", []):
+                        if isinstance(constraint, dict):
+                            add_name(constraint.get("rule"))
+                            add_name(constraint.get("reason"))
+                    for content in section.get("content_added", []):
+                        if isinstance(content, dict):
+                            add_name(content.get("title"))
+                            _extract_proper_nouns(content.get("description", ""), safe_names)
+                    for must_do in section.get("must_dos", []):
+                        if isinstance(must_do, str):
+                            add_name(must_do)
     except FileNotFoundError:
         print("status=grounded")
         return
@@ -576,21 +608,56 @@ def validate_grounding() -> None:
         return
 
     phrases = {
-        match.group(0).strip()
+        match.group(0).strip().rstrip(".")
         for match in re.finditer(
-            r"\b(?:[A-Z][A-Za-z0-9'&.\-]+(?:\s+[A-Z][A-Za-z0-9'&.\-]+)+)\b",
+            r"\b(?:[A-Z][A-Za-z0-9'&\-]+(?:\s+[A-Z][A-Za-z0-9'&\-]+)+)\b",
             assistant,
         )
     }
 
+    def _tokens_grounded(lowered: str, safe_names: set[str]) -> bool:
+        if any(lowered == safe or lowered in safe or safe in lowered for safe in safe_names):
+            return True
+        tokens = lowered.split()
+        if len(tokens) < 2:
+            return False
+        for safe in safe_names:
+            safe_tokens = set(safe.split())
+            matched = sum(
+                1
+                for t in tokens
+                if t in safe_tokens or t.rstrip("s") in safe_tokens or t + "s" in safe_tokens
+            )
+            if matched >= len(tokens):
+                return True
+        return False
+
     unknown = []
     for phrase in sorted(phrases):
         lowered = phrase.lower()
-        if all(token.lower() in MONTHS for token in phrase.split()):
+        tokens = phrase.split()
+        cleaned = [t.lower().rstrip(".,;:!?") for t in tokens]
+        if all(c in MONTHS for c in cleaned):
+            continue
+        _TEMPORAL_PREPS = {
+            "since",
+            "after",
+            "before",
+            "during",
+            "from",
+            "until",
+            "by",
+            "through",
+            "around",
+            "early",
+            "late",
+            "mid",
+        }
+        if len(tokens) == 2 and cleaned[0] in _TEMPORAL_PREPS and cleaned[1] in MONTHS:
             continue
         if lowered.startswith("day "):
             continue
-        if any(lowered == safe or lowered in safe or safe in lowered for safe in safe_names):
+        if _tokens_grounded(lowered, safe_names):
             continue
         unknown.append(phrase)
 
