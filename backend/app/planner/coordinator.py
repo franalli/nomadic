@@ -96,6 +96,7 @@ _FAILURE_LABELS = {
 _USER_DISABLED_BOOKING_TYPES_KEY = "user_disabled_booking_types"
 _TRACKED_BOOKING_TYPE_KEYS = frozenset({"flights", "hotels", "activities", "ground_transport"})
 _PENDING_ITINERARY_ENRICHMENT_TASK_KEY = "_pending_itinerary_enrichment_task"
+_ITINERARY_ENRICHMENT_AWAIT_SECONDS = 2.5
 
 
 # =============================================================================
@@ -1225,12 +1226,16 @@ def plan_turn(
     has_destination = bool(trip_plan.get("destination") or classifier.destination)
 
     # --- Discovery gate: ask preferences before full dispatch ---
+    _trip_settings_cats = (
+        state.get("trip_settings", {}).get("activity_settings", {}).get("categories", [])
+    )
     _has_prefs = bool(
         classifier.specialist_hints
         or classifier.activity_categories
         or state.get("strategy_sections")
         or (trip_plan.get("activity_categories"))
         or (trip_plan.get("activity_settings", {}).get("categories"))
+        or _trip_settings_cats
     )
 
     if change_type == ChangeType.INITIAL_PLAN and has_destination and not _has_prefs:
@@ -2275,9 +2280,9 @@ def _start_pending_itinerary_enrichment(
 
     state[_PENDING_ITINERARY_ENRICHMENT_TASK_KEY] = asyncio.create_task(
         _run_itinerary_enrichment_pipeline(
-            trip_plan=copy.deepcopy(trip_plan),
-            activity_tiles=copy.deepcopy(activity_tiles),
-            day_cards=copy.deepcopy(day_cards),
+            trip_plan=trip_plan,
+            activity_tiles=activity_tiles,
+            day_cards=day_cards,
             session_id=session_id,
         )
     )
@@ -5617,6 +5622,29 @@ async def _execute_step(
             if isinstance(t, dict)
         }
         await _build_itinerary(state, session_id=session_id)
+
+        # Await partner enrichment before emitting the day_cards partial so
+        # tiles render once with final data (no GP→Viator visual flash).
+        # On timeout, cancel enrichment so the complete event matches the
+        # day_cards partial (both carry un-enriched data — no visual diff).
+        _enrich_task = state.get(_PENDING_ITINERARY_ENRICHMENT_TASK_KEY)
+        if isinstance(_enrich_task, asyncio.Task):
+            if not _enrich_task.done():
+                done, _ = await asyncio.wait(
+                    {_enrich_task}, timeout=_ITINERARY_ENRICHMENT_AWAIT_SECONDS
+                )
+                if done:
+                    await _await_pending_itinerary_enrichment(state)
+                    logger.info("[coordinator] Enrichment completed before day_cards partial")
+                else:
+                    await _cleanup_pending_itinerary_enrichment(state)
+                    logger.info(
+                        "[coordinator] Enrichment timed out (%.1fs) — emitting GP-only day_cards",
+                        _ITINERARY_ENRICHMENT_AWAIT_SECONDS,
+                    )
+            else:
+                await _await_pending_itinerary_enrichment(state)
+
         events: list[Dict[str, Any]] = []
         day_cards = state.get("day_cards", [])
         if isinstance(day_cards, list):
@@ -6213,15 +6241,13 @@ async def execute_turn(
         state.setdefault("messages", []).append(HumanMessage(content=user_message))
         state["messages"].append(AIMessage(content=assistant_message))
 
-        # Step 7: Await unsplash prefetch (if running), refresh enrichment, build envelope
-        # Emit the complete envelope FIRST without blocking on partner enrichment.
+        # Step 7: Await unsplash + partner enrichment, then build envelope.
         # The enrichment task (started during BUILD_ITINERARY) runs concurrently
-        # and its results are applied via follow-up partials below.
+        # with GENERATE_RESPONSE.  Awaiting it here ensures the envelope
+        # includes enriched deeplinks/prices — no follow-up partials needed.
         await _cleanup_unsplash_task(cancel=False, timeout=2.0)
         await _refresh_enrichment_states(state, session_id)
-
-        pre_enrichment_day_cards_hash = stable_hash(state.get("day_cards", []))
-        pre_enrichment_tiles_hash = stable_hash(_flatten_tiles_payload(state.get("tiles", {})))
+        await _await_pending_itinerary_enrichment(state)
 
         envelope = _build_envelope(state, user_message, session_id, assistant_message)
 
@@ -6235,46 +6261,6 @@ async def execute_turn(
         )
 
         yield {"type": "complete", "data": envelope}
-
-        # Non-blocking enrichment: await the background partner enrichment
-        # task AFTER the complete envelope has been emitted.  streaming.py
-        # continues to iterate the generator after capturing the complete
-        # event, so any follow-up partials are forwarded to the client
-        # before the SSE complete payload is flushed.
-        await _await_pending_itinerary_enrichment(state)
-
-        post_enrichment_day_cards = state.get("day_cards", [])
-        day_cards_changed = (
-            isinstance(post_enrichment_day_cards, list)
-            and stable_hash(post_enrichment_day_cards) != pre_enrichment_day_cards_hash
-        )
-
-        post_enrichment_tiles_payload = _flatten_tiles_payload(state.get("tiles", {}))
-        tiles_changed = stable_hash(post_enrichment_tiles_payload) != pre_enrichment_tiles_hash
-
-        if isinstance(post_enrichment_day_cards, list):
-            enrichment_event = _tile_enrichment_partial_event(
-                state,
-                post_enrichment_day_cards,
-                post_enrichment_tiles_payload,
-                day_cards_changed=day_cards_changed,
-                tiles_changed=tiles_changed,
-            )
-            if enrichment_event is not None:
-                yield enrichment_event
-
-        if day_cards_changed and isinstance(post_enrichment_day_cards, list):
-            yield _day_cards_partial_event(state, post_enrichment_day_cards)
-
-        if tiles_changed:
-            tiles_partial_data: dict[str, Any] = {
-                "kind": "tiles",
-                "payload": post_enrichment_tiles_payload,
-            }
-            turn_meta = state.get("turn_meta") or {}
-            if turn_meta.get("tiles_replaced"):
-                tiles_partial_data["tiles_replaced"] = True
-            yield {"type": "partial", "data": tiles_partial_data}
 
     except Exception as exc:
         await _cleanup_unsplash_task(cancel=True)

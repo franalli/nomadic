@@ -2833,9 +2833,9 @@ class TestExecuteTurn:
             assistant_message: str,
         ) -> Dict[str, Any]:
             order.append("envelope")
-            # Envelope is now built BEFORE enrichment completes, so day_cards
-            # should NOT yet contain the enriched deeplink field.
-            assert "deeplink" not in state_arg["day_cards"][0]["blocks"][0]
+            # Enrichment is awaited before envelope is built, so day_cards
+            # SHOULD contain the enriched deeplink field.
+            assert state_arg["day_cards"][0]["blocks"][0]["deeplink"] == "https://viator.test"
             return {
                 "document": {"day_cards": list(state_arg.get("day_cards", []))},
                 "assistant_message": assistant_message,
@@ -2874,39 +2874,19 @@ class TestExecuteTurn:
 
         # Enrichment task starts during BUILD_ITINERARY (before response streaming)
         assert order.index("enrichment_started") < order.index("response_finished")
-        # Envelope is now emitted BEFORE enrichment finishes (non-blocking)
-        assert order.index("envelope") < order.index("enrichment_finished")
+        # Enrichment is awaited before envelope is built (no visual re-render)
+        assert order.index("enrichment_finished") < order.index("envelope")
 
         complete_index = next(
             idx for idx, event in enumerate(events) if event["type"] == "complete"
         )
-        # Enrichment follow-up partials are emitted AFTER the complete event
+        # No enrichment follow-up partials after complete — data is already merged
         partial_events_after_complete = [
             event
             for event in events[complete_index + 1 :]
             if event["type"] == "partial" and event["data"]["kind"] != "trip_inputs"
         ]
-        assert [event["data"]["kind"] for event in partial_events_after_complete] == [
-            "tile_enrichment",
-            "day_cards",
-            "tiles",
-        ]
-        tile_enrichment_event = partial_events_after_complete[0]
-        assert (
-            tile_enrichment_event["data"]["payload"]["day_cards"][0]["blocks"][0]["deeplink"]
-            == "https://viator.test"
-        )
-        assert tile_enrichment_event["data"]["payload"]["tiles"]["tile_1"]["provider"] == "viator"
-        assert tile_enrichment_event["data"]["payload"]["day_cards_changed"] is True
-        assert tile_enrichment_event["data"]["payload"]["tiles_changed"] is True
-        assert tile_enrichment_event["data"]["payload"]["plan_view_state"] == "S3_ITINERARY_READY"
-
-        enriched_day_cards_event = partial_events_after_complete[1]
-        assert (
-            enriched_day_cards_event["data"]["payload"]["day_cards"][0]["blocks"][0]["deeplink"]
-            == "https://viator.test"
-        )
-        assert partial_events_after_complete[2]["data"]["payload"]["tile_1"]["provider"] == "viator"
+        assert partial_events_after_complete == []
 
     @pytest.mark.asyncio
     async def test_noop_initial_plan_preserves_existing_itinerary(self, monkeypatch: Any) -> None:

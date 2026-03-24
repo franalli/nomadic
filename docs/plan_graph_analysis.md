@@ -55,7 +55,7 @@ Coordinator-driven trip planning system with deterministic step planning in Pyth
 4. **Domain expertise remains modular** -- Tier 1 specialist planning still uses `vertical_specialist.py`.
 5. **Single response voice** -- `conversationalist.py` streams one final assistant response using current state.
 6. **Centralized LLM factory** -- all LLM calls still use `get_llm_by_model()` and `settings.*_model`.
-7. **Deterministic envelope** -- `_build_envelope()` computes view state, ack status, and document payload.
+7. **Deterministic envelope** -- awaits enrichment task, then `_build_envelope()` computes view state, ack status, and document payload (including enriched partner/Places data).
 8. **Pure-Python itinerary synthesis** -- builder remains non-LLM.
 
 ---
@@ -115,7 +115,7 @@ backend/app/planner/
 │       dispatch_specialists || search_tiles                                  │
 │       then local_intel / build_itinerary                                    │
 │  5) generate_response_streaming() via conversationalist                     │
-│  6) _build_envelope() -> complete payload + suggestion chips + ack status   │
+│  6) await enrichment + _build_envelope() -> complete payload + chips + ack  │
 │                                                                              │
 │  SSE events: token | node_status | partial | complete | error               │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -147,6 +147,7 @@ backend/app/planner/
 
 - Repeated messages with no effective `fields_changed` and an existing itinerary now route to `GENERATE_RESPONSE` only, skipping specialist + logistics + builder.
 - A dedicated `INITIAL_PLAN` guard also skips full recomputation when an itinerary already exists and no fields changed; otherwise it continues with selective tile/build steps when strategy is already present.
+- **Discovery gate:** `INITIAL_PLAN` with a destination but no preferences short-circuits to ask the user for activity preferences before dispatching specialists. Preference sources checked: `classifier.specialist_hints`, `classifier.activity_categories`, existing `strategy_sections`, `trip_plan.activity_categories`, `trip_plan.activity_settings.categories`, and `trip_settings.activity_settings.categories`.
 - Full-invalidation artifact clearing is now gated by `_should_clear_planning_artifacts()`: no-op turns do not wipe derived planning data unless the turn actually carries changed fields, while `GENERATE_PLAN_NOW` still keeps its reuse fast-path except when `activity_categories` changed (including a post-refresh `PATCH /api/document` flow with rebuilt `trip_settings` from the document).
 - `DATE_CHANGE` no longer blindly re-dispatches every Tier 1 specialist. Preserve-vs-dispatch now keys off the specialist midpoint month bucket plus target-count continuity: equal-duration date moves can reuse the existing plan immediately, while longer trips only preserve on same-destination tail extensions that still have reusable specialist content. Coordinator logs `Date change continuity` with explicit `dispatch`/`preserve` topic sets for flow auditing.
 - **Session turn cap:** `execute_turn()` counts `HumanMessage` entries; at ≥40 it emits a capped message and envelope without executing any steps, preventing runaway LLM spend.
@@ -1225,15 +1226,14 @@ This keeps the final assistant turn aligned with what the backend just applied, 
 
 `generate_sse()` prioritizes processing `complete` events before checking for client disconnect, so the envelope is always captured even if the client disconnects mid-stream. It uses `try/finally` with explicit `aclose()` on the coordinator event source for guaranteed cleanup of the async generator.
 
-### Post-Response Enrichment Events
+### Enrichment-Before-Envelope
 
-After the conversationalist response and pending itinerary enrichment await, `execute_turn()` computes pre/post enrichment hashes for both day_cards and tiles. If either changed, it emits:
+Enrichment is awaited at two points, both before any user-visible event:
 
-1. A `tile_enrichment` partial (with `day_cards_changed`/`tiles_changed` boolean flags) carrying the enriched day_cards + tiles payload
-2. A fresh `day_cards` partial if day_cards changed
-3. A `tiles` partial if tiles changed
+1. **BUILD_ITINERARY step** — after `_build_itinerary()`, the enrichment task is awaited with a **2.5s timeout** (`_ITINERARY_ENRICHMENT_AWAIT_SECONDS`). If it completes in time, the `day_cards` partial includes enriched data (no GP→Viator visual flash). On timeout the task is **cancelled** so the partial and `complete` event both carry un-enriched data — no visual diff.
+2. **Step 7 (pre-envelope)** — `execute_turn()` awaits any remaining enrichment before `_build_envelope()`. Since the task was already awaited (or cancelled) in BUILD_ITINERARY, this is typically a no-op.
 
-These events land after the response token stream but before the `complete` envelope, allowing the frontend to progressively render enrichment results (partner pricing, Google Places coordinates, signed photos) without waiting for the full envelope.
+The enrichment task receives state references directly (no `deepcopy`) since it completes before envelope construction. No post-response `tile_enrichment` partials are emitted.
 
 The coordinator also respects `cancel_event` -- if set (e.g. client disconnect), it skips response generation and envelope building entirely.
 
@@ -1249,7 +1249,7 @@ The coordinator also respects `cancel_event` -- if set (e.g. client disconnect),
 | --- | --- | --- |
 | `node_status` | `{node, status, label, icon_key, estimated_duration_ms}` | Coordinator step progress mapped to legacy node/tool names. `topic` and `stage` are now populated by the coordinator on specialist dispatch events (not just tolerated optional extras). Completed events fire as each parallel step finishes rather than after the whole group. |
 | `token` | `string` | Response text streamed from `conversationalist.generate_response_streaming()` |
-| `partial` | `{kind: "trip_inputs"\|"specialist_preview"\|"strategy_sections"\|"tiles"\|"day_cards"\|"tile_enrichment"\|"date_flex_suggestion", payload: any, ...}` | Progressive render from coordinator step outputs. `date_flex_suggestion` is emitted alongside tiles when Aviasales grouped_prices found a cheaper nearby date (≥10% savings). `specialist_preview` surfaces lightweight specialist highlights plus the current authoritative `strategy_sections`, and the frontend defers the immediately following compatibility `strategy_sections` merge by one animation frame so the preview can paint without an immediate duplicate merge. `day_cards` partials now carry enriched payloads via `_day_cards_partial_payload()` (tiles, strategy_sections, plan_view_state, itinerary context: overview, assumptions, constraint violations, warnings). `tile_enrichment` is a new post-response kind emitted after pending itinerary enrichment completes but before `complete`; it carries the enriched day_cards + tiles with `day_cards_changed` and `tiles_changed` boolean flags so the frontend can selectively re-render only what changed. If day_cards or tiles changed, dedicated `day_cards` and `tiles` partials follow immediately after the `tile_enrichment` partial. |
+| `partial` | `{kind: "trip_inputs"\|"specialist_preview"\|"strategy_sections"\|"tiles"\|"day_cards"\|"date_flex_suggestion", payload: any, ...}` | Progressive render from coordinator step outputs. `date_flex_suggestion` is emitted alongside tiles when Aviasales grouped_prices found a cheaper nearby date (≥10% savings). `specialist_preview` surfaces lightweight specialist highlights plus the current authoritative `strategy_sections`, and the frontend defers the immediately following compatibility `strategy_sections` merge by one animation frame so the preview can paint without an immediate duplicate merge. `day_cards` partials carry enriched payloads via `_day_cards_partial_payload()` (tiles, strategy_sections, plan_view_state, itinerary context: overview, assumptions, constraint violations, warnings). Enrichment data (partner pricing, deeplinks, Google Places) is now included directly in the `complete` envelope — the backend no longer emits post-response `tile_enrichment` partials. |
 | `feasibility_warning` | `{topic, status, reason, alternative}` | Coordinator feasibility signal. Forwarded by `generate_sse()` as a public SSE event for frontend toast display. |
 | `heartbeat` | `{type: "heartbeat"}` | Connection keepalive emitted every 5s by `generate_sse()` via a background `_heartbeat_emitter` task. Frontend resets the SSE watchdog timer; no state mutation. |
 | `complete` | `{document, session_state, version, response_degraded?, response_error_type?, ...}` | Public SSE payload built in `generate_sse()` after `apply_planner_update()`, wrapping/normalizing coordinator `_build_envelope()` output. When `response_degraded=true`, the LLM response generation failed and `response_error_type` indicates the cause (`rate_limit`, `timeout`, `generation_error`). |
