@@ -1,7 +1,7 @@
 'use client';
 
-import { Package } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { Layers, Package } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 import { ModalErrorBoundary } from '@/components/ui/ModalErrorBoundary';
@@ -42,8 +42,22 @@ export function BookingSectionBookingView({
   onCheckout,
 }: BookingSectionBookingViewProps) {
   const [selectedTile, setSelectedTile] = useState<Tile | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const handleCloseModal = useCallback(() => setSelectedTile(null), []);
   const handleTileClick = useCallback((tile: Tile) => setSelectedTile(tile), []);
+
+  // Track which categories are fully saved for auto-advance
+  // (must be above early return to satisfy rules of hooks)
+  const completedCategories = useMemo(() => {
+    const result = new Set<string>();
+    for (const cat of CATEGORY_CONFIG) {
+      const catTiles = tilesByCategory[cat.key] ?? [];
+      if (catTiles.length > 0 && catTiles.every((t) => savedTileIds.has(t.id))) {
+        result.add(cat.key);
+      }
+    }
+    return result;
+  }, [tilesByCategory, savedTileIds]);
 
   if (totalTiles === 0) {
     return (
@@ -85,21 +99,54 @@ export function BookingSectionBookingView({
                   {totalTiles} options found • Add items to your trip
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={() => setShowAll((prev) => !prev)}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
+                  showAll
+                    ? 'bg-zinc-900 text-white dark:bg-white/20 dark:text-white'
+                    : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-white/5 dark:text-zinc-400 dark:hover:bg-white/10'
+                )}
+              >
+                <Layers className="h-3.5 w-3.5" />
+                {showAll ? 'Categorized' : 'See all'}
+              </button>
             </div>
 
-            {CATEGORY_CONFIG.map((category) => (
-              <CategorySection
-                key={category.key}
-                emoji={category.emoji}
-                label={category.label}
-                items={tilesByCategory[category.key] ?? []}
-                savedTileIds={savedTileIds}
-                onSaveTile={onSaveTile}
-                onTileClick={handleTileClick}
-                defaultExpanded={category.key === 'flights'}
-                mode="booking"
-              />
-            ))}
+            {CATEGORY_CONFIG.map((category, idx) => {
+              const isCompleted = completedCategories.has(category.key);
+              const allPriorComplete = CATEGORY_CONFIG.slice(0, idx).every((c) =>
+                completedCategories.has(c.key)
+              );
+              // Auto-expand: first non-completed category where all prior are complete
+              const isFirstIncomplete = !isCompleted && allPriorComplete;
+              // Auto-collapse completed categories; expand the next incomplete one
+              const forceExpanded = showAll
+                ? true
+                : isCompleted
+                  ? false
+                  : isFirstIncomplete
+                    ? true
+                    : undefined;
+
+              return (
+                <CategorySection
+                  key={category.key}
+                  emoji={category.emoji}
+                  label={category.label}
+                  cta={category.cta}
+                  items={tilesByCategory[category.key] ?? []}
+                  savedTileIds={savedTileIds}
+                  onSaveTile={onSaveTile}
+                  onTileClick={handleTileClick}
+                  defaultExpanded={category.key === 'flights'}
+                  forceExpanded={forceExpanded}
+                  mode="booking"
+                  collapsible={!showAll}
+                />
+              );
+            })}
           </div>
 
           <div className="hidden lg:col-span-4 lg:block">

@@ -48,7 +48,7 @@ export function StatusBadge({ status, mode }: { status: 'available' | 'hold' | '
   if (mode === 'planning') {
     if (status === 'hold') {
       return (
-        <div className={`flex items-center gap-1.5 ${DS.textSize.micro} font-bold uppercase tracking-wide text-emerald-500`}>
+        <div className={cn('flex items-center gap-1.5', DS.textSize.micro, 'font-bold uppercase tracking-wide text-emerald-500')}>
           <span className="text-sm">❤️</span>
           Preferred
         </div>
@@ -80,7 +80,7 @@ export function StatusBadge({ status, mode }: { status: 'available' | 'hold' | '
   const { dot, text, label } = config[status];
 
   return (
-    <div className={cn(`flex items-center gap-1.5 ${DS.textSize.micro} font-bold uppercase tracking-wide`, text)}>
+    <div className={cn('flex items-center gap-1.5', DS.textSize.micro, 'font-bold uppercase tracking-wide', text)}>
       <span className={cn('w-2 h-2 rounded-full', dot)} />
       {label}
     </div>

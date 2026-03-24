@@ -6,6 +6,7 @@ from app.planner.conversationalist import (
     _VOICE_DATES_SET,
     _VOICE_DESTINATION_EXPLORE,
     _VOICE_DESTINATION_SET,
+    _VOICE_DISCOVERY,
     _VOICE_FALLBACK,
     _VOICE_GREETING,
     _VOICE_INFEASIBLE_ACTIVITY,
@@ -198,8 +199,15 @@ class TestResolveVoiceBlock:
         assert _resolve_voice_block(c, {}, "where should I go?") == _VOICE_DESTINATION_EXPLORE
 
     def test_initial_plan(self):
+        """INITIAL_PLAN with strategy_sections uses the initial plan voice."""
         c = _make_classifier(ChangeType.INITIAL_PLAN)
-        assert _resolve_voice_block(c, {}, "Rome please") == _VOICE_INITIAL_PLAN
+        state = {"strategy_sections": [{"specialist_type": "local_expert"}]}
+        assert _resolve_voice_block(c, state, "Rome please") == _VOICE_INITIAL_PLAN
+
+    def test_discovery(self):
+        """INITIAL_PLAN with no preferences/strategy triggers discovery voice."""
+        c = _make_classifier(ChangeType.INITIAL_PLAN)
+        assert _resolve_voice_block(c, {}, "Rome please") == _VOICE_DISCOVERY
 
     def test_date_change(self):
         c = _make_classifier(ChangeType.DATE_CHANGE)
@@ -260,6 +268,7 @@ class TestSentenceLimitDict:
             _VOICE_GREETING,
             _VOICE_FALLBACK,
             _VOICE_INFEASIBLE_ACTIVITY,
+            _VOICE_DISCOVERY,
         }
         assert set(_SENTENCE_LIMIT.keys()) == expected
 

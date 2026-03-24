@@ -10,11 +10,13 @@
  * @see docs/ux_unified_architecture.md Section I.B - Booking Suggestions Pattern
  */
 
+import { Check, Circle } from 'lucide-react';
 import { useCallback, useState } from 'react';
 
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 import { ModalErrorBoundary } from '@/components/ui/ModalErrorBoundary';
 import { trackEvent } from '@/lib/analytics';
+import { cn } from '@/lib/utils';
 import { usePanelToggleStore } from '@/state/panelToggleStore';
 import type { ViewMode } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
@@ -116,6 +118,11 @@ export function BookingPlanningView({
   const flightTiles = filteredFlightTiles;
   const activityTiles = filteredActivityTiles;
 
+  const savedFlights = flightTiles?.filter((t) => savedTileIds.has(t.id)).length ?? 0;
+  const savedStays = stayTiles?.filter((t) => savedTileIds.has(t.id)).length ?? 0;
+  const savedActivities = activityTiles?.filter((t) => savedTileIds.has(t.id)).length ?? 0;
+  const hasTiles = flightTiles.length > 0 || stayTiles.length > 0 || activityTiles.length > 0;
+
   return (
     <ModalErrorBoundary>
       <div id="booking-section">
@@ -124,19 +131,23 @@ export function BookingPlanningView({
           {!hasDates && <BookingLockMessage onOpenSheet={onOpenSheet} />}
         </div>
 
-        {/* Stays tiles */}
-        {isExpanded && (
-          <div className="px-6 pb-4">
-            <BookingSectionGroup
-              title="Stays"
-              tiles={stayTiles}
-              emptyMessage="No stays found yet."
-              savedTileIds={savedTileIds}
-              onSave={handleSaveClick}
-              onDetailsClick={handleDetailsClick}
-              onViewAlternatives={handleViewAlternatives}
-              onOpenStaysSettings={onOpenStaysSettings}
-            />
+        {/* Booking progress indicator */}
+        {hasTiles && (
+          <div className="flex items-center gap-3 px-4 py-2 text-xs text-zinc-500 dark:text-white/40">
+            <span className={cn('flex items-center gap-1', savedFlights > 0 && 'text-emerald-600 dark:text-emerald-400')}>
+              {savedFlights > 0 ? <Check className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
+              Flights
+            </span>
+            <span className="text-zinc-300 dark:text-white/20">{'\u2192'}</span>
+            <span className={cn('flex items-center gap-1', savedStays > 0 && 'text-emerald-600 dark:text-emerald-400')}>
+              {savedStays > 0 ? <Check className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
+              Stays
+            </span>
+            <span className="text-zinc-300 dark:text-white/20">{'\u2192'}</span>
+            <span className={cn('flex items-center gap-1', savedActivities > 0 && 'text-emerald-600 dark:text-emerald-400')}>
+              {savedActivities > 0 ? <Check className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
+              Activities
+            </span>
           </div>
         )}
 
@@ -150,6 +161,22 @@ export function BookingPlanningView({
               savedTileIds={savedTileIds}
               onSave={handleSaveClick}
               onDetailsClick={handleDetailsClick}
+            />
+          </div>
+        )}
+
+        {/* Stays tiles */}
+        {isExpanded && (
+          <div className="px-6 pb-4">
+            <BookingSectionGroup
+              title="Stays"
+              tiles={stayTiles}
+              emptyMessage="No stays found yet."
+              savedTileIds={savedTileIds}
+              onSave={handleSaveClick}
+              onDetailsClick={handleDetailsClick}
+              onViewAlternatives={handleViewAlternatives}
+              onOpenStaysSettings={onOpenStaysSettings}
             />
           </div>
         )}

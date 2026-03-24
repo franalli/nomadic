@@ -128,24 +128,6 @@ export function PlanFullDensityView({
           </div>
         )}
 
-      <PlanFullDensityTilesSection
-        state={state}
-        effectiveTiles={effectiveTiles}
-        generation={generation}
-        hasSectionData={hasSectionData}
-        savedTileIds={savedTileIds}
-        hasDates={!!effectiveTripInputs?.start_date}
-        effectiveMode={effectiveMode as 'planning' | 'booking'}
-        effectiveStrategySections={effectiveStrategySections}
-        onOpenStaysSettings={onOpenStaysSettings}
-        staysExpanded={staysExpanded}
-        onToggleStays={onToggleStays}
-        flightsExpanded={flightsExpanded}
-        onToggleFlights={onToggleFlights}
-        onSaveTile={handleSaveTile}
-        isExpandingItinerary={isExpandingItinerary}
-      />
-
       <div ref={flexRowRef} className={cn('flex', showDesktopMap && 'gap-6')}>
         <div
           ref={contentColRef}
@@ -188,6 +170,25 @@ export function PlanFullDensityView({
           />
         )}
       </div>
+
+      <PlanFullDensityTilesSection
+        state={state}
+        effectiveTiles={effectiveTiles}
+        generation={generation}
+        hasSectionData={hasSectionData}
+        savedTileIds={savedTileIds}
+        hasDates={!!effectiveTripInputs?.start_date}
+        effectiveMode={effectiveMode as 'planning' | 'booking'}
+        effectiveStrategySections={effectiveStrategySections}
+        onOpenStaysSettings={onOpenStaysSettings}
+        staysExpanded={staysExpanded}
+        onToggleStays={onToggleStays}
+        flightsExpanded={flightsExpanded}
+        onToggleFlights={onToggleFlights}
+        onSaveTile={handleSaveTile}
+        isExpandingItinerary={isExpandingItinerary}
+        hasItineraryContent={hasItineraryContent}
+      />
     </div>
   );
 }

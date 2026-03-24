@@ -26,6 +26,12 @@ export const LOGISTICS_FALLBACK_ICON = 'h-6 w-6';
 /** Constraint object for inline display — derived from DayBlock SSoT */
 export type ActiveConstraint = NonNullable<DayBlock['active_constraints']>[number];
 
+export interface TransferTip {
+  method: string;
+  price?: string;
+  time?: string;
+}
+
 export interface LogisticsBlockProps {
   type: 'arrival' | 'departure' | 'checkin' | 'checkout';
   time?: import('./types').DisplayTime;
@@ -40,6 +46,7 @@ export interface LogisticsBlockProps {
   onOpenFlightsSettings?: () => void;
   deeplinkLabel?: string;
   deeplinkUrl?: string;
+  transferTips?: TransferTip[];
 }
 
 // ---------------------------------------------------------------------------

@@ -39,6 +39,7 @@ export function LogisticsBlock({
   onOpenFlightsSettings,
   deeplinkLabel,
   deeplinkUrl,
+  transferTips,
 }: LogisticsBlockProps) {
   const config = CONFIG[type];
   const Icon = config.icon;
@@ -66,6 +67,9 @@ export function LogisticsBlock({
   const showImage = Boolean(resolvedImage) && !imageLoadFailed;
   const showFlightDeeplink =
     (type === 'arrival' || type === 'departure') &&
+    Boolean(deeplinkUrl && deeplinkUrl !== '#' && deeplinkLabel);
+  const showHotelDeeplink =
+    type === 'checkin' &&
     Boolean(deeplinkUrl && deeplinkUrl !== '#' && deeplinkLabel);
 
   return (
@@ -176,6 +180,37 @@ export function LogisticsBlock({
             {deeplinkLabel}
             <ExternalLink className="h-3 w-3" />
           </a>
+        )}
+        {showHotelDeeplink && (
+          <a
+            href={deeplinkUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={deeplinkLabel}
+            className="mt-2 inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-700 transition-colors dark:text-white/40 dark:hover:text-white/60"
+          >
+            {deeplinkLabel}
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
+        {/* Airport transfer tips for arrival blocks */}
+        {type === 'arrival' && transferTips && transferTips.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {transferTips.slice(0, 3).map((tip, i) => (
+              <span
+                key={tip.method + i}
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs',
+                  'bg-emerald-50 text-emerald-700',
+                  'dark:bg-emerald-950/20 dark:text-emerald-400'
+                )}
+              >
+                {tip.method}
+                {tip.price ? ` \u00B7 ${tip.price}` : ''}
+                {tip.time ? ` \u00B7 ${tip.time}` : ''}
+              </span>
+            ))}
+          </div>
         )}
         {/* Preference attribution badge for check-in blocks */}
         {showPreferenceBadge && (

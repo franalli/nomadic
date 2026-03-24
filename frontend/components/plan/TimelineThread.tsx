@@ -2,10 +2,12 @@
 
 /* eslint no-unused-vars: ["error", { "args": "none" }] */
 
+import { Car } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useMemo } from 'react';
+import { Fragment, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
+import { buildTransferAnnotations, type TransferAnnotation } from '@/lib/transferAnnotations';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
@@ -56,6 +58,28 @@ interface TimelineThreadProps {
   freeDayDropSlot?: (dayNumber: number) => ReactNode;
 }
 
+function TransferAnnotationBanner({
+  annotation,
+}: {
+  annotation: TransferAnnotation;
+}) {
+  return (
+    <div className="flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 dark:text-white/40">
+      <Car className="h-3 w-3 flex-shrink-0" />
+      <span>
+        {annotation.fromArea} &rarr; {annotation.toArea}
+        {annotation.recommendedMode && ` \u00b7 ${annotation.recommendedMode}`}
+        {annotation.estimatedDuration && ` \u00b7 ${annotation.estimatedDuration}`}
+      </span>
+      {annotation.tip && (
+        <span className="text-zinc-400 dark:text-white/30">
+          &mdash; {annotation.tip}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function TimelineThread({
   dayCards,
   expandedDay: _expandedDay,
@@ -91,6 +115,22 @@ export function TimelineThread({
       categories: store.document?.trip_inputs?.activity_settings?.categories,
     }))
   );
+  const { transportation, neighborhoods } = useDocumentStore(
+    useShallow((s) => {
+      const sections = s.document?.strategy_sections ?? [];
+      const le = sections.find((sec) => sec.specialist_type === 'local_expert');
+      const ti = le?.travel_intelligence as Record<string, unknown> | undefined;
+      return {
+        transportation: (ti?.transportation ?? null) as {
+          ride_apps?: string[];
+          traffic_note?: string;
+        } | null,
+        neighborhoods: (ti?.neighborhoods ?? null) as {
+          where_to_stay?: { name: string }[];
+        } | null,
+      };
+    })
+  );
   const { fillingDay, fillDayRejection, handleFillDay } = useTimelineFillDay({
     disableFillDayActions,
     categories,
@@ -98,6 +138,10 @@ export function TimelineThread({
   const sortedDays = useMemo(
     () => [...dayCards].sort((a, b) => a.day_number - b.day_number),
     [dayCards]
+  );
+  const transferAnnotations = useMemo(
+    () => buildTransferAnnotations(sortedDays, transportation, neighborhoods),
+    [sortedDays, transportation, neighborhoods]
   );
   const dayHeaderRef = useTimelineThreadMapSync(
     sortedDays.map((day) => day.day_number),
@@ -145,36 +189,45 @@ export function TimelineThread({
         )}
 
         {sortedDays.map((card, index) => (
-          <TimelineDayCard
-            key={card.day_number}
-            card={card}
-            index={index}
-            totalDays={sortedDays.length}
-            onDayClick={onDayClick}
-            onDayHover={onDayHover}
-            onBrowse={handleBrowse}
-            dayHeaderRef={dayHeaderRef}
-            useRichBlocks={useRichBlocks}
-            activeBlockId={activeBlockId}
-            showPriceEstimates={showPriceEstimates}
-            mode={mode}
-            savedTileIds={savedTileIds}
-            preferredTileIds={preferredTileIds}
-            onOpenBookingDrawer={onOpenBookingDrawer}
-            onUnassignTile={onUnassignTile}
-            onOpenStaysSettings={onOpenStaysSettings}
-            onOpenFlightsSettings={onOpenFlightsSettings}
-            onRemoveBlock={onRemoveBlock}
-            blockWrapper={blockWrapper}
-            dayWrapper={dayWrapper}
-            freeDayDropSlot={freeDayDropSlot}
-            destination={destination}
-            categories={categories}
-            fillingDay={fillingDay}
-            fillDayRejection={fillDayRejection}
-            handleFillDay={handleFillDay}
-            disableFillDayActions={disableFillDayActions}
-          />
+          <Fragment key={card.day_number}>
+            {index > 0 &&
+              transferAnnotations.get(sortedDays[index - 1].day_number) && (
+                <TransferAnnotationBanner
+                  annotation={
+                    transferAnnotations.get(sortedDays[index - 1].day_number)!
+                  }
+                />
+              )}
+            <TimelineDayCard
+              card={card}
+              index={index}
+              totalDays={sortedDays.length}
+              onDayClick={onDayClick}
+              onDayHover={onDayHover}
+              onBrowse={handleBrowse}
+              dayHeaderRef={dayHeaderRef}
+              useRichBlocks={useRichBlocks}
+              activeBlockId={activeBlockId}
+              showPriceEstimates={showPriceEstimates}
+              mode={mode}
+              savedTileIds={savedTileIds}
+              preferredTileIds={preferredTileIds}
+              onOpenBookingDrawer={onOpenBookingDrawer}
+              onUnassignTile={onUnassignTile}
+              onOpenStaysSettings={onOpenStaysSettings}
+              onOpenFlightsSettings={onOpenFlightsSettings}
+              onRemoveBlock={onRemoveBlock}
+              blockWrapper={blockWrapper}
+              dayWrapper={dayWrapper}
+              freeDayDropSlot={freeDayDropSlot}
+              destination={destination}
+              categories={categories}
+              fillingDay={fillingDay}
+              fillDayRejection={fillDayRejection}
+              handleFillDay={handleFillDay}
+              disableFillDayActions={disableFillDayActions}
+            />
+          </Fragment>
         ))}
       </div>
 

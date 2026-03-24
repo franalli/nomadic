@@ -76,9 +76,10 @@ describe('BookingPlanningView activity panel routing', () => {
       />
     );
 
-    expect(screen.getByText('Stays')).toBeInTheDocument();
+    // Stays section visible (progress indicator also renders "Stays" text)
+    expect(screen.getAllByText('Stays').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Canal House')).toBeInTheDocument();
-    expect(screen.queryByText('Activities')).not.toBeInTheDocument();
+    // Activities section tiles not visible (progress indicator label is fine)
     expect(screen.queryByText('Sunset Sail')).not.toBeInTheDocument();
 
     unmount();
@@ -101,9 +102,10 @@ describe('BookingPlanningView activity panel routing', () => {
       />
     );
 
-    expect(screen.queryByText('Stays')).not.toBeInTheDocument();
+    // Stays section tiles not visible
     expect(screen.queryByText('Canal House')).not.toBeInTheDocument();
-    expect(screen.getByText('Activities')).toBeInTheDocument();
+    // Activities section visible (progress indicator also renders "Activities" text)
+    expect(screen.getAllByText('Activities').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Sunset Sail')).toBeInTheDocument();
   });
 

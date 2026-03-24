@@ -56,6 +56,14 @@ export function RichBlockRenderer({
     useShallow((state) => ({ tiles: state.document?.tiles, branches: state.document?.branches }))
   );
   const selectedBranchId = useDocumentStore((state) => state.selectedBranchId);
+  const transferTips = useDocumentStore(
+    useShallow((s) => {
+      const sections = s.document?.strategy_sections ?? [];
+      const le = sections.find((sec) => sec.specialist_type === 'local_expert');
+      const tips = le?.travel_intelligence?.transportation?.airport_to_city;
+      return Array.isArray(tips) ? tips : [];
+    })
+  );
   const selectedStayTile = useMemo(
     () => resolveSelectedStayTile(branches, selectedBranchId, tiles),
     [branches, selectedBranchId, tiles]
@@ -78,6 +86,10 @@ export function RichBlockRenderer({
     () => getTileLinkLabel(resolvedLogisticsTile),
     [resolvedLogisticsTile]
   );
+  const hotelLinkLabel = useMemo(
+    () => getTileLinkLabel(selectedStayTile ?? undefined),
+    [selectedStayTile]
+  );
 
   // 1. LOGISTICS LAYER
   if (block.buffer_type === 'arrival' || block.buffer_type === 'departure') {
@@ -91,6 +103,7 @@ export function RichBlockRenderer({
         deeplinkLabel={logisticsLinkLabel}
         onOpenFlightsSettings={onOpenFlightsSettings}
         deeplinkUrl={resolvedLogisticsTile?.deeplink_url}
+        transferTips={block.buffer_type === 'arrival' ? transferTips : undefined}
       />
     );
   }
@@ -108,6 +121,8 @@ export function RichBlockRenderer({
         preferenceStatus={block.preference_status}
         alternativeTileId={block.alternative_tile_id}
         onOpenStaysSettings={onOpenStaysSettings}
+        deeplinkLabel={hotelLinkLabel}
+        deeplinkUrl={selectedStayTile?.deeplink_url}
       />
     );
   }

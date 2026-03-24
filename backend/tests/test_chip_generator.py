@@ -93,16 +93,23 @@ class TestNoDestination:
 
 
 class TestDestinationNoDates:
-    def test_suggests_date_options(self) -> None:
+    def test_discovery_chips_without_dates(self) -> None:
+        """Dest but no dates, no strategy → discovery preference chips (not date chips)."""
         state = _make_state(trip_plan={"destination": "Bali"})
         chips = _generate_chips_from_state(state)
-        assert len(chips) <= 3
+        assert len(chips) == 4
+        categories = {c["category"] for c in chips}
+        assert "preference" in categories
+
+    def test_date_chips_when_strategy_exists(self) -> None:
+        """Dest, no dates, but strategy present → falls through to date chips."""
+        state = _make_state(
+            trip_plan={"destination": "Paris"},
+            strategy_sections=[{"specialist_type": "local_expert"}],
+        )
+        chips = _generate_chips_from_state(state)
         categories = {c["category"] for c in chips}
         assert "date_prompt" in categories
-
-    def test_includes_set_dates_pill(self) -> None:
-        state = _make_state(trip_plan={"destination": "Paris"})
-        chips = _generate_chips_from_state(state)
         pill_chips = [c for c in chips if c.get("action_type") == "open_pill"]
         assert any(c["action_target"] == "dates" for c in pill_chips)
 
@@ -113,7 +120,8 @@ class TestDestinationNoDates:
 
 
 class TestDestinationAndDatesNoActivities:
-    def test_suggests_activities(self) -> None:
+    def test_discovery_preference_chips(self) -> None:
+        """When dest+dates are set but no categories/strategy, show discovery chips."""
         state = _make_state(
             trip_plan={
                 "destination": "Bali",
@@ -122,20 +130,23 @@ class TestDestinationAndDatesNoActivities:
             }
         )
         chips = _generate_chips_from_state(state)
-        messages = [c["message"].lower() for c in chips]
-        assert any("activit" in m for m in messages)
+        assert len(chips) == 4
+        categories = {c["category"] for c in chips}
+        assert "preference" in categories
 
-    def test_suggests_departure_city(self) -> None:
+    def test_discovery_chips_skipped_when_strategy_exists(self) -> None:
+        """With strategy_sections present, fall through to activity/departure chips."""
         state = _make_state(
             trip_plan={
                 "destination": "Bali",
                 "start_date": "2026-03-01",
                 "end_date": "2026-03-07",
-            }
+            },
+            strategy_sections=[{"specialist_type": "local_expert"}],
         )
         chips = _generate_chips_from_state(state)
         messages = [c["message"].lower() for c in chips]
-        assert any("departure" in m for m in messages)
+        assert any("activit" in m or "departure" in m for m in messages)
 
 
 # =============================================================================
@@ -304,7 +315,8 @@ class TestTilesPresent:
         messages = [c["message"].lower() for c in chips]
         assert any("build" in m or "itinerary" in m or "browse" in m for m in messages)
 
-    def test_with_dest_dates_no_categories_suggests_activities(self) -> None:
+    def test_with_dest_dates_no_categories_shows_discovery(self) -> None:
+        """Tiles present but no categories/strategy -> discovery preference chips."""
         state = _make_state(
             trip_plan={
                 "destination": "Bali",
@@ -316,8 +328,8 @@ class TestTilesPresent:
             },
         )
         chips = _generate_chips_from_state(state)
-        messages = [c["message"].lower() for c in chips]
-        assert any("activit" in m for m in messages)
+        categories = {c["category"] for c in chips}
+        assert "preference" in categories
 
 
 # =============================================================================
@@ -344,6 +356,7 @@ class TestDepartureCityPersonalization:
         assert "Bali" in dep_chips[0]["message"]
 
     def test_has_tiles_no_itinerary_personalizes_departure(self) -> None:
+        """With strategy_sections, tiles path personalizes departure chip."""
         state = _make_state(
             trip_plan={
                 "destination": "Tokyo",
@@ -351,13 +364,15 @@ class TestDepartureCityPersonalization:
                 "end_date": "2026-04-07",
             },
             tiles={"hotels": [{"id": "h1"}]},
+            strategy_sections=[{"specialist_type": "local_expert"}],
         )
         chips = _generate_chips_from_state(state)
         dep_chips = [c for c in chips if "departure" in c["message"].lower()]
         assert dep_chips, "Expected a departure city chip"
         assert "Tokyo" in dep_chips[0]["message"]
 
-    def test_dest_dates_no_activities_personalizes_departure(self) -> None:
+    def test_dest_dates_no_activities_shows_discovery(self) -> None:
+        """Without strategy, dest+dates+no categories -> discovery chips."""
         state = _make_state(
             trip_plan={
                 "destination": "Paris",
@@ -366,9 +381,8 @@ class TestDepartureCityPersonalization:
             },
         )
         chips = _generate_chips_from_state(state)
-        dep_chips = [c for c in chips if "departure" in c["message"].lower()]
-        assert dep_chips, "Expected a departure city chip"
-        assert "Paris" in dep_chips[0]["message"]
+        categories = {c["category"] for c in chips}
+        assert "preference" in categories
 
 
 # =============================================================================

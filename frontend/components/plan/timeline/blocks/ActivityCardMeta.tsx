@@ -1,6 +1,6 @@
 'use client';
 
-import { Clock, Star } from 'lucide-react';
+import { Clock, ExternalLink, Star } from 'lucide-react';
 
 import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
@@ -56,8 +56,11 @@ export function ActivityCardMeta({
   const resolvedDuration = resolveDurationLabel(block);
   const resolvedRating = resolveRating(block);
   const resolvedReviewCount = resolveReviewCount(block);
-  const bookedTile = block.booked_tile as Record<string, unknown> | undefined;
-  const isEstimateOnly = bookedTile?.is_estimate_only !== false;
+  const bookingDeeplink = block.booked_tile?.deeplink_url;
+  const hasBookingDeeplink = Boolean(bookingDeeplink && bookingDeeplink !== '#');
+  const bookingPrice = block.booked_tile?.live_price ?? block.booked_tile?.price_estimate;
+  const bookingCurrency = block.booked_tile?.currency;
+  const isEstimateOnly = block.booked_tile?.is_estimate_only !== false;
   const showEstimatedPrice = resolvedPriceEstimate != null;
   const showPriceLevel = priceLevelLabel && !showEstimatedPrice;
   const showIntensityBadge = shouldShowIntensityBadge(block);
@@ -141,6 +144,20 @@ export function ActivityCardMeta({
         <p className="mt-0.5 line-clamp-1 text-xs text-zinc-500 dark:text-zinc-400">
           {block.summary}
         </p>
+      )}
+      {hasBookingDeeplink && !isUnschedulable && (
+        <a
+          href={bookingDeeplink}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="mt-1 inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-700 transition-colors dark:text-white/40 dark:hover:text-white/60"
+        >
+          {bookingPrice != null && bookingCurrency
+            ? `From ${bookingCurrency} ${Math.round(bookingPrice).toLocaleString()}`
+            : 'View booking'}
+          <ExternalLink className="h-3 w-3" />
+        </a>
       )}
       {isUnschedulable && block.unschedulable_reason && (
         <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs dark:border-amber-800/40 dark:bg-amber-900/10">

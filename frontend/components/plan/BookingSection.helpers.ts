@@ -19,9 +19,9 @@ export const DEFAULT_TILE_FILTERS: TileFilters = {
 };
 
 export const CATEGORY_CONFIG = [
-  { key: 'flights', emoji: '✈️', label: 'Flights' },
-  { key: 'stays', emoji: '🏨', label: 'Stays' },
-  { key: 'activities', emoji: '🤿', label: 'Activities' },
+  { key: 'flights', emoji: '✈️', label: 'Flights', cta: 'Lock in your flights first — prices change daily' },
+  { key: 'stays', emoji: '🏨', label: 'Stays', cta: 'Pick a base for your trip' },
+  { key: 'activities', emoji: '🤿', label: 'Activities', cta: 'Fill your days' },
 ] as const;
 
 export const EMPTY_SAVED_TILE_IDS = new Set<string>();

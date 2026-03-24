@@ -5,6 +5,7 @@ interface PanelToggleState {
   flightsExpanded: boolean;
   activitiesExpanded: boolean;
   intelExpanded: boolean;
+  tilesSectionExpanded: boolean;
   travelAdviceCount: number;
   showTravelAdvice: boolean;
   isTravelAdvicePending: boolean;
@@ -12,6 +13,7 @@ interface PanelToggleState {
   toggleFlights: () => void;
   toggleActivities: () => void;
   toggleIntel: () => void;
+  toggleTilesSection: () => void;
   setTravelAdviceData: (data: { count: number; show: boolean; pending: boolean }) => void;
   reset: () => void;
 }
@@ -21,6 +23,7 @@ export const usePanelToggleStore = create<PanelToggleState>((set) => ({
   flightsExpanded: false,
   activitiesExpanded: false,
   intelExpanded: false,
+  tilesSectionExpanded: false,
   travelAdviceCount: 0,
   showTravelAdvice: false,
   isTravelAdvicePending: false,
@@ -48,6 +51,12 @@ export const usePanelToggleStore = create<PanelToggleState>((set) => ({
       ? { staysExpanded: false, flightsExpanded: false, activitiesExpanded: false }
       : {}),
   })),
+  toggleTilesSection: () => set((s) => ({
+    tilesSectionExpanded: !s.tilesSectionExpanded,
+    ...(!s.tilesSectionExpanded
+      ? { staysExpanded: false, flightsExpanded: false, activitiesExpanded: false, intelExpanded: false }
+      : {}),
+  })),
   setTravelAdviceData: ({ count, show, pending }) =>
     set({ travelAdviceCount: count, showTravelAdvice: show, isTravelAdvicePending: pending }),
   reset: () =>
@@ -56,6 +65,7 @@ export const usePanelToggleStore = create<PanelToggleState>((set) => ({
       flightsExpanded: false,
       activitiesExpanded: false,
       intelExpanded: false,
+      tilesSectionExpanded: false,
       travelAdviceCount: 0,
       showTravelAdvice: false,
       isTravelAdvicePending: false,

@@ -87,6 +87,17 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
                 )
         return chips[:3]
 
+    # --- Discovery preference chips ---
+    has_strategy = bool(state.get("strategy_sections"))
+    settings_categories = trip_plan.get("activity_settings", {}).get("categories", [])
+    has_categories = bool(categories or settings_categories)
+    if dest and not has_strategy and not has_categories and not day_cards:
+        chips.append(_chip("Adventure & outdoors", "cta", "preference", "mountain"))
+        chips.append(_chip("Culture & food", "cta", "preference", "utensils-crossed"))
+        chips.append(_chip("Relaxation & wellness", "cta", "preference", "palmtree"))
+        chips.append(_chip("A bit of everything", "cta", "preference", "sparkles"))
+        return chips[:4]
+
     # Post-itinerary: refinement chips (covers both build turn AND subsequent S3 turns)
     if day_cards and dest and start_date:
         origin = trip_plan.get("origin", "")

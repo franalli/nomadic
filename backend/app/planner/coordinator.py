@@ -1220,13 +1220,37 @@ def plan_turn(
             estimated_wall_ms=800,
         )
 
+    # Hoist trip_plan / has_destination for discovery gate and planning.
+    trip_plan: Dict[str, Any] = state.get("trip_plan", {})
+    has_destination = bool(trip_plan.get("destination") or classifier.destination)
+
+    # --- Discovery gate: ask preferences before full dispatch ---
+    _has_prefs = bool(
+        classifier.specialist_hints
+        or classifier.activity_categories
+        or state.get("strategy_sections")
+        or (trip_plan.get("activity_categories"))
+        or (trip_plan.get("activity_settings", {}).get("categories"))
+    )
+
+    if change_type == ChangeType.INITIAL_PLAN and has_destination and not _has_prefs:
+        discovery_steps: List[ExecutionStep] = []
+        target_dest = classifier.destination or trip_plan.get("destination")
+        if not _has_local_intel_for_destination(state, target_dest):
+            discovery_steps.append(ExecutionStep(step_type=StepType.LOCAL_INTEL))
+        discovery_steps.append(ExecutionStep(step_type=StepType.GENERATE_RESPONSE))
+        return ExecutionPlan(
+            steps=discovery_steps,
+            reason="DISCOVERY — destination set, no preferences yet",
+            estimated_llm_calls=1,
+            estimated_wall_ms=1200,
+        )
+
     # ----- PLANNING intent -----
     steps: List[ExecutionStep] = []
     estimated_llm_calls = 0
     estimated_wall_ms = 0
 
-    trip_plan: Dict[str, Any] = state.get("trip_plan", {})
-    has_destination = bool(trip_plan.get("destination") or classifier.destination)
     has_dates = bool(
         (trip_plan.get("start_date") or classifier.start_date)
         and (trip_plan.get("end_date") or classifier.end_date)

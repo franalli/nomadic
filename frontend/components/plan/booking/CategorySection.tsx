@@ -2,7 +2,7 @@
 'use client';
 
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
@@ -16,6 +16,8 @@ interface CategorySectionProps {
   emoji: string;
   /** Display label */
   label: string;
+  /** Optional CTA subtitle shown below the label */
+  cta?: string;
   /** Tiles in this category */
   items: Tile[];
   /** Set of saved tile IDs (for "In Trip" badge) */
@@ -26,8 +28,12 @@ interface CategorySectionProps {
   onTileClick?: (tile: Tile) => void;
   /** Initially expanded state */
   defaultExpanded?: boolean;
+  /** When provided, overrides internal expand state (for auto-advance) */
+  forceExpanded?: boolean;
   /** Current mode - determines UI variant (hearts vs cart) */
   mode?: 'planning' | 'booking';
+  /** Whether the section header is collapsible (default true) */
+  collapsible?: boolean;
 }
 
 /**
@@ -39,38 +45,65 @@ interface CategorySectionProps {
 export function CategorySection({
   emoji,
   label,
+  cta,
   items,
   savedTileIds = EMPTY_SAVED_TILE_IDS,
   onSaveTile,
   onTileClick,
   defaultExpanded = true,
+  forceExpanded,
   mode = 'booking',
+  collapsible = true,
 }: CategorySectionProps) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+
+  // Sync with parent-driven auto-advance when forceExpanded changes
+  useEffect(() => {
+    if (forceExpanded !== undefined) {
+      setIsExpanded(forceExpanded);
+    }
+  }, [forceExpanded]);
 
   if (!items || items.length === 0) return null;
 
   return (
     <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-white/10 rounded-xl overflow-hidden shadow-card transition-all hover:shadow-soft">
       {/* Header */}
-      <button
-        type="button"
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center justify-between p-4 bg-zinc-50/50 dark:bg-white/5 hover:bg-zinc-100 dark:hover:bg-white/[0.07] transition-colors"
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">{emoji}</span>
-          <h3 className="font-semibold text-lg text-zinc-900 dark:text-white">{label}</h3>
-          <span className="bg-zinc-100 dark:bg-white/10 px-2 py-0.5 rounded-full text-xs font-medium text-zinc-500 dark:text-zinc-400">
-            {items.length} option{items.length !== 1 ? 's' : ''}
-          </span>
-        </div>
-        {isExpanded ? (
-          <ChevronUp className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
+      {(() => {
+        const headerContent = (
+          <div className="flex flex-col items-start gap-0.5">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">{emoji}</span>
+              <h3 className="font-semibold text-lg text-zinc-900 dark:text-white">{label}</h3>
+              <span className="bg-zinc-100 dark:bg-white/10 px-2 py-0.5 rounded-full text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                {items.length} option{items.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+            {cta && (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 pl-9">{cta}</p>
+            )}
+          </div>
+        );
+
+        return collapsible ? (
+          <button
+            type="button"
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="w-full flex items-center justify-between p-4 bg-zinc-50/50 dark:bg-white/5 hover:bg-zinc-100 dark:hover:bg-white/[0.07] transition-colors"
+          >
+            {headerContent}
+            {isExpanded ? (
+              <ChevronUp className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
+            )}
+          </button>
         ) : (
-          <ChevronDown className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
-        )}
-      </button>
+          <div className="w-full flex items-center justify-between p-4 bg-zinc-50/50 dark:bg-white/5">
+            {headerContent}
+          </div>
+        );
+      })()}
 
       {/* Tiles grid */}
       {isExpanded && (
@@ -156,5 +189,3 @@ export function CategorySection({
     </div>
   );
 }
-
-export default CategorySection;

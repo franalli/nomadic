@@ -302,6 +302,37 @@ export function buildDestinationIntel(
       const key = byType || byText || 'good_to_know';
       addUnique(bucket, key, summary, globalSeen);
     }
+
+    // Extract structured travel intel from local_expert sections
+    if (section.specialist_type === 'local_expert' && section.travel_intelligence) {
+      const ti = section.travel_intelligence;
+
+      // Transportation
+      const transport = ti.transportation;
+      if (transport?.airport_to_city?.length) {
+        for (const transfer of transport.airport_to_city) {
+          const text = [transfer.method, transfer.price, transfer.time]
+            .filter(Boolean).join(' \u2014 ');
+          if (text) addUnique(bucket, 'transport', `Airport transfer: ${text}`, globalSeen);
+        }
+      }
+      if (transport?.ride_apps?.length) {
+        addUnique(bucket, 'transport', `Ride apps: ${transport.ride_apps.join(', ')}`, globalSeen);
+      }
+      if (transport?.traffic_note) {
+        addUnique(bucket, 'transport', transport.traffic_note, globalSeen);
+      }
+
+      // Neighborhoods
+      if (ti.neighborhoods?.where_to_stay?.length) {
+        for (const n of ti.neighborhoods.where_to_stay.slice(0, 3)) {
+          const parts = [n.name, n.vibe, n.price_range].filter(Boolean);
+          if (parts.length >= 2) {
+            addUnique(bucket, 'good_to_know', parts.join(' \u2014 '), globalSeen);
+          }
+        }
+      }
+    }
   }
 
   const populated = INTEL_CATEGORIES.map((meta) => ({

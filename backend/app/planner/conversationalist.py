@@ -970,6 +970,20 @@ Do NOT apologize. Do NOT say "unfortunately". State the fact and redirect.
 Tone: matter-of-fact expert redirecting to something better.\
 """
 
+_VOICE_DISCOVERY: str = """\
+## Voice: Discovery
+Sentence count: 2-3 MAX.
+The user named a destination but hasn't shared what they want to DO there.
+1. Open with one vivid, specific hook about the destination (use local_expert data if available).
+2. Ask ONE focused question about their trip style. Pick the most useful:
+   - "Is this more adventure or relaxation?" (if destination supports both)
+   - "Any must-do activities?" (if destination is activity-diverse)
+   - "Are you exploring the whole region or staying in one area?" (if destination is large)
+CRITICAL: Ask exactly ONE question per message, not two or three.
+Do NOT list possible activities. Do NOT describe what you'll do next.
+Tone: curious local friend who's about to plan something great.\
+"""
+
 # Sentence limits per voice block — hard-enforced during streaming.
 # These mirror the "Sentence count: X MAX" declarations in each voice block
 # so the system never relies solely on the LLM to self-regulate.
@@ -986,6 +1000,7 @@ _SENTENCE_LIMIT: Dict[str, int] = {
     _VOICE_GREETING: 1,
     _VOICE_FALLBACK: 3,
     _VOICE_INFEASIBLE_ACTIVITY: 4,
+    _VOICE_DISCOVERY: 3,
 }
 _DEFAULT_SENTENCE_LIMIT: int = 3
 
@@ -1019,6 +1034,17 @@ def _resolve_voice_block(
     user_message: str,
 ) -> str:
     """Resolve the voice block for the current turn."""
+    # Discovery voice: destination set, no preferences, no strategy yet
+    if (
+        classifier.change_type.value == "initial_plan"
+        and not state.get("strategy_sections")
+        and not classifier.specialist_hints
+        and not classifier.activity_categories
+        and not (state.get("trip_plan", {}).get("activity_categories"))
+        and not (state.get("trip_plan", {}).get("activity_settings", {}).get("categories"))
+    ):
+        return _VOICE_DISCOVERY
+
     # Check if ANY specialist is newly infeasible this turn
     prechecks = state.get("turn_meta", {}).get("feasibility_prechecks", {})
     has_infeasible_this_turn = (
