@@ -1414,8 +1414,32 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
             log("LOGISTICS", f"[BROWSE] Parallel fetch failed: {_e}")
             return []
 
+    _has_partner_browse = (settings.viator_enabled and settings.viator_api_key) or (
+        settings.get_your_guide_enabled and settings.get_your_guide_api_key
+    )
+
     _gather_t0 = time.time()
-    if activities_requested and _pure_tier1:
+    if activities_requested and _pure_tier1 and _has_partner_browse:
+        # Pure Tier 1 + partner browse: skip GP activity fetch (gets suppressed anyway).
+        # Browse provides Viator/GYG tiles for free-day backfill.
+        hotel_dicts, _browse_prefetched = await asyncio.gather(
+            _fetch_hotels(
+                async_session_factory,
+                plan,
+                hotel_settings,
+                provider,
+                dest_key,
+                start_date,
+                end_date,
+                activity_settings,
+                flight_settings,
+                dest_lat=dest_lat,
+                dest_lng=dest_lng,
+            ),
+            _safe_browse(),
+        )
+        activity_dicts = []
+    elif activities_requested and _pure_tier1:
         hotel_dicts, activity_dicts, _browse_prefetched = await asyncio.gather(
             _fetch_hotels(
                 async_session_factory,

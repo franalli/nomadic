@@ -4688,6 +4688,24 @@ async def _build_itinerary(
     _inject_specialist_tiles_into_state(state)
     await _prepare_activity_tiles_for_build(state)
 
+    # Enrich activity tiles with partner data (Viator/GYG) BEFORE the build so
+    # the builder picks up affiliate deeplinks/images/prices via Phase 2.5.
+    # This avoids post-build enrichment timing out and emitting GP-only day_cards.
+    _pre_enrich_tiles = (state.get("tiles") or {}).get("activities", [])
+    if (
+        destination
+        and isinstance(_pre_enrich_tiles, list)
+        and _pre_enrich_tiles
+        and (
+            (settings.viator_enabled and settings.viator_api_key)
+            or (settings.get_your_guide_enabled and settings.get_your_guide_api_key)
+        )
+    ):
+        from app.services.partner_enrichment import enrich_tiles_with_partners
+
+        _currency = trip_plan.get("currency") or "USD"
+        await enrich_tiles_with_partners(_pre_enrich_tiles, destination, _currency)
+
     tiles: Dict[str, Any] = state.get("tiles", {})
     strategy_sections = state.get("strategy_sections", [])
 
@@ -4808,14 +4826,12 @@ async def _build_itinerary(
         if result.day_cards:
             day_cards = [card.model_dump() for card in result.day_cards]
             state["day_cards"] = day_cards
-            _start_pending_itinerary_enrichment(state, session_id=session_id)
             logger.info("[coordinator] _build_itinerary: produced %d day_cards", len(day_cards))
             return day_cards
 
         # Explicitly clear stale itinerary when builder returns no cards.
         logger.info("[coordinator] _build_itinerary: builder returned no day_cards")
         state["day_cards"] = []
-        _start_pending_itinerary_enrichment(state, session_id=session_id)
         return []
 
     except Exception as exc:
@@ -5623,28 +5639,6 @@ async def _execute_step(
         }
         await _build_itinerary(state, session_id=session_id)
 
-        # Await partner enrichment before emitting the day_cards partial so
-        # tiles render once with final data (no GP→Viator visual flash).
-        # On timeout, cancel enrichment so the complete event matches the
-        # day_cards partial (both carry un-enriched data — no visual diff).
-        _enrich_task = state.get(_PENDING_ITINERARY_ENRICHMENT_TASK_KEY)
-        if isinstance(_enrich_task, asyncio.Task):
-            if not _enrich_task.done():
-                done, _ = await asyncio.wait(
-                    {_enrich_task}, timeout=_ITINERARY_ENRICHMENT_AWAIT_SECONDS
-                )
-                if done:
-                    await _await_pending_itinerary_enrichment(state)
-                    logger.info("[coordinator] Enrichment completed before day_cards partial")
-                else:
-                    await _cleanup_pending_itinerary_enrichment(state)
-                    logger.info(
-                        "[coordinator] Enrichment timed out (%.1fs) — emitting GP-only day_cards",
-                        _ITINERARY_ENRICHMENT_AWAIT_SECONDS,
-                    )
-            else:
-                await _await_pending_itinerary_enrichment(state)
-
         events: list[Dict[str, Any]] = []
         day_cards = state.get("day_cards", [])
         if isinstance(day_cards, list):
@@ -6241,10 +6235,9 @@ async def execute_turn(
         state.setdefault("messages", []).append(HumanMessage(content=user_message))
         state["messages"].append(AIMessage(content=assistant_message))
 
-        # Step 7: Await unsplash + partner enrichment, then build envelope.
-        # The enrichment task (started during BUILD_ITINERARY) runs concurrently
-        # with GENERATE_RESPONSE.  Awaiting it here ensures the envelope
-        # includes enriched deeplinks/prices — no follow-up partials needed.
+        # Step 7: Await unsplash, then build envelope.
+        # Partner enrichment is now pre-build (inside _build_itinerary), so
+        # day_cards already have Viator data.  This await is a safety no-op.
         await _cleanup_unsplash_task(cancel=False, timeout=2.0)
         await _refresh_enrichment_states(state, session_id)
         await _await_pending_itinerary_enrichment(state)

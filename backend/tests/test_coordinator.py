@@ -3312,7 +3312,7 @@ class TestDeferredActivityTileRehydration:
         assert block.get("deeplink") is None
 
     @pytest.mark.asyncio
-    async def test_build_itinerary_real_path_starts_deferred_enrichment(
+    async def test_build_itinerary_real_path_runs_prebuild_enrichment(
         self, monkeypatch: Any
     ) -> None:
         import app.planner.coordinator as coordinator_module
@@ -3355,8 +3355,8 @@ class TestDeferredActivityTileRehydration:
                 "hotels": [{"id": "hotel_1", "title": "Stay", "type": "hotel"}],
             },
         )
-        started: list[tuple[str, list[dict[str, Any]]]] = []
 
+        enrich_mock = AsyncMock()
         monkeypatch.setattr(
             coordinator_module,
             "_inject_specialist_tiles_into_state",
@@ -3368,25 +3368,22 @@ class TestDeferredActivityTileRehydration:
             lambda: _FakeBuilder(),
         )
         monkeypatch.setattr(
-            coordinator_module,
-            "_start_pending_itinerary_enrichment",
-            lambda state_arg, session_id="": started.append(
-                (session_id, list(state_arg.get("day_cards", [])))
-            ),
+            "app.services.partner_enrichment.enrich_tiles_with_partners",
+            enrich_mock,
         )
+        monkeypatch.setattr(coordinator_module.settings, "viator_enabled", True)
+        monkeypatch.setattr(coordinator_module.settings, "viator_api_key", "test-key")
 
         day_cards = await _build_itinerary(state, session_id="session-123")
 
         assert day_cards == [{"day_number": 1, "label": "Arrival", "blocks": []}]
-        assert started == [
-            (
-                "session-123",
-                [{"day_number": 1, "label": "Arrival", "blocks": []}],
-            )
-        ]
+        enrich_mock.assert_awaited_once()
+        call_args = enrich_mock.call_args
+        assert call_args[0][0] == [{"id": "act_1", "title": "Dive", "type": "activity"}]
+        assert call_args[0][1] == "Bali"
 
     @pytest.mark.asyncio
-    async def test_build_itinerary_real_path_starts_deferred_enrichment_without_day_cards(
+    async def test_build_itinerary_real_path_runs_prebuild_enrichment_without_day_cards(
         self, monkeypatch: Any
     ) -> None:
         import app.planner.coordinator as coordinator_module
@@ -3418,8 +3415,8 @@ class TestDeferredActivityTileRehydration:
                 "hotels": [{"id": "hotel_1", "title": "Stay", "type": "hotel"}],
             },
         )
-        started: list[tuple[str, list[dict[str, Any]]]] = []
 
+        enrich_mock = AsyncMock()
         monkeypatch.setattr(
             coordinator_module,
             "_inject_specialist_tiles_into_state",
@@ -3431,18 +3428,17 @@ class TestDeferredActivityTileRehydration:
             lambda: _FakeBuilder(),
         )
         monkeypatch.setattr(
-            coordinator_module,
-            "_start_pending_itinerary_enrichment",
-            lambda state_arg, session_id="": started.append(
-                (session_id, list(state_arg.get("day_cards", [])))
-            ),
+            "app.services.partner_enrichment.enrich_tiles_with_partners",
+            enrich_mock,
         )
+        monkeypatch.setattr(coordinator_module.settings, "viator_enabled", True)
+        monkeypatch.setattr(coordinator_module.settings, "viator_api_key", "test-key")
 
         day_cards = await _build_itinerary(state, session_id="session-123")
 
         assert day_cards == []
         assert state["day_cards"] == []
-        assert started == [("session-123", [])]
+        enrich_mock.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_execute_turn_cancels_pending_itinerary_enrichment_on_error(

@@ -517,24 +517,17 @@ async def _browse_activities_impl(
                     destination, valid_categories, viator_tiles
                 )
                 partner_tiles = viator_tiles
-                if len(partner_tiles) >= max_results:
-                    _browse_cache.set(cache_key, partner_tiles)
-                    await _set_cached_browse(cache_key, partner_tiles)
+                if partner_tiles:
+                    partner_tiles = partner_tiles[:max_results]
+                    await _cache_browse_result_if_current(cache_key, partner_tiles, cache_epoch)
                     logger.debug(
                         "[BROWSE] Viator returned %d tiles for %s", len(partner_tiles), destination
                     )
                     return partner_tiles
-                # Fewer than requested — fall through to supplement
-                logger.debug(
-                    "[BROWSE] Viator returned %d/%d tiles for %s, supplementing",
-                    len(partner_tiles),
-                    max_results,
-                    destination,
-                )
         except Exception as e:
             logger.debug("[BROWSE] Viator browse failed, falling back: %s", e)
 
-    # Try GYG supplement (when Viator returned fewer than max_results)
+    # Try GYG (when Viator returned 0 or failed)
     if settings.get_your_guide_enabled and settings.get_your_guide_api_key:
         try:
             from app.services.gyg_provider import search_gyg_for_destination
@@ -552,27 +545,17 @@ async def _browse_activities_impl(
                 ]
                 gyg_tiles = await _enrich_tiles_with_llm(destination, valid_categories, gyg_tiles)
                 partner_tiles = partner_tiles + gyg_tiles
-                if len(partner_tiles) >= max_results:
-                    await _cache_browse_result_if_current(
-                        cache_key,
-                        partner_tiles[:max_results],
-                        cache_epoch,
-                    )
-                    logger.debug(
-                        "[BROWSE] Viator+GYG returned %d tiles for %s",
-                        len(partner_tiles),
-                        destination,
-                    )
-                    return partner_tiles[:max_results]
-                logger.debug(
-                    "[BROWSE] Viator+GYG returned %d/%d tiles for %s, supplementing with GP",
-                    len(partner_tiles),
-                    max_results,
-                    destination,
-                )
         except Exception as e:
             logger.debug("[BROWSE] GYG browse failed: %s", e)
 
+    # Return partner results if any provider succeeded — skip GP entirely.
+    if partner_tiles:
+        partner_tiles = partner_tiles[:max_results]
+        await _cache_browse_result_if_current(cache_key, partner_tiles, cache_epoch)
+        logger.debug("[BROWSE] Partner-only: %d tiles for %s", len(partner_tiles), destination)
+        return partner_tiles
+
+    # GP fallback — only when ALL partner providers failed or returned 0 results.
     # Resolve geo center
     geo = center
     if not geo:
@@ -580,10 +563,6 @@ async def _browse_activities_impl(
 
     if not settings.google_maps_api_key:
         record_google_places_usage("browse", "error", reason="missing_api_key")
-        if partner_tiles:
-            logger.warning("[BROWSE] No Google Maps API key — returning partner-only results")
-            await _cache_browse_result_if_current(cache_key, partner_tiles, cache_epoch)
-            return partner_tiles
         logger.warning("[BROWSE] No Google Maps API key — returning empty results")
         return []
 
@@ -639,12 +618,6 @@ async def _browse_activities_impl(
             break
 
     tiles = await _enrich_tiles_with_llm(destination, valid_categories, tiles)
-
-    # Merge partner tiles (real pricing) with GP supplement tiles
-    if partner_tiles:
-        partner_titles = {t.get("title", "").lower().strip() for t in partner_tiles}
-        gp_deduped = [t for t in tiles if t.get("title", "").lower().strip() not in partner_titles]
-        tiles = partner_tiles + gp_deduped
     tiles = tiles[:max_results]
 
     usage_after = get_google_places_usage_counters().get("browse", {})

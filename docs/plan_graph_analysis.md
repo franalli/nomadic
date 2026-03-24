@@ -55,7 +55,7 @@ Coordinator-driven trip planning system with deterministic step planning in Pyth
 4. **Domain expertise remains modular** -- Tier 1 specialist planning still uses `vertical_specialist.py`.
 5. **Single response voice** -- `conversationalist.py` streams one final assistant response using current state.
 6. **Centralized LLM factory** -- all LLM calls still use `get_llm_by_model()` and `settings.*_model`.
-7. **Deterministic envelope** -- awaits enrichment task, then `_build_envelope()` computes view state, ack status, and document payload (including enriched partner/Places data).
+7. **Deterministic envelope** -- partner enrichment runs pre-build (inside `_build_itinerary()`), so `_build_envelope()` computes view state, ack status, and document payload with enriched data already in place.
 8. **Pure-Python itinerary synthesis** -- builder remains non-LLM.
 
 ---
@@ -115,7 +115,7 @@ backend/app/planner/
 │       dispatch_specialists || search_tiles                                  │
 │       then local_intel / build_itinerary                                    │
 │  5) generate_response_streaming() via conversationalist                     │
-│  6) await enrichment + _build_envelope() -> complete payload + chips + ack  │
+│  6) _build_envelope() -> complete payload + chips + ack                     │
 │                                                                              │
 │  SSE events: token | node_status | partial | complete | error               │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -129,7 +129,7 @@ backend/app/planner/
 | `DISPATCH_SPECIALISTS` | `_dispatch_specialists_parallel()` + `vertical_specialist.dispatch_specialist_with_brief()` | Replan only affected Tier 1 domains | `specialist_preview`, `strategy_sections` (streamed progressively as each specialist finishes via `_stream_specialist_dispatch_events()` async generator) |
 | `LOCAL_INTEL` | `_run_local_intel()` | Build/update local expert section | `strategy_sections` |
 | `SEARCH_TILES` | `_search_tiles()` | Refresh flights/hotels/activities by change type | `tiles` (split emission: hotels+flights first, activities second via `_flatten_tiles_payload_filtered()`) |
-| `BUILD_ITINERARY` | `_build_itinerary()` | Run pure-Python itinerary builder + store `builder_result` | `day_cards` (enriched payload via `_day_cards_partial_event()` including tiles, strategy_sections, plan_view_state, itinerary context: overview, assumptions, constraint violations, warnings; emits `[]` when the itinerary clears) |
+| `BUILD_ITINERARY` | `_build_itinerary()` | Await pre-build partner enrichment, then run pure-Python itinerary builder + store `builder_result` | `day_cards` (enriched payload via `_day_cards_partial_event()` including tiles, strategy_sections, plan_view_state, itinerary context: overview, assumptions, constraint violations, warnings; emits `[]` when the itinerary clears) |
 | `GENERATE_RESPONSE` | `conversationalist.generate_response_streaming()` | Stream final assistant response | token stream |
 | `SHORT_CIRCUIT` | `_short_circuit_message()` and state reset helpers | Deterministic greeting/reset handling (GREETING emits canned message; RESET sets `_reset_pending` flag) | none |
 
@@ -318,7 +318,7 @@ Flight/hotel/activity fetching with safety logic.
 - Separate cache key hashes for hotels/activities/flights
 - Two-tier activity system (Tier 1 specialist + Tier 2 experience)
 - No-fly safety logic (registry-driven via `_has_nofly_constraints()`)
-- Hotels and activities fetched in parallel via `asyncio.gather()`; for pure Tier 1 trips (all selected categories are Tier 1), browse activities are pre-fetched in the same gather (~600ms saving)
+- Hotels and activities fetched in parallel via `asyncio.gather()`; for pure Tier 1 trips with partner browse enabled (Viator/GYG), GP activity fetch is skipped entirely and only hotels + browse are gathered (~600ms saving, zero GP activity cost). When partner browse is unavailable, the original Tier 1 triple-gather (hotels + GP activities + browse) is used as fallback.
 - Google Places hotel providers cap hotel results at top-3 per fetch (cost guard for photo-proxy traffic)
 - `build_signed_photo_url()` now returns `None` when photos are disabled, caps requested TTL by `settings.google_places_photo_signed_ttl_max` (default max 3600s; default request 1800s), and resolves its signing secret through `config.get_media_signing_secret()` so the tile signer and `/api/media/google-places-photo*` verifier share the same fallback chain.
 - Hotel-star filtering now cascades down (`min_stars-1 ... 1`) before fallback-to-originals, with applied threshold tracked in `state.metadata`.
@@ -443,7 +443,7 @@ If a block already carries partner deeplink/image data (Viator or GYG), Google P
 
 **Partner browse/enrichment path**
 
-- `activity_browser.py` now tries `search_viator_for_destination()` first for Browse Activities, supplements with `search_gyg_for_destination()` when partner inventory is thin, dedupes partner results by title, then uses Google Places to backfill remaining slots. Placeholder category selection is now two-phase: user-selected browse category wins first, then shared `PLACE_TYPE_CATEGORY_TOKENS` from `google_places_provider.py` maps Google `primaryType` tokens to the same fallback image categories used elsewhere.
+- `activity_browser.py` uses a partner-first strategy: tries Viator first, then GYG if Viator returned 0. If any partner tiles exist, they are returned immediately (capped to `max_results`) and GP is never called. GP is only used as a fallback when all partner providers fail or return 0 results. Placeholder category selection is two-phase: user-selected browse category wins first, then shared `PLACE_TYPE_CATEGORY_TOKENS` from `google_places_provider.py` maps Google `primaryType` tokens to the same fallback image categories used elsewhere.
 - `viator_provider.py` and `gyg_provider.py` own the live affiliate integrations: each keeps a shared async `httpx` client, an in-memory browse/match cache, and a 5-failure/120-second circuit breaker. `gyg_provider.py` also normalizes GYG `long` coordinates to `{lat, lng}` and filters out multi-day tours (>8h). Both providers import shared category conflict rules from `activity_category_conflicts.py` (extracted to avoid duplication).
 - Viator title matching now normalizes specialist titles more aggressively before search: it strips short location prefixes, removes parenthetical/session suffixes, builds up to three ordered freetext query variants, and scores candidate products with fuzzy title similarity plus non-generic anchor-token overlap. `_NO_MATCH` is only negative-cached when destination lookup and all freetext queries were definitive, so transient taxonomy/search failures do not poison later retries.
 - Viator matching now includes an inferred category mismatch gate: `_infer_category_from_title()` classifies both source and product titles, and cross-domain false positives (e.g. culinary activity matched to cycling tour) are rejected or fall back to compatible candidates. A specific-to-generic tour stem overlap check also rejects generic tour matches for specific source categories (e.g. cooking, nightlife, climbing) unless the activity stem appears in the product title.
@@ -1226,14 +1226,11 @@ This keeps the final assistant turn aligned with what the backend just applied, 
 
 `generate_sse()` prioritizes processing `complete` events before checking for client disconnect, so the envelope is always captured even if the client disconnects mid-stream. It uses `try/finally` with explicit `aclose()` on the coordinator event source for guaranteed cleanup of the async generator.
 
-### Enrichment-Before-Envelope
+### Pre-Build Partner Enrichment
 
-Enrichment is awaited at two points, both before any user-visible event:
+Partner enrichment (Viator/GYG) now runs **synchronously inside `_build_itinerary()`**, before the builder executes. When a destination exists and at least one partner provider is enabled, `enrich_tiles_with_partners()` is awaited on the activity tiles so the builder picks up affiliate deeplinks/images/prices during Phase 2.5. This eliminates the previous post-build async task pattern and the GP→Viator visual flash.
 
-1. **BUILD_ITINERARY step** — after `_build_itinerary()`, the enrichment task is awaited with a **2.5s timeout** (`_ITINERARY_ENRICHMENT_AWAIT_SECONDS`). If it completes in time, the `day_cards` partial includes enriched data (no GP→Viator visual flash). On timeout the task is **cancelled** so the partial and `complete` event both carry un-enriched data — no visual diff.
-2. **Step 7 (pre-envelope)** — `execute_turn()` awaits any remaining enrichment before `_build_envelope()`. Since the task was already awaited (or cancelled) in BUILD_ITINERARY, this is typically a no-op.
-
-The enrichment task receives state references directly (no `deepcopy`) since it completes before envelope construction. No post-response `tile_enrichment` partials are emitted.
+**Step 7 (pre-envelope)** — `execute_turn()` still calls `_await_pending_itinerary_enrichment()` as a safety no-op. No post-response `tile_enrichment` partials are emitted.
 
 The coordinator also respects `cancel_event` -- if set (e.g. client disconnect), it skips response generation and envelope building entirely.
 
