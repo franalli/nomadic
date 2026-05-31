@@ -175,9 +175,10 @@ Core behaviors:
 - `success=True, day_cards, no conflicts` -> `S3_ITINERARY_READY`
 - `success=True, day_cards, conflicts` -> `S3_EDITING`
 - `success=True, no day_cards` -> `S3_BLOCKED`
-- `success=True, day_cards, activities_placed=0` -> `S3_ITINERARY_READY` (with warning appended to `builder_result["warnings"]`)
 - `success=False, day_cards` -> `S3_PARTIAL_CONFLICT`
 - `success=False, no day_cards` -> `S3_BLOCKED`
+
+When `success=True` with day_cards but `activities_placed == 0`, the state is still `S3_ITINERARY_READY` (or `S3_EDITING` if conflicts exist); the function additionally appends a warning to `builder_result["warnings"]` (e.g. "No activities could be placed — trip may be too short", or an infeasible-categories warning) but does not change the returned view state.
 
 ---
 
@@ -320,7 +321,7 @@ Flight/hotel/activity fetching with safety logic.
 - No-fly safety logic (registry-driven via `_has_nofly_constraints()`)
 - Hotels and activities fetched in parallel via `asyncio.gather()`; for pure Tier 1 trips with partner browse enabled (Viator/GYG), GP activity fetch is skipped entirely and only hotels + browse are gathered (~600ms saving, zero GP activity cost). When partner browse is unavailable, the original Tier 1 triple-gather (hotels + GP activities + browse) is used as fallback.
 - Google Places hotel providers cap hotel results at top-3 per fetch (cost guard for photo-proxy traffic)
-- `build_signed_photo_url()` now returns `None` when photos are disabled, caps requested TTL by `settings.google_places_photo_signed_ttl_max` (default max 3600s; default request 1800s), and resolves its signing secret through `config.get_media_signing_secret()` so the tile signer and `/api/media/google-places-photo*` verifier share the same fallback chain.
+- `build_signed_photo_url()` (defined in `tile_service/google_places_provider.py`) returns `None` when photos are disabled, caps requested TTL by `settings.google_places_photo_signed_ttl_max` (default max 3600s; default request 1800s), and resolves its signing secret through `config.get_media_signing_secret()` so the tile signer and `/api/media/google-places-photo*` verifier share the same fallback chain.
 - Hotel-star filtering now cascades down (`min_stars-1 ... 1`) before fallback-to-originals, with applied threshold tracked in `state.metadata`.
 - General-only trips (no specialist/categories) call `browse_activities()` across default categories to seed larger activity pools for long itineraries.
 - Generic Tier 2 discovery now shares a canonical `TIER2_BROWSE_CATEGORIES` rotation (`cultural`, `food`, `nature`, `spa`, `tours`, `shopping`). Logistics uses it for general-interest browse pools, and fill-day generation rotates one category per day when the caller omits `categories` instead of inventing a synthetic `"activities"` label.
@@ -332,13 +333,13 @@ Flight/hotel/activity fetching with safety logic.
 
 ### ConstraintGuard (`constraint_guard.py`)
 
-Mostly deterministic validation. One LLM exception: `check_route_constraint()` calls `validate_place_exists()` (via `validation_cache.py`, LLM-backed with TTL caching).
+Mostly deterministic validation. One LLM exception: `check_route_constraint()` calls `validate_place_exists()` (a thin wrapper over `app.validation.validate_input_async()`) to verify the destination exists (LLM-backed, with TTL caching in `validation_cache.py`).
 
 **Checks:**
 - `check_budget_constraint()` -- Total cost vs budget allocation (30/40/30 split)
 - `check_temporal_constraints()` -- Date validity, duration limits
 - `check_specialist_constraints()` -- Registry-driven departure buffer + cross-domain
-- `check_route_constraint()` -- Same-city error + unknown destination (LLM-backed)
+- `check_route_constraint()` -- Same-city error + unknown destination (LLM-backed via `validate_place_exists()`)
 - `_check_cross_domain_from_sections()` -- Stateless section-driven cross-domain check
 
 **ConstraintGuard class** still exists with `check_all()` for legacy graph-path invocations. The `validate_plan` tool calls the individual check functions directly (`check_budget_constraint`, `check_temporal_constraints`, `check_specialist_constraints`, `check_route_constraint`) rather than `ConstraintGuard.check_all()`.
@@ -839,8 +840,9 @@ Local-expert destination scaffolding no longer carries static destination `must_
 **Constraints (from registry):**
 | Rule | Type | Severity | Cross-Domain |
 |------|------|----------|--------------|
-| `no_fly_24h` | temporal | blocking | flights |
-| `no_altitude_after_dive` | safety | blocking | skiing, hiking, climbing |
+| `min_24h_buffer_after_dive` (constraint_id `no_fly_24h`) | temporal | blocking | flights |
+
+The `no_altitude_after_dive` restriction is a **cross-domain block** (not a `hardcoded_constraints` entry), modeled via `CrossDomainBlock`.
 
 **Registry flags:** `has_geographic_constraint=True`, `has_nofly_buffer=True`, `min_days_needed=4`, `backfill_affinity_tags=["water", "outdoors"]`
 **Cross-domain blocks:** `ALTITUDE_AFTER_DIVE` -> `("skiing", "hiking", "climbing")` (24h buffer, blocking)
@@ -968,12 +970,12 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 | Tile | `tile_cache.py` | 256 | 24h | 72h (env: GOOGLE_PLACES_CACHE_TTL_HOURS) | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]` | Provider API data |
 | Browse | `activity_browser.py` | 256 | 6h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `browse::v2::{dest}::{sorted_cats}::{month}::{center_bucket}` | On-demand Browse Activities tiles |
 | Places Enrichment | `google_places_provider.py` | 2048 | 24h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `places::enrich::v3::{dest}::{title}::q{sig}` | Google Places enrich-by-title lookups. Title normalized via `_normalize_title_for_cache` (strips specialist qualifiers for higher hit rate). Admin cache reset now also drains the in-memory `_enrich_inflight` dedupe map so stale futures cannot survive a manual clear. |
-| Geocode | `google_places_provider.py` | 1000 (TTLCache) | 24h | 8760h (1yr) | `geocode::v1::{normalized_dest}` | Geocoding API lat/lng results. L2 uses `cache_type='geocode'`. |
-| IATA | `iata_resolver.py` | 512 | 24h | `settings.iata_cache_ttl_hours` (default 720h) | `iata::{origin_or_destination}::{normalized_place}` | Airport-code resolution after router extraction. |
+| Geocode | `google_places_provider.py` | 1000 (TTLCache) | 24h (`settings.geocode_cache_ttl_hours`) | none (L1-only) | `_geocode_cache` keyed by normalized destination | Geocoding API lat/lng results, stored in an in-process `TTLCache` (plus a separate `_country_code_cache`, max 512). <!-- REVIEW: prior doc claimed an L2 entry (8760h, key `geocode::v1::...`, `cache_type='geocode'`). No `cache_type="geocode"` L2 write exists in app/ — the only `l2_upsert()` call in google_places_provider.py uses `cache_type="tiles"`. Treating geocode as L1-only; confirm an L2 path wasn't removed. --> |
+| IATA | `iata_resolver.py` | 512 | 24h | `settings.iata_cache_ttl_hours` (default 720h) | `iata::v2::{normalized_city}::{normalized_qualifier}` | Airport-code resolution after router extraction. |
 | Photo Proxy | `main.py` | 500 | 24h | N/A | `photo::{photo_name}::{width}x{height}` | Server-side photo bytes cache. Skips upstream fetch + spend guard on hit. |
 | Router | `router_cache.py` | 500 | 1h | N/A | `router::v3::SHA256({normalized_text}:{today_date}:{context_fingerprint})[:32]` | NL extraction |
 
-**Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'experience'`, `'experience_single'`, `'tiles'`, `'geocode'`, `'iata'`). Browse and Places enrichment L2 entries use `cache_type='tiles'`.
+**Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'experience'`, `'experience_single'`, `'tiles'`, `'iata'`). Browse and Places enrichment L2 entries use `cache_type='tiles'`. <!-- REVIEW: `'geocode'` removed from this list — no `cache_type="geocode"` write found in app/ (see Geocode row above). -->
 
 **Experience cache recovery (incremental regen):** `experience_generator.py` now supports category-by-category reuse to avoid recomputing unchanged Tier 2 categories:
 
@@ -1192,6 +1194,7 @@ This keeps the final assistant turn aligned with what the backend just applied, 
 | `_VOICE_DATES_SET` | 2 | Date confirmation |
 | `_VOICE_DESTINATION_SET` | 3 | Destination set / changed |
 | `_VOICE_FALLBACK` | 3 | Unmatched change types |
+| `_VOICE_DISCOVERY` | 3 | Destination set, no preferences yet (discovery gate) |
 | `_VOICE_INFEASIBLE_ACTIVITY` | 4 | Impossible activity redirect |
 | `_VOICE_DESTINATION_EXPLORE` | 5 | No destination yet + question intent — suggests 2-3 destinations with reasons |
 | `_VOICE_QUESTION` | 5 | Destination questions (unlocks world knowledge) |
@@ -1259,6 +1262,10 @@ The coordinator also respects `cancel_event` -- if set (e.g. client disconnect),
 - `LOCAL_INTEL` -> `get_local_intel`
 - `BUILD_ITINERARY` -> `build_itinerary`
 - `GENERATE_RESPONSE` -> `response`
+- `CLASSIFY` -> `None` (no SSE node status emitted)
+- `SHORT_CIRCUIT` -> `None` (no SSE node status emitted)
+
+Unmapped step types fall back to `step_type.value`.
 
 ### Complete Envelope (`_build_envelope()`)
 

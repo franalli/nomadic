@@ -20,26 +20,8 @@ nomadic/
 │   │   ├── run-curl.md
 │   │   ├── update-docs.md
 │   │   └── verify-build.md
-│   ├── plans/                  # Persisted planning artifacts and run notes
-│   │   ├── kind-pondering-seahorse.md
-│   │   ├── parsed-discovering-liskov.md
-│   │   ├── unified-dreaming-oasis.md
 │   ├── settings.json           # Claude Code settings
 │   └── settings.local.json     # Local Claude Code settings
-├── .codex/                     # Codex wrappers + skills
-│   ├── agents/                 # Wrapper specs pointing to canonical `.claude/agents/*`
-│   │   ├── backend-specialist.md
-│   │   ├── code-reviewer.md
-│   │   └── frontend-specialist.md
-│   └── skills/                 # Codex skills (SKILL.md per skill directory)
-│       ├── audit-code/SKILL.md
-│       ├── clear-cache/SKILL.md
-│       ├── clear-sprint/SKILL.md
-│       ├── enforce-style/SKILL.md
-│       ├── reassemble-docs/SKILL.md
-│       ├── run-curl/SKILL.md
-│       ├── update-docs/SKILL.md
-│       └── verify-build/SKILL.md
 ├── .github/                    # GitHub workflows and instructions
 ├── .vscode/                    # VS Code settings
 ├── backend/                    # Python FastAPI backend
@@ -47,7 +29,7 @@ nomadic/
 ├── frontend/                   # Next.js frontend
 ├── scripts/                    # Root-level utility scripts
 │   ├── cleanup-claude-history.sh   # Unix history cleanup
-│   ├── copy-key-files.sh           # Copy key backend files to docs/
+│   ├── copy-key-files.sh           # Copy key backend + frontend files flat into docs/key_files/
 │   └── restart-dev.sh              # Restart local backend/frontend/db dev stack from VS Code
 ├── .claudeignore               # Claude Code ignore patterns
 ├── .gitignore                  # Git ignore patterns
@@ -274,7 +256,6 @@ backend/
 │   ├── test_specialist_cache.py          # Specialist LLM cache tests (thread safety, L1/L2)
 │   ├── test_fill_day_constraints.py      # Fill-day constraint validation (Tier 1 placement gates)
 │   ├── test_specialist_enrichment_endpoint.py  # Specialist enrichment endpoint tests
-│   ├── test_specialist_structured.py     # Specialist structured output tests
 │   ├── test_spend_guard.py              # Spend guard tests
 │   ├── test_analytics_routes.py          # Analytics route endpoint tests
 │   ├── test_geo.py                       # Geographic utility (haversine) tests
@@ -285,6 +266,7 @@ backend/
 │   ├── test_typed_meta.py                # Typed metadata bridge tests
 │   ├── test_admin_utils.py               # Admin utility tests
 │   ├── test_cache_core.py                # Cache core tests
+│   ├── test_circuit_breaker_unit.py      # Shared async circuit breaker unit tests
 │   ├── test_critical_coverage.py         # Critical coverage gap tests
 │   ├── test_crud_document.py             # Document CRUD operation tests
 │   ├── test_constraint_engine.py         # Constraint engine tests
@@ -692,6 +674,7 @@ frontend/
 │   ├── summary.ts              # Summary utilities
 │   ├── theme.ts                # Theme mode constants for app-level styling
 │   ├── tabGuard.ts             # Advisory multi-tab guard (BroadcastChannel-based, prevents concurrent SSE)
+│   ├── transferAnnotations.ts  # Inter-day transfer annotation helpers for booking/planning view
 │   ├── tileSelectors.ts        # Tile selection logic
 │   ├── tileUtils.ts            # Tile utilities
 │   ├── travelIntel.ts          # Travel intelligence data helpers
@@ -796,7 +779,7 @@ docs/
 ├── data-extraction-matrix.md   # Provider field-priority notes for Viator vs GYG vs Google Places
 ├── data-contracts.md           # API routes, schemas, state store contracts
 ├── design-system.md            # Frontend styling SSoT
-├── key_files/                  # Reference snapshots of key source files (backend + frontend)
+├── key_files/                  # Git-ignored generated mirror of curated key source files (backend/app + frontend/components/chat), produced by scripts/copy-key-files.sh; may also hold incidental timestamped editor-conflict copies
 ├── plan_graph_analysis.md      # Backend architecture SSoT
 ├── repo_structure.md           # This file
 └── ux_unified_architecture.md  # UX/view states SSoT
@@ -837,4 +820,4 @@ docs/
 4. **StrategyStageRenderer** - Single renderer adapts to data density (see `ux_unified_architecture.md`)
 5. **DnD via `blockWrapper` render prop** - `TimelineThread` is DnD-agnostic; `ItineraryDndWrapper` + `DraggableBlock` + `DroppableDay` inject drag via `blockWrapper` prop. Dependency: `@dnd-kit/core`.
 6. **PDF Export Path** - `frontend/lib/pdfData.ts` prepares itinerary/doc data for `frontend/components/plan/pdf/TripPdfDocument.tsx` and `frontend/components/plan/PdfExportButton.tsx`.
-7. **Agent Specs Canonical Source** - `.claude/agents/*` are canonical specialist specs; `.codex/agents/*` are wrappers that reference those canonical files.
+7. **Agent Specs Canonical Source** - `.claude/agents/*` are the canonical specialist specs (`backend-specialist`, `frontend-specialist`, `code-reviewer`).

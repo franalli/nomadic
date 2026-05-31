@@ -99,7 +99,7 @@ You review against the project's documented invariants. You NEVER modify files �
 - [ ] `StrategyStageRenderer` is the only renderer — no view swapping
 - [ ] Right Panel never empty after first interaction
 - [ ] UI elements transform through states, never disappear
-- [ ] `plan_view_state` from backend determines rendering, frontend doesn't fabricate (except `S1_DESTINATION_SET` which is frontend-only). Note: `S3_PARTIAL_CONFLICT` IS emitted by backend.
+- [ ] `plan_view_state` from backend determines rendering, frontend doesn't fabricate (frontend-only: `S0_EMPTY` reset sentinel, and `S1_DESTINATION_SET` which lives only in `VIEW_STATE_ORDER`, not the `PlanViewState` union). Note: `S3_PARTIAL_CONFLICT` IS emitted by backend.
 - [ ] S3→S2 downgrade blocked when day_cards exist
 - [ ] Destination/date edits clear stale `day_cards` when no fresh cards returned in same payload
 - [ ] Coordinate format: `[lng, lat]` throughout entire pipeline

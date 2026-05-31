@@ -329,7 +329,19 @@ All animations use Framer Motion with `AnimatePresence` for enter/exit:
 - Mode prop threads through TimelineThread → ActivityMiniCard for Book button visibility
 - Preference attribution uses `preferredTileIds` to show "You preferred this" badge
 - Legacy stage views (S3ItineraryView, S1FramingView, etc.) removed from unified flow
-- Strategy cards stay inside the density-driven renderer path (`StrategyStageRenderer` -> `PlanFullDensityView` -> `StrategyHero*`)
+- Strategy cards stay inside the density-driven renderer path (`StrategyStageRenderer` -> `PlanFullDensityView` -> its subsections)
+
+<!-- REVIEW: StrategyHero appears unmounted — possible dead code, confirm with team.
+     `StrategyHero` / `StrategyHeroContent` / `StrategyHeroCompact` / `StrategyHeroAccordion`
+     and the `S2AgentCard*` cluster have NO external JSX consumer in the live render path
+     (verified: zero imports of the `StrategyHero` component across `frontend/`). Only utility
+     exports from `StrategyHeroUtils` (e.g. `getTopicLabel`) are imported elsewhere. The live
+     P1/P3 surface is `PlanFullDensityView` and its subsections
+     (`PlanFullDensityTilesSection`, `FullDensityTimeline` → `PlanTimelineSection` →
+     `TimelineThread`, `PlanFullDensityTravelAdvice`, map/summary). Sections of this doc that
+     describe `StrategyHero` as the live strategy renderer (e.g. §I.A image guards below,
+     §XII "The Magazine") are describing components that are no longer mounted. -->
+
 
 ### Defensive Rendering (Image Guards)
 
@@ -2231,6 +2243,15 @@ Used in Full Mode when tiles exist, and **always in S3 (itinerary ready)**. The 
 
 **Key Behavior:** In S3 (itinerary ready), specialist cards are **hidden by default** and toggled via the "Details" link in the Trip DNA bar. Pre-itinerary (S2), specialist cards are always visible. Trip DNA bar is always visible when niche specialist constraints exist.
 
+<!-- REVIEW: StrategyHero appears unmounted — possible dead code, confirm with team.
+     The "Self-Contained Expansion", "Rationale", "Local Expert fetch-on-open", and
+     "Specialist-Specific Layouts" subsections below describe `StrategyHero` /
+     `StrategyHeroContent` / `StrategyHeroCompact` and their BottomSheet, but those
+     components have NO external JSX consumer in the live render path (only
+     `StrategyHeroUtils` utility exports are imported elsewhere). The live strategy
+     surface is `PlanFullDensityView` and its subsections. Confirm whether this BottomSheet
+     behavior was reimplemented there or is genuinely dead. -->
+
 **Self-Contained Expansion:** The `StrategyHero` component internally manages its own expansion state via `useState`. When clicked, it opens a `BottomSheet` containing:
 1. Hero image with specialist badge
 2. Strategy Logic (one-liner)
@@ -2282,9 +2303,9 @@ return <SearchingSkeleton />;
 
 | Component | File | Responsibility |
 | --- | --- | --- |
-| `StrategyHero` | `components/plan/stages/StrategyHero.tsx` | Renders both Hero and Compact variants; **self-contained** expansion via internal `BottomSheet` |
-| `useStrategyHeroEnrichment` | `components/plan/stages/useStrategyHeroEnrichment.ts` | Fetch-on-open `local_expert` enrichment hook for StrategyHero sheets; reuses destination-intel cache, then drives `loading` / `pending` / `failed` / `ready` sheet states from `/api/specialist/{sectionId}/enrichment` |
-| `PlanFullDensityView` | `components/plan/PlanFullDensityView.tsx` | Hosts the current full-density strategy surface and maps strategy sections into `StrategyHero`-based layouts |
+| `StrategyHero` | `components/plan/stages/StrategyHero.tsx` | <!-- REVIEW: appears unmounted — no external JSX consumer; possible dead code. --> Historically rendered both Hero and Compact variants with **self-contained** `BottomSheet` expansion. NOT mounted in the live render path. |
+| `useStrategyHeroEnrichment` | `components/plan/stages/useStrategyHeroEnrichment.ts` | Fetch-on-open `local_expert` enrichment hook for StrategyHero sheets; reuses destination-intel cache, then drives `loading` / `pending` / `failed` / `ready` sheet states from `/api/specialist/{sectionId}/enrichment`. <!-- REVIEW: only consumed by StrategyHero, which is unmounted; confirm. --> |
+| `PlanFullDensityView` | `components/plan/PlanFullDensityView.tsx` | Live full-density surface for BOTH the P1 strategy view and the P3 itinerary view. Delegates derivation to `usePlanFullDensityData` and composes subsections: `PlanFullDensityMobileSummary`, `PlanFullDensityTravelAdvice`, `FullDensityTimeline` (→ `PlanTimelineSection` → `TimelineThread`), `BookingSummary`, `PlanFullDensityDesktopMap`, and `PlanFullDensityTilesSection`. |
 | `BookingSection` | `components/plan/BookingSection.tsx` | Tiles-first rendering logic |
 | `BottomSheet` | `components/ui/bottom-sheet.tsx` | Reusable slide-up sheet with drag-to-dismiss |
 
@@ -2373,7 +2394,7 @@ For `specialist_type === 'general'` (Trip Overview):
 | `trip_summary` | object | Backend | `{destination, dates, travelers}` for stats grid |
 | `destination_gallery` | array | Backend | Vibe Trio images: `[{label, image_url}]` |
 | `principles` | array | Backend | Checklist items (strings) |
-| `constraints_applied` | array | Backend | `[{rule, type, reason, severity}]` for warnings. Frontend filters to blocking+strong only (excludes soft/info) in StrategyHero badge count, constraint list, and Trip DNA bar. |
+| `constraints_applied` | array | Backend | `[{rule, type, reason, severity}]` for warnings. Frontend filters to blocking+strong only (excludes soft/info) for the strategy badge count, constraint list, and Trip DNA bar. (The blocking+strong filter lives in the `StrategyHero` family, which is no longer mounted — see REVIEW notes; confirm where it is enforced on the live surface.) |
 | `content_added` | array | Backend | Recommendations: `[{title, description, type, logic_hook, image_url?}]` |
 | `must_dos` | array | Backend | Quick list of recommendation titles |
 | `logistics_notes` | array | Backend | Additional notes (strings) |

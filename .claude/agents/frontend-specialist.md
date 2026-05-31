@@ -35,7 +35,7 @@ Before ANY code change, read the relevant SSoT doc:
 
 ## Critical Invariants (reinforced from CLAUDE.md)
 
-- **Coordinator architecture is law.** Backend emits `plan_view_state` from coordinator envelopes — frontend reads it, never fabricates it (frontend-only guards: `S0_EMPTY`, `S1_DESTINATION_SET`).
+- **Coordinator architecture is law.** Backend emits `plan_view_state` from coordinator envelopes — frontend reads it, never fabricates it. Frontend-only strings: `S0_EMPTY` (reset sentinel — in the `PlanViewState` union but never emitted by the backend) and `S1_DESTINATION_SET` (NOT a `PlanViewState` member; lives only in `documentStore` `VIEW_STATE_ORDER` for downgrade-protection ordering). Every renderable state (`S1_FRAMING`, `S2_*`, `S3_*`) comes from the backend.
 - **PlanDocumentData is the only state SSoT.** No parallel state objects on frontend.
 - **No hardcoded world data.** No location lists, city enums, airport codes, coordinate lookups.
 - **Single Renderer Pattern.** `StrategyStageRenderer` adapts to data density — never swap for separate view components.
@@ -190,7 +190,7 @@ frontend/
 
 - **Changing `documentStore` shape** → Read `data-contracts.md` Section 3 first. Store shape is a shared contract.
 - **Modifying streaming callbacks** → SSE (graph_plan) and NDJSON (expand-itinerary) have different protocols. Read both `streamParser.ts` and `api.ts`.
-- **Touching `plan_view_state` logic** → Backend is SSoT. Frontend reads, never fabricates (frontend-only guards: `S0_EMPTY`, `S1_DESTINATION_SET`).
+- **Touching `plan_view_state` logic** → Backend is SSoT. Frontend reads, never fabricates (frontend-only: `S0_EMPTY` reset sentinel, and `S1_DESTINATION_SET` which exists only in `VIEW_STATE_ORDER` for downgrade ordering).
 - **Editing timeline variant mapping** → S3_ITINERARY_READY→"real", S3_EDITING/S2_STRATEGY_READY→"draft", all others→"ghost". Read `StrategyStageRenderer.tsx` (`computeTimelineVariant`).
 - **Modifying fill-day flow** → Requires `claimFillDay`/`releaseFillDay` mutex. Read `documentStore.ts` guards.
 - **Changing S3→S2 transitions** → Downgrade blocked when day_cards exist. This is intentional.
@@ -271,7 +271,7 @@ After first user interaction, always show something: hero, cards, or full plan.
 
 - S3→S2 downgrade blocked when day_cards exist
 - Destination change clears: chat, tiles, strategy, day_cards
-- Frontend-only guard states: `S0_EMPTY` (reset intent) and `S1_DESTINATION_SET` (ordering guard)
+- Frontend-only guard states: `S0_EMPTY` (reset intent; in the `PlanViewState` union but never emitted by backend) and `S1_DESTINATION_SET` (ordering guard — only in `VIEW_STATE_ORDER`, not a `PlanViewState` member)
 - `expandInProgress` is the hard preference-regen mutex; `isRegenerating` is display state only and may be set early for overlay feedback
 - `_fillingDays` per-day mutex prevents concurrent fill-day on same day
 - `graphBuiltItinerary` check in `useChatSse.ts` skips expand when graph response already includes day_cards
