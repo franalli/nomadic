@@ -28,8 +28,7 @@ Before ANY code change, read the relevant SSoT doc:
 
 - `docs/plan_graph_analysis.md` — Coordinator architecture, caching, builder phases, constraint validation
 - `docs/data-contracts.md` — API routes, streaming protocols, core schemas, rate limiting, enums
-- `AGENTS.md` — Current sprint, hard rules, delegation policy (authoritative)
-- `CLAUDE.md` — Supplemental legacy notes only when explicitly needed
+- `CLAUDE.md` — Current sprint, hard rules, delegation policy (authoritative)
 
 ## Critical Invariants (reinforced from CLAUDE.md)
 

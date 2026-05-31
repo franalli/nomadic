@@ -53,7 +53,6 @@ nomadic/
 ├── .gitignore                  # Git ignore patterns
 ├── .pre-commit-config.yaml     # Pre-commit hooks
 ├── .secrets.baseline           # detect-secrets baseline
-├── AGENTS.md                   # Local Codex agent/skill trigger instructions
 ├── CLAUDE.md                   # AI assistant instructions
 ├── docker-compose.yml          # Docker configuration
 ├── README.md                   # Project readme

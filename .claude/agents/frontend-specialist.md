@@ -31,8 +31,7 @@ Before ANY code change, read the relevant SSoT doc:
 - `docs/design-system.md` — ALL styling tokens, materials, actions, pills, text, colors, component mapping
 - `docs/ux_unified_architecture.md` — View states, rendering logic, planning phases, timeline variants, streaming
 - `docs/data-contracts.md` — API routes, streaming protocols, schema shapes, enums, Zustand store shape
-- `AGENTS.md` — Current sprint, hard rules, delegation policy (authoritative)
-- `CLAUDE.md` — Supplemental legacy notes only when explicitly needed
+- `CLAUDE.md` — Current sprint, hard rules, delegation policy (authoritative)
 
 ## Critical Invariants (reinforced from CLAUDE.md)
 

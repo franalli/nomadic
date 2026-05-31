@@ -4,12 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
-- **Focus:** UX polish, cost optimization, and shipping speed
-- **Secondary:** post-demo delivery hardening across frontend/backend planner interactions
-- **Active work:** Frontend code splitting (api.ts, sheets, modals, hooks), backend cache clearing expansion, DS token additions, SSoT doc alignment
-- **Active files:** `docs/{data-contracts.md,design-system.md,repo_structure.md,plan_graph_analysis.md,ux_unified_architecture.md}`, `CLAUDE.md`, `backend/app/{main.py,lifespan.py,streaming.py,planner/{chip_generator.py,conversationalist.py,coordinator.py,nodes/{logistics_node.py,vertical_specialist.py}},services/{itinerary_builder.py,activity_browser.py}}`, `frontend/{lib/{api-streaming.ts,tabGuard.ts},hooks/{useChatSend.ts,useChatSse.ts,chatSseTypes.ts},components/{chat/{ChatInputBar.tsx,MobileChatInput.tsx,ChatPanelContent.tsx},layout/hooks/useSessionHydration.ts,plan/timeline/blocks/{ActivityCardPhoto.tsx,logisticsBlockParts.tsx},providers/Providers.tsx,tiles/TileCardMedia.tsx}}`
-- **Known broken:** none explicitly tracked in current diff
-- **DO NOT touch this sprint:** `llm_factory.py` provider/model-routing contract; API/schema compatibility surfaces
+- **Focus:** [describe focus]
+- **Secondary:** [secondary priority or "none"]
+- **Active work:** [update per session]
+- **Known broken:** [update per session]
+- **DO NOT touch this sprint:** [frozen files/features]
 
 ---
 

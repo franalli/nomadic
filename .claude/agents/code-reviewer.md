@@ -25,8 +25,7 @@ You review against the project's documented invariants. You NEVER modify files �
 - `docs/design-system.md` — Frontend styling tokens, component mapping, restricted colors, interaction patterns
 - `docs/ux_unified_architecture.md` — View states, single renderer pattern, timeline variants, streaming protocols
 - `docs/data-contracts.md` — API routes, schemas, enums, streaming protocols, rate limiting
-- `AGENTS.md` — Hard rules, current sprint scope, delegation policy (authoritative)
-- `CLAUDE.md` — Supplemental legacy notes only when explicitly needed
+- `CLAUDE.md` — Hard rules, current sprint scope, delegation policy (authoritative)
 
 ## Review Checklist
 

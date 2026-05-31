@@ -40,9 +40,10 @@ e2e_results/
 # SQLite test artifacts
 backend/test_plan_document_pytest.db*
 
-# Claude Code temp files
+# Claude Code temp files + machine-local settings
 tmpclaude-*-cwd
 **/tmpclaude-*-cwd
+.claude/settings.local.json
 
 # Benchmarks
 .benchmarks/
