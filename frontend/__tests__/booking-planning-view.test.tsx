@@ -16,6 +16,7 @@ vi.mock('@/components/tiles/TileDetailsModal', () => ({
 import { LandingHeaderContent } from '@/components/layout/LandingHeaderContent';
 import { BookingPlanningView } from '@/components/plan/BookingPlanningView';
 import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
+import { ToastProvider } from '@/components/ui/toast';
 import { usePanelToggleStore } from '@/state/panelToggleStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { Tile } from '@/types/tile';
@@ -174,26 +175,28 @@ describe('LandingHeaderContent activities sheet trigger', () => {
     };
 
     render(
-      <LandingHeaderContent
-        tiles={headerTiles}
-        tripInputs={tripInputs}
-        dayCards={[]}
-        openSheet={onOpenSheet}
-        isGenerating={false}
-        hasItineraryContent
-        showHeaderPills
-        user={null}
-        otherTrips={[]}
-        resumingTripId={null}
-        userLoading={false}
-        handleNewTrip={vi.fn(async () => {})}
-        handleLogin={vi.fn(async () => {})}
-        handleLogout={vi.fn(async () => {})}
-        handleStartNewSession={vi.fn()}
-        resumeTrip={vi.fn(async () => false)}
-        addToast={vi.fn()}
-        isResettingSession={false}
-      />
+      <ToastProvider>
+        <LandingHeaderContent
+          tiles={headerTiles}
+          tripInputs={tripInputs}
+          dayCards={[]}
+          openSheet={onOpenSheet}
+          isGenerating={false}
+          hasItineraryContent
+          showHeaderPills
+          user={null}
+          otherTrips={[]}
+          resumingTripId={null}
+          userLoading={false}
+          handleNewTrip={vi.fn(async () => {})}
+          handleLogin={vi.fn(async () => {})}
+          handleLogout={vi.fn(async () => {})}
+          handleStartNewSession={vi.fn()}
+          resumeTrip={vi.fn(async () => false)}
+          addToast={vi.fn()}
+          isResettingSession={false}
+        />
+      </ToastProvider>
     );
 
     const activitiesButton = screen.getByRole('button', { name: 'Activities' });

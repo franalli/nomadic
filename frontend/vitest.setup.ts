@@ -60,7 +60,14 @@ if (!globalThis.crypto) {
 process.env.NEXT_PUBLIC_API_URL = 'http://test.local';
 
 beforeEach(() => {
-  // Node 25+ native localStorage may lack clear(); guard for compat
+  // Under Node 26+, the runtime exposes a native `localStorage` global that can
+  // be `undefined` in this setup scope (it requires the `--localstorage-file`
+  // flag to materialise), so dereferencing it here throws before any test runs.
+  // Guard that `localStorage` exists at all before touching it, then fall back
+  // to manual key removal for engines whose `localStorage` lacks `clear()`.
+  if (typeof localStorage === 'undefined' || localStorage === null) {
+    return;
+  }
   if (typeof localStorage.clear === 'function') {
     localStorage.clear();
   } else {
