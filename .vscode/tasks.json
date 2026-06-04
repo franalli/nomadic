@@ -19,7 +19,7 @@
         {
             "label": "Backend: Uvicorn",
             "type": "shell",
-            "command": "source ${workspaceFolder}/backend/.venv/bin/activate && python start.py",
+            "command": "source ${workspaceFolder}/backend/.venv/bin/activate && (lsof -ti:8000 | xargs kill -9 2>/dev/null || true) && python start.py",
             "options": {
                 "cwd": "${workspaceFolder}/backend"
             },
@@ -51,8 +51,7 @@
             "dependsOn": [
                 "Docker: Compose DB",
                 "Backend: Uvicorn",
-                "Frontend: Next Dev",
-                "Agentic: Update"
+                "Frontend: Next Dev"
             ],
             "runOptions": {
                 "runOn": "folderOpen"
@@ -100,18 +99,6 @@
                 "reveal": "silent",
                 "panel": "shared"
             },
-            "problemMatcher": []
-        },
-        {
-            "label": "Agentic: Update",
-            "type": "shell",
-            "command": "brew upgrade claude-code; npm install -g @openai/codex@latest",
-            "presentation": {
-                "reveal": "always",
-                "panel": "dedicated",
-                "clear": true
-            },
-            "isBackground": true,
             "problemMatcher": []
         }
     ]

@@ -45,7 +45,7 @@ nomadic/
 
 ## Backend (`/backend`)
 
-Python FastAPI application with a coordinator-driven trip planner.
+Python FastAPI application with a `create_agent` tool-calling trip planner.
 
 ```
 backend/
@@ -81,21 +81,38 @@ backend/
 │   │   ├── __init__.py
 │   │   └── session.py          # Session middleware
 │   │
-│   ├── planner/                # Coordinator-driven planner package
+│   ├── planner/                # create_agent tool-calling planner package
 │   │   ├── __init__.py
+│   │   ├── agent.py            # create_planner_agent() factory (create_agent + 6 tools + middleware + NomadicAgentState)
+│   │   ├── agent_constants.py  # Agent model config (AGENT_MAX_TOKENS/TEMPERATURE/TIMEOUT)
+│   │   ├── middleware.py       # 4 create_agent middleware (ModelCallLimit, ToolCallLimit, ModelSelection, DynamicPrompt, TurnLifecycle) + stdlib retry
 │   │   ├── chip_generator.py   # Suggestion chip generator extracted from legacy middleware
 │   │   ├── conversationalist.py # Single-LLM response generator for coordinator path
-│   │   ├── coordinator.py      # Deterministic turn planner + step execution + envelope builder
+│   │   ├── coordinator.py      # Envelope builder + helpers library (DAG removed; _build_envelope reused by the agent path)
 │   │   ├── hashing.py          # Hash utilities
 │   │   ├── llm_factory.py      # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing)
 │   │   ├── specialist_registry.py # Specialist config SSoT (keywords, constraints, flags)
 │   │   ├── test_mode.py        # Test mode utilities
 │   │   │
-│   │   ├── schemas/            # Coordinator protocol schemas
+│   │   ├── prompts/            # Agent orchestrator prompts
 │   │   │   ├── __init__.py
-│   │   │   └── coordinator_schemas.py  # ChangeType, ClassifierOutput, TripBrief, SpecialistPlan, ReplanRequest, ExecutionPlan
+│   │   │   └── planner.py      # Orchestrator system prompt (static cached prefix + per-turn trailing context)
 │   │   │
-│   │   ├── nodes/              # Domain logic modules called by coordinator
+│   │   ├── tools/              # 6 @tool wrappers (return plain dicts; state mutation in TurnLifecycleMiddleware)
+│   │   │   ├── __init__.py
+│   │   │   ├── _parsing.py            # Shared JSON parsing helpers for tools
+│   │   │   ├── extract_trip_fields.py # Wraps router_extraction
+│   │   │   ├── get_specialist_advice.py # Wraps vertical_specialist
+│   │   │   ├── search_tiles.py        # Delegates to logistics_node
+│   │   │   ├── get_local_intel.py     # Wraps local_expert
+│   │   │   ├── validate_plan.py       # constraint_guard + input gates
+│   │   │   └── build_itinerary.py     # Wraps ItineraryBuilder
+│   │   │
+│   │   ├── schemas/            # Planner protocol schemas
+│   │   │   ├── __init__.py
+│   │   │   └── coordinator_schemas.py  # ChangeType, ClassifierOutput, TripBrief, SpecialistPlan, ReplanRequest
+│   │   │
+│   │   ├── nodes/              # Domain logic modules wrapped by agent tools
 │   │   │   ├── __init__.py
 │   │   │   ├── constraint_guard.py         # Constraint validation
 │   │   │   ├── input_gate_config.py        # Input gate threshold constants (dates, travelers, budget)
@@ -108,6 +125,7 @@ backend/
 │   │   ├── services/
 │   │   │   ├── __init__.py
 │   │   │   ├── admin_utils.py       # Admin utility functions
+│   │   │   ├── agent_runner.py      # run_agent_turn_streaming() — SSE streaming driver for the agent (drop-in for execute_turn)
 │   │   │   ├── feasibility_service.py # LLM-backed geographic feasibility checks
 │   │   │   ├── iata_resolver.py     # IATA airport code resolver (LLM-backed)
 │   │   │   ├── itinerary_adapter.py # Thin bridge: GraphState → ItineraryBuilder
@@ -815,7 +833,7 @@ docs/
 ## Key Architectural Notes
 
 1. **PlanDocumentData is SSoT** - All trip state flows through `PlanDocumentData` schema
-2. **Coordinator Architecture** - `coordinator.execute_turn()` plans deterministic step execution around `classify`, optional parallel `dispatch_specialists` + `search_tiles`, then `local_intel` / `build_itinerary`, and final response generation. See `plan_graph_analysis.md`.
+2. **Agent Architecture** - Turns flow through `create_agent` via `agent_runner.run_agent_turn_streaming()`. The agent tool-calling loop (6 `@tool` wrappers + middleware) replaced the deterministic coordinator DAG; `coordinator.py` is now an envelope/helpers library (`_build_envelope` reused over agent state). See `plan_graph_analysis.md`.
 3. **Design Tokens** - Frontend uses tokens from `design-system.md`
 4. **StrategyStageRenderer** - Single renderer adapts to data density (see `ux_unified_architecture.md`)
 5. **DnD via `blockWrapper` render prop** - `TimelineThread` is DnD-agnostic; `ItineraryDndWrapper` + `DraggableBlock` + `DroppableDay` inject drag via `blockWrapper` prop. Dependency: `@dnd-kit/core`.

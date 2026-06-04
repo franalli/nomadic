@@ -3387,6 +3387,30 @@ def get_providers(destination: str) -> List[Provider]:
     return [MockHotelProvider(), MockFlightProvider(), MockActivityProvider()]
 ```
 
+### Activities are vendor-primary; hotels stay Google-Places by design
+
+The table above is the hotel/flight base-provider order. For **activities**, partner vendors are
+PRIMARY and Google Places (GP) is a fallback/gap-filler — GP is expensive, so it is minimized:
+
+- **Activity source (logistics_node):** when a vendor is enabled (`settings.viator_enabled` /
+  `get_your_guide_enabled` + key), `_safe_browse()` runs the partner cascade
+  (**Viator → GYG → GP fallback**, in `activity_browser.browse_activities`) in parallel with the
+  hotel fetch. If browse returns ≥ `settings.google_places_browse_min_threshold` (default 4) tiles,
+  that pool becomes the base activities and the paid GP base-activity fetch is **skipped**; below the
+  threshold it falls back to the GP fetch so a vendor-sparse destination never loses activities.
+  GP is the base provider only when **no** vendor is enabled.
+- **The LLM experience-generator tailors content to the user's request** independently of the fixed
+  `TIER2_BROWSE_CATEGORIES` browse rotation — e.g. a "nightlife in Madrid" trip yields nightlife
+  tiles even though `nightlife` isn't in the rotation. So the rotation does NOT need to enumerate
+  every user-selectable category.
+- **Hotels remain GP-primary by design.** There is no vendor hotel *search* provider (only
+  `GooglePlacesHotelProvider` + `MockHotelProvider`); Booking.com is a **booking-time deeplink** only,
+  not a search API. So GP stays the hotel provider.
+- **GP enrichment is minimal + post-vendor.** Inline GP enrichment was removed; GP enrichment now runs
+  only post-build (`coordinator._post_build_enrich_placed_activities`) on placed blocks still missing
+  data after partner matching, and a GP photo URL is minted only when no vendor image exists
+  (`_has_vendor_media`). Net effect: GP calls per planning turn dropped 3 → 2.
+
 ### Provider Comparison
 
 | Aspect | CuratedProvider | GooglePlacesProvider | MockProvider |

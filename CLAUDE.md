@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 🎯 Current Sprint (UPDATE EVERY SESSION)
 
-- **Focus:** [describe focus]
-- **Secondary:** [secondary priority or "none"]
-- **Active work:** [update per session]
-- **Known broken:** [update per session]
+- **Focus:** `create_agent` agentic-loop migration (coordinator DAG → `create_agent` tool loop)
+- **Secondary:** none
+- **Active work:** agent loop live behind the `streaming.py` seam; curl-suite parity ~26/31 (remaining failures are Gemini Flash tool-adherence variance on multi-turn / add-activity flows)
+- **Known broken:** a few curl flows (F14 grounding, F20/F28 add-specialist) flake on LLM tool-calling adherence
 - **DO NOT touch this sprint:** [frozen files/features]
 
 ---
@@ -17,12 +17,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 1. DO NOT refactor files beyond the scope of the current task
 2. DO NOT add new dependencies without explicit approval
 3. DO NOT rename, move, or restructure existing files or functions
-4. DO NOT bypass coordinator architecture — planner turns flow through `coordinator.execute_turn()` and StepType execution contracts
+4. DO NOT bypass the planner agent — turns flow through the LangChain `create_agent` loop via `app/planner/services/agent_runner.py::run_agent_turn_streaming` (no coordinator DAG)
 5. DO NOT touch mobile-specific components unless explicitly asked
 6. DO NOT modify API contracts or shared schemas without explicit approval
 7. LIMIT changes to ≤8 files per task unless approved
 8. NEVER do broad directory scans or read node_modules — reference specific files
-9. DO NOT modify coordinator step mapping/status contract (`plan_turn`, `_step_node_name`, `_build_envelope`) without measuring UX impact
+9. DO NOT modify the SSE event contract (`node_status` / `partial` / `token` / `feasibility_warning` / `complete` / `error`) or the `_build_envelope()` output shape without measuring UX impact
 10. ALL LLM construction via `get_llm_by_model()` from `llm_factory.py` — no direct `ChatOpenAI()` or `ChatGoogleGenerativeAI()` constructors in node/service code
 11. No hard-coded world data — never hard-code locations, airports, IATA codes, coordinates, airlines, or any potentially infinite dataset
 12. `PlanDocumentData` is the sole SSoT for all trip state — no parallel state objects
@@ -95,12 +95,12 @@ These four docs override your assumptions. Read before generating code.
 
 0. **Keep it simple** — no over-engineering
 1. **PlanDocumentData is SSoT** — single source of truth for all trip state, persisted as JSON in the `plan_documents` DB table
-2. **Data over Agents** — flights/hotels are data fetchers via coordinator tile search, not agent personas
-3. **Domain Experts remain modular** — Tier 1 (Diving/Hiking/Skiing/Cycling/Surfing/Climbing/Sailing/Wildlife Safari) run through specialist dispatch; Tier 2 (Cooking/Yoga/Nightlife/etc.) remain lightweight tile filters
-4. **Coordinator Architecture** — `coordinator.execute_turn()` is pure Python (no LangGraph). It classifies, plans deterministic steps, executes modules, and builds the envelope
-5. **Safe Routing** — LLM-based intent/change classification via `router_extraction.classify_change()` and `settings.router_model`, no regex
-6. **Deterministic state transitions** — step execution + `_build_envelope()` own state/view-state/ack updates
-7. **One Voice** — `conversationalist.py` streams the final assistant response
+2. **Data over Agents** — flights/hotels are data fetchers via the `search_tiles` tool, not agent personas
+3. **Domain Experts remain modular** — Tier 1 (Diving/Hiking/Skiing/Cycling/Surfing/Climbing/Sailing/Wildlife Safari) run through the `get_specialist_advice` tool; Tier 2 (Cooking/Yoga/Nightlife/etc.) remain lightweight tile filters
+4. **Agent Architecture** — `agent_runner.run_agent_turn_streaming` drives a LangChain `create_agent` tool-calling loop (`app/planner/agent.py`) with middleware-driven dynamic prompts. The model decides which tools to call; there is no deterministic coordinator DAG
+5. **Safe Routing** — field extraction/intent handled in-loop by the `extract_trip_fields` tool (LLM-backed, `settings.router_model`), no regex
+6. **Deterministic envelope** — `_build_envelope()` owns state/view-state/ack updates from the final agent state
+7. **One Voice** — the terminal (no-tool-call) model turn streams the final assistant response
 8. **Centralized LLM Factory** — `get_llm_by_model()` handles provider detection (OpenAI/Gemini), model-specific params, structured output retry. Models configured via `settings.*_model` env vars.
 
 ### Backend Request Flow
@@ -109,13 +109,12 @@ These four docs override your assumptions. Read before generating code.
 POST /api/graph_plan/stream
   → main.py: graph_plan_stream_endpoint
   → streaming.py: generate_sse()
-      → coordinator.execute_turn()   ← main planner logic (pure Python)
-          → router_extraction.py     ← CLASSIFY step
-          → vertical_specialist.py  ← DISPATCH_SPECIALISTS step
-          → local_expert.py          ← LOCAL_INTEL step
-          → logistics_node.py        ← SEARCH_TILES step
-          → itinerary_builder.py     ← BUILD_ITINERARY step
-          → conversationalist.py     ← GENERATE_RESPONSE step
+      → agent_runner.run_agent_turn_streaming()   ← drives create_agent loop
+          → agent.py: create_planner_agent()      ← tool-calling agent + middleware
+              ↳ tools (model-selected): extract_trip_fields, get_specialist_advice,
+                search_tiles, get_local_intel, validate_plan, build_itinerary
+              ↳ terminal model turn streams the assistant response
+          → coordinator._build_envelope()         ← final state → SSE complete envelope
       → streaming.py: release_sse_slot (finally)
 
 POST /api/expand-itinerary
@@ -127,17 +126,27 @@ POST /api/expand-itinerary
       → request_dedup.py: release_expand_slot (finally)
 ```
 
-### Coordinator Steps
+### Agent Tools
 
-| StepType | Executes | Purpose |
+The planner is a `create_agent` tool-calling loop (`app/planner/agent.py`); the
+model chooses which tools to call each turn. Tools live in `app/planner/tools/`
+and wrap the same node/service logic the old coordinator steps used.
+
+| Tool | Wraps | Purpose |
 |------|-------|---------|
-| `CLASSIFY` | `router_extraction.classify_change()` | Intent + field extraction + change typing |
-| `DISPATCH_SPECIALISTS` | `vertical_specialist.dispatch_specialist_with_brief()` | Tier 1 specialist planning/replanning |
-| `LOCAL_INTEL` | `local_expert.py` helpers | Destination local-intelligence section |
-| `SEARCH_TILES` | `logistics_node.py` | Flights/hotels/activities refresh |
-| `BUILD_ITINERARY` | `services/itinerary_builder.py` | Day-by-day schedule from sections + tiles |
-| `GENERATE_RESPONSE` | `conversationalist.py` | Final streaming assistant response |
-| `SHORT_CIRCUIT` | coordinator helpers | Greeting/reset/question fast path |
+| `extract_trip_fields` | `router_extraction` | Intent + field extraction + change typing |
+| `get_specialist_advice` | `vertical_specialist` | Tier 1 specialist planning/replanning |
+| `get_local_intel` | `local_expert` | Destination local-intelligence section |
+| `search_tiles` | `logistics_node` | Flights/hotels/activities refresh |
+| `build_itinerary` | `services/itinerary_builder` | Day-by-day schedule from sections + tiles |
+| `validate_plan` | `constraint_guard` | Constraint/feasibility validation |
+
+Bounded by `ModelCallLimitMiddleware`/`ToolCallLimitMiddleware`; the final
+streaming assistant response is the terminal model turn (no `conversationalist`
+DAG step). `_build_envelope()` then converts the final state into the SSE
+`complete` envelope.
+
+> Note: `docs/plan_graph_analysis.md` still describes the removed coordinator DAG and needs a fuller reconciliation pass to match this agent/tools model.
 
 ### Key Backend Files
 
@@ -152,7 +161,9 @@ POST /api/expand-itinerary
 | `app/request_dedup.py` | DB-backed idempotency keys + per-session expand mutex (runtime_state table) |
 | `app/sse_state.py` | SSE connection slot tracking (per-session and per-IP limits) |
 | `app/analytics_routes.py` | Analytics routes: tile clicks (`/api/tiles/click`) + funnel events (`/api/analytics/event`), included in main.py |
-| `app/planner/coordinator.py` | Core planner logic — `execute_turn()` entry point |
+| `app/planner/services/agent_runner.py` | `run_agent_turn_streaming()` — turn entry point; drives the create_agent loop and yields SSE events |
+| `app/planner/agent.py` | `create_planner_agent()` — builds the create_agent tool-calling graph + middleware |
+| `app/planner/coordinator.py` | Retained helpers used by the agent path: `_build_envelope()`, `_merge_doc_settings()`, enrichment + tile/state helpers (the deterministic DAG was removed) |
 | `app/planner/llm_factory.py` | `get_llm_by_model()` — sole constructor for all LLM instances |
 | `app/planner/specialist_registry.py` | SSoT for all Tier 1 specialist config (keywords, constraints, defaults) |
 | `app/services/spend_guard.py` | Per-session + global daily USD caps; DB-backed via `runtime_state` table; `spend_guard_scope(session_id)` context manager |

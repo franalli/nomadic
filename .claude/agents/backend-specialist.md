@@ -6,6 +6,8 @@ description: >
   Triggers on: itinerary builder, constraint guard, coordinator execution,
   router extraction, specialist registry, state serialization, coordinator,
   conversationalist, change classifier, specialist dispatch, trip brief,
+  create_agent, agent loop, orchestrator, middleware, tool wrappers,
+  run_agent_turn_streaming, agent_runner,
   FastAPI endpoints, tile service, caching, llm_factory,
   experience_generator, regen_strategy, iata_resolver, validation, debug_utils,
   activity_browser, partner_enrichment, circuit_breaker, spend_guard,
@@ -32,7 +34,7 @@ Before ANY code change, read the relevant SSoT doc:
 
 ## Critical Invariants (reinforced from CLAUDE.md)
 
-- **Coordinator architecture is law.** `coordinator.execute_turn()` orchestrates classify/dispatch/logistics/builder/response; do not reintroduce direct `create_agent` runtime flow.
+- **Agent loop is law.** Turns flow through the `create_agent` tool-calling loop via `services/agent_runner.py::run_agent_turn_streaming` (the streaming.py seam); do not reintroduce the coordinator DAG (`execute_turn`/`plan_turn`/StepType). `coordinator.py` survives only as the `_build_envelope` helper library.
 - **PlanDocumentData is the only state SSoT.** No parallel state objects.
 - **No hardcoded world data.** No locations, airports, IATA codes, coordinates, airlines, specialist-to-destination mappings.
 - **All LLM construction via `get_llm_by_model()`** from `llm_factory.py` with `settings.*_model`. No direct `ChatOpenAI()` or `ChatGoogleGenerativeAI()`.
@@ -42,19 +44,27 @@ Before ANY code change, read the relevant SSoT doc:
 
 ```
 backend/app/planner/
-  coordinator.py     → Deterministic turn planner + step execution + envelope builder
-  conversationalist.py → Single-LLM response generator for coordinator path
+  agent.py           → create_planner_agent() factory (create_agent loop)
+  agent_constants.py → AGENT_MAX_TOKENS / AGENT_TEMPERATURE / AGENT_TIMEOUT
+  middleware.py      → 4 custom AgentMiddleware (+ stdlib limits); _TOOL_MERGERS
+  coordinator.py     → Envelope-builder helper library (_build_envelope + closure)
+  conversationalist.py → Single-LLM response generator
   chip_generator.py  → Suggestion chips for complete envelope
+  tools/             → 6 @tool wrappers: extract_trip_fields, get_specialist_advice,
+                       search_tiles, get_local_intel, validate_plan, build_itinerary;
+                       _parsing.py
+  prompts/planner.py → Orchestrator system prompt (static prefix + turn context)
   nodes/             → constraint_guard.py, vertical_specialist.py, local_expert.py,
                        logistics_node.py, router_extraction.py,
                        input_gate_config.py,
                        expert_constraints.py
-  services/          → section_builder.py, state_serde.py,
+  services/          → agent_runner.py (run_agent_turn_streaming SSE driver),
+                       section_builder.py, state_serde.py,
                        itinerary_adapter.py, iata_resolver.py, admin_utils.py,
                        feasibility_service.py
-  state/             → graph_state.py, agent_state.py, typed_meta.py
+  state/             → graph_state.py, agent_state.py (NomadicAgentState), typed_meta.py
   schemas/           → coordinator_schemas.py (ChangeType, ClassifierOutput, TripBrief,
-                       SpecialistPlan, ReplanRequest, ExecutionPlan)
+                       SpecialistPlan, ReplanRequest)
   *.py               → specialist_registry.py, hashing.py,
                        llm_factory.py, test_mode.py
 backend/app/
@@ -85,18 +95,23 @@ backend/app/
 
 - `frontend/` — anything
 - `specialist_registry.py` structure (add entries, don't restructure)
-- Coordinator step contracts in `coordinator.py` (`plan_turn`, `_execute_step`, `_build_envelope`)
+- Envelope builder contract in `coordinator.py` (`_build_envelope` + its closure)
+- Tool names in `tools/` (they == frontend `node_status` strings)
 
 ## Halt Conditions — STOP and report, don't improvise
 
 - **Modifying an itinerary builder phase** → Read ALL phases first. They're coupled — phase order is load-bearing.
 - **Changing cache key format** → Will silently break L2 cache hits. Read cache_core.py + the specific cache file.
-- **Modifying coordinator step execution or parallel groups** → read `plan_turn()`, `_execute_parallel_group()`, and `_step_node_name()` before changing.
+- **Modifying the agent loop or middleware order** → read `agent.py`, `middleware.py`, and `services/agent_runner.py` before changing. Mergers return delta keys only.
 - **Adding/changing constraint severity** → Budget/temporal/specialist/route checks interact. Read full constraint_guard.py.
 - **Editing specialist registry structure** → Derived constants auto-propagate. Only add entries, never restructure.
 - **Provider-specific LLM params** → Gemini uses `max_output_tokens` (not `max_tokens`), `thinking_budget`, `include_thoughts`. OpenAI uses `max_tokens`, `streaming`. Factory handles this — don't bypass it.
 
 ## Key Gotchas (traps that cause silent breakage)
+
+### Agent Middleware Mergers
+
+`_TOOL_MERGERS` in `middleware.py` must return MINIMAL key deltas, never full-dict copies — the shallow `_merge_dicts` reducer lets a copied stale key (e.g. `destination=None`) clobber another tool's update in a parallel round.
 
 ### ConstraintGuard
 
@@ -111,9 +126,9 @@ All keywords, constraints, cross-domain blocks, aliases, feasibility flags come 
 ### Selective Regeneration
 
 `regen_strategy.py` maps field changes to minimum regen tier: `FULL` (destination) → `SPECIALISTS` (dates/categories) → `LOGISTICS` (budget/travelers) → `BUILDER` (origin/preferences).
-`GENERATE_PLAN_NOW` reuses existing strategy/tiles only when full-invalidating fields are unchanged. If `activity_categories` changed, coordinator must still clear planning artifacts and re-dispatch specialists before rebuild.
-`execute_turn()` now previews `plan_turn()` before geographic feasibility prechecks. True response-only no-op turns skip feasibility I/O entirely, and `_should_clear_planning_artifacts()` prevents full-invalidation turns from wiping derived planning data unless the turn actually changed relevant fields.
-Coordinator also records explicit flight disables in `persistent_meta["user_disabled_booking_types"]`; no-fly/activity refreshes may still fetch flight data, but `allow_flight_auto_upgrade` must stay false on those turns so logistics does not silently re-enable flights.
+`GENERATE_PLAN_NOW` reuses existing strategy/tiles only when full-invalidating fields are unchanged. If `activity_categories` changed, the agent must re-run `get_specialist_advice` before `build_itinerary`.
+`agent_runner._prune_stale_sections()` reconciles `strategy_sections` against `specialist_hints` so dropped specialists don't leave orphaned sections in the rebuilt plan.
+Explicit flight disables are recorded in `persistent_meta["user_disabled_booking_types"]`; no-fly/activity refreshes may still fetch flight data, but `allow_flight_auto_upgrade` must stay false on those turns so logistics does not silently re-enable flights.
 
 ### State Serialization
 

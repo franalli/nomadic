@@ -1,8 +1,8 @@
 # Plan Graph Architecture
 
-> **Source**: `backend/app/streaming.py` (SSE orchestration), `backend/app/planner/coordinator.py` (turn execution)
+> **Source**: `backend/app/streaming.py` (SSE orchestration), `backend/app/planner/services/agent_runner.py` (turn execution driver), `backend/app/planner/agent.py` (agent factory)
 > **Planner Package**: `backend/app/planner/`
-> **Prompt Files**: `backend/app/prompts/specialists/` (including `local_expert.txt`)
+> **Prompt Files**: `backend/app/prompts/specialists/` (including `local_expert.txt`); orchestrator prompt in `backend/app/planner/prompts/planner.py`
 
 ---
 
@@ -10,8 +10,8 @@
 
 1. [Architecture Overview](#architecture-overview)
 2. [Package Structure](#package-structure)
-3. [Coordinator Architecture Diagram](#coordinator-architecture-diagram)
-4. [Coordinator Execution Steps](#coordinator-execution-steps)
+3. [Agent Architecture Diagram](#agent-architecture-diagram)
+4. [Agent Tools](#agent-tools)
 5. [Envelope and Chip Pipeline](#envelope-and-chip-pipeline)
 6. [Library Modules (Surviving Node Code)](#library-modules-surviving-node-code)
 7. [Itinerary Builder Service](#itinerary-builder-service)
@@ -35,28 +35,29 @@
 
 ## Architecture Overview
 
-Coordinator-driven trip planning system with deterministic step planning in Python.
+Agentic trip-planning system. Turns run through a LangChain 1.0 `create_agent` tool-calling loop, not a deterministic Python DAG.
 
-`/api/graph_plan/stream` restores state, then calls `coordinator.execute_turn()` directly. The coordinator classifies the message, plans execution steps, runs specialist/logistics/builder phases, streams response tokens, and emits the final envelope.
+`/api/graph_plan/stream` restores state, then calls `agent_runner.run_agent_turn_streaming()` (drop-in for the removed `coordinator.execute_turn`). The orchestrator LLM (gemini-2.5-flash, temp 0) decides which of the 6 tools to call per message; middleware merges tool results into `NomadicAgentState`; `_build_envelope()` (kept in `coordinator.py`) builds the final envelope.
 
 | Category | Count | Description |
 | --- | --- | --- |
-| Coordinator step types | 7 | `classify`, `dispatch_specialists`, `search_tiles`, `build_itinerary`, `generate_response`, `local_intel`, `short_circuit` |
-| New planner modules | 3 | `coordinator.py`, `conversationalist.py`, `chip_generator.py` |
-| Coordinator protocol types | 12 | `ChangeType`, `ChangeClassification`, `ClassifierOutput`, `TripBrief`, `SpecialistDayPlan`, `SpecialistTransit`, `SpecialistConstraintOutput`, `SpecialistPlan`, `ReplanRequest`, `StepType`, `ExecutionStep`, `ExecutionPlan` |
+| Agent tools | 6 | `extract_trip_fields`, `get_specialist_advice`, `search_tiles`, `get_local_intel`, `validate_plan`, `build_itinerary` |
+| Custom middleware | 4 | `ModelSelectionMiddleware`, `DynamicPromptMiddleware`, `TurnLifecycleMiddleware` (active) + `SuggestionChipMiddleware` (defined, NOT registered — chips come from `_build_envelope`) |
+| Coordinator protocol types | 9 | `ChangeType`, `ChangeClassification`, `ClassifierOutput`, `TripBrief`, `SpecialistDayPlan`, `SpecialistTransit`, `SpecialistConstraintOutput`, `SpecialistPlan`, `ReplanRequest` (`StepType`/`ExecutionStep`/`ExecutionPlan` removed with the DAG) |
 
-> **Note:** `ItineraryBuilder` remains pure Python (no LLM) and is called from coordinator `_build_itinerary()` and `/api/expand-itinerary`.
+> **Note:** `ItineraryBuilder` remains pure Python (no LLM) and is reached via the `build_itinerary` tool, the driver's deterministic auto-build, and `/api/expand-itinerary`.
 
 ### Design Principles
 
-1. **Coordinator-first orchestration** -- `plan_turn()` determines execution order without LLM routing.
+1. **Agent-first orchestration** -- the orchestrator LLM decides tool calls per message; there is no pipeline that runs steps automatically.
 2. **PlanDocumentData is the SSoT** -- core trip fields live in `state["trip_plan"]`; document persistence mirrors this.
-3. **Flights/hotels are data fetchers** -- logistics and tile search run as deterministic steps, not agent personas.
-4. **Domain expertise remains modular** -- Tier 1 specialist planning still uses `vertical_specialist.py`.
-5. **Single response voice** -- `conversationalist.py` streams one final assistant response using current state.
-6. **Centralized LLM factory** -- all LLM calls still use `get_llm_by_model()` and `settings.*_model`.
-7. **Deterministic envelope** -- partner enrichment runs pre-build (inside `_build_itinerary()`), so `_build_envelope()` computes view state, ack status, and document payload with enriched data already in place.
+3. **Flights/hotels are data fetchers** -- logistics and tile search are tools, not agent personas.
+4. **Domain expertise remains modular** -- Tier 1 specialist planning still uses `vertical_specialist.py` (via the `get_specialist_advice` tool).
+5. **Single response voice** -- the orchestrator's terminal (no-tool-call) model turn streams the final reply; voice is governed by the `# Voice` section of the system prompt.
+6. **Centralized LLM factory** -- all LLM construction uses `get_llm_by_model()` and `settings.*_model`.
+7. **Deterministic envelope** -- partner enrichment runs pre-build, so `_build_envelope()` computes view state, ack status, and document payload with enriched data already in place.
 8. **Pure-Python itinerary synthesis** -- builder remains non-LLM.
+9. **`coordinator.py` is a helpers library** -- `_build_envelope` + enrichment/normalization + `_merge_doc_settings`, NOT a DAG.
 
 ---
 
@@ -65,29 +66,44 @@ Coordinator-driven trip planning system with deterministic step planning in Pyth
 ```
 backend/app/planner/
 ├── __init__.py              # Facade exports (stable public API)
+├── agent.py                 # create_planner_agent() factory (create_agent + 6 tools + middleware + NomadicAgentState)
+├── agent_constants.py       # AGENT_MAX_TOKENS=4000, AGENT_TEMPERATURE=0.0, AGENT_TIMEOUT=45.0
+├── middleware.py            # 4 custom AgentMiddleware (3 registered) + tool-result mergers (_TOOL_MERGERS)
 ├── chip_generator.py        # Suggestion chip templates for complete envelope
-├── conversationalist.py     # Final response generation (single streaming LLM call)
-├── coordinator.py           # Deterministic turn planner + step executor + envelope builder
+├── conversationalist.py     # Legacy response generator — NOT imported by the agent path (orphaned)
+├── coordinator.py           # Helpers library: _build_envelope + enrichment/normalization + _merge_doc_settings (NOT a DAG)
 ├── hashing.py               # Stable hashing utilities (make_cache_key, field_hash)
 ├── llm_factory.py           # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing) + extract_token_usage(), resolve_schema_refs()
 ├── specialist_registry.py   # Specialist config SSoT (keywords, constraints, enhancements, flags)
 ├── test_mode.py             # Test mode detection
 #   Frontend mirror: frontend/lib/specialists.ts (colors, icons, keywords, display names)
+├── prompts/
+│   └── planner.py           # Orchestrator system prompt: build_static_system_prompt() (cached prefix) + build_turn_context(state) (volatile trailing message)
 ├── schemas/                 # Coordinator protocol schemas
 │   ├── __init__.py
-│   └── coordinator_schemas.py  # ChangeType, ChangeClassification, ClassifierOutput, TripBrief, SpecialistDayPlan, SpecialistTransit, SpecialistConstraintOutput, SpecialistPlan, ReplanRequest, StepType, ExecutionStep, ExecutionPlan
-├── nodes/                   # Domain/library modules called directly by coordinator
+│   └── coordinator_schemas.py  # ChangeType, ChangeClassification, ClassifierOutput, TripBrief, SpecialistDayPlan, SpecialistTransit, SpecialistConstraintOutput, SpecialistPlan, ReplanRequest
+├── tools/                   # 6 @tool wrappers (return plain dicts; state mutation in TurnLifecycleMiddleware)
+│   ├── __init__.py          # Exports the 6 tools
+│   ├── _parsing.py          # Shared JSON parsing helpers (tiles/constraints)
+│   ├── extract_trip_fields.py  # wraps router_extraction
+│   ├── get_specialist_advice.py # wraps vertical_specialist.generate_specialist_output_llm
+│   ├── search_tiles.py      # delegates to logistics_node
+│   ├── get_local_intel.py   # wraps local_expert (Phase A skeleton)
+│   ├── validate_plan.py     # constraint_guard checks + input gates
+│   └── build_itinerary.py   # wraps ItineraryBuilder
+├── nodes/                   # Domain/library modules called by the tool wrappers
 │   ├── __init__.py          # Exports surviving library code
 │   ├── constraint_guard.py  # Mostly deterministic validation (one LLM-backed check: validate_place_exists)
 │   ├── expert_constraints.py # Pydantic models + constraint data for LocalExpert LLM output
 │   ├── input_gate_config.py # Input gate threshold constants (dates, travelers, budget)
 │   ├── local_expert.py      # City logistics concierge (Phase A/B architecture)
 │   ├── logistics_node.py    # Flight/hotel/activity fetching + safety logic
-│   ├── router_extraction.py # LLM-based intent classification + field extraction (RouterOutput schema)
+│   ├── router_extraction.py # LLM-based intent classification + field extraction (RouterOutput schema; max_retries=2)
 │   └── vertical_specialist.py # Domain specialist (8 specialists, registry-driven)
 ├── services/
 │   ├── __init__.py          # Services package
 │   ├── admin_utils.py       # Cache management, debugging, observability, startup validation
+│   ├── agent_runner.py      # run_agent_turn_streaming() — the SSE streaming driver (the "seam")
 │   ├── feasibility_service.py # Specialist feasibility checks
 │   ├── iata_resolver.py     # IATA airport code resolver (LLM-backed with state caching)
 │   ├── itinerary_adapter.py # Thin bridge: GraphState -> ItineraryBuilder
@@ -102,58 +118,90 @@ backend/app/planner/
 
 ---
 
-## Coordinator Architecture Diagram
+## Agent Architecture Diagram
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                    COORDINATOR TURN FLOW (execute_turn)                     │
+│         AGENT TURN FLOW (agent_runner.run_agent_turn_streaming)             │
 │                                                                              │
-│  1) classify_change(user_message, trip_state_summary)                       │
-│  2) apply classifier fields to state + snapshot pre-change hashes           │
-│  3) plan_turn() -> ExecutionPlan[StepType...]                               │
-│  4) execute steps (parallel where allowed):                                 │
-│       dispatch_specialists || search_tiles                                  │
-│       then local_intel / build_itinerary                                    │
-│  5) generate_response_streaming() via conversationalist                     │
-│  6) _build_envelope() -> complete payload + chips + ack                     │
+│  1) restore_agent_state() + _merge_doc_settings(state, doc_settings)        │
+│  2) guards: empty-message, 40-turn cap (SESSION_MAX_TURNS),                 │
+│     GENERATE_PLAN_NOW -> explicit build instruction rewrite                 │
+│  3) _trim_conversation_history() (drop prior-turn tool messages)            │
+│  4) agent.astream(stream_mode=["values","updates","messages","custom"])     │
+│       orchestrator LLM picks tools -> middleware merges results into state  │
+│  5) deterministic auto-build (_should_autobuild) if Flash didn't chain it   │
+│  6) _prune_stale_sections() then _build_envelope() -> complete              │
 │                                                                              │
-│  SSE events: token | node_status | partial | complete | error               │
+│  SSE events: token | node_status | partial | feasibility_warning            │
+│              | complete | error                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Coordinator Execution Steps
+The agent is built by `create_planner_agent()` (`agent.py`): `create_agent(model=settings.router_model` (gemini-2.5-flash), `tools=[6 tools]`, `system_prompt=build_static_system_prompt()`, `middleware=[...]`, `state_schema=NomadicAgentState)`. The model is built via `get_llm_by_model()` with `temperature=AGENT_TEMPERATURE` (0.0), `max_tokens=AGENT_MAX_TOKENS` (4000), `timeout=AGENT_TIMEOUT` (45.0s), `max_retries=2`. The agent is cached module-level in `agent_runner` and reused across turns.
 
-| StepType | Executed By | Purpose | Emits partial event |
-| --- | --- | --- | --- |
-| `CLASSIFY` | `router_extraction.classify_change()` | Intent + extracted fields + change classification | `trip_inputs` (after apply) |
-| `DISPATCH_SPECIALISTS` | `_dispatch_specialists_parallel()` + `vertical_specialist.dispatch_specialist_with_brief()` | Replan only affected Tier 1 domains | `specialist_preview`, `strategy_sections` (streamed progressively as each specialist finishes via `_stream_specialist_dispatch_events()` async generator) |
-| `LOCAL_INTEL` | `_run_local_intel()` | Build/update local expert section | `strategy_sections` |
-| `SEARCH_TILES` | `_search_tiles()` | Refresh flights/hotels/activities by change type | `tiles` (split emission: hotels+flights first, activities second via `_flatten_tiles_payload_filtered()`) |
-| `BUILD_ITINERARY` | `_build_itinerary()` | Await pre-build partner enrichment, then run pure-Python itinerary builder + store `builder_result` | `day_cards` (enriched payload via `_day_cards_partial_event()` including tiles, strategy_sections, plan_view_state, itinerary context: overview, assumptions, constraint violations, warnings; emits `[]` when the itinerary clears) |
-| `GENERATE_RESPONSE` | `conversationalist.generate_response_streaming()` | Stream final assistant response | token stream |
-| `SHORT_CIRCUIT` | `_short_circuit_message()` and state reset helpers | Deterministic greeting/reset handling (GREETING emits canned message; RESET sets `_reset_pending` flag) | none |
+## Agent Tools
 
-### Parallelism Rules
+The orchestrator LLM chooses which tools to call per message. Tool names equal the frontend `node_status` strings. Each `@tool` returns a plain dict; state mutation happens in `TurnLifecycleMiddleware`.
 
-- `plan_turn()` emits a single `SEARCH_TILES` step with all tile types (`flights`, `hotels`, `activities`). `logistics_node.py` already runs them concurrently via `asyncio.gather`, so splitting into sequential coordinator steps only adds overhead.
-- `DISPATCH_SPECIALISTS` and `SEARCH_TILES` may run in parallel via `_execute_parallel_group()`.
-- `_execute_parallel_group()` now yields `(step, events, completed)` tuples as each parallel task completes via an `asyncio.Queue`, instead of gathering all results with `asyncio.gather`. This means `node_status` completed events fire as each parallel step finishes, not after the whole group. Step results that are async generators (e.g. specialist dispatch) are consumed incrementally -- each yielded event is forwarded to the caller as it arrives.
-- `_dispatch_specialists_parallel()` is now an `AsyncGenerator` that yields `(topic, result)` pairs as each specialist completes (via `asyncio.as_completed`), instead of returning a collected dict. The step executor returns a streaming async generator `_stream_specialist_dispatch_events()` that emits `specialist_preview` and `strategy_sections` partials after each specialist finishes.
-- `LOCAL_INTEL` remains sequential to avoid concurrent writes to `strategy_sections`.
-- `execute_turn()` speculatively starts feasibility pre-checks as an `asyncio.Task` BEFORE `plan_turn()`, overlapping the LLM call (~600ms) with plan computation. If the resulting plan is response-only, the speculative task is cancelled. Otherwise results are awaited and infeasible topics yield `feasibility_warning` events before re-planning.
-- Partial failures in parallel groups are recorded in `turn_meta["partial_failures"]` and surfaced via `ack_updates`.
+| Tool | Wraps | Returns |
+| --- | --- | --- |
+| `extract_trip_fields` | `router_extraction` (`_classify_and_extract_with_llm` + `_validate_extraction`) | `TripFieldsResult` dict: intent, core trip fields, `specialist_hints`, `activity_categories`, settings, `removal_targets`, `fields_changed` |
+| `get_specialist_advice` | `vertical_specialist.generate_specialist_output_llm()` (feasibility + LLM plan + section build) | `SpecialistAdviceResult` dict: `topic`, `feasibility_status`, `feasibility_reason`, `activities`, `constraints`, `strategy_section`, `enhancements` |
+| `search_tiles` | delegates to `logistics_node(state)` | `{flights, hotels, activities, browseable_activities, hotel_filter_cascaded}` tile arrays |
+| `get_local_intel` | `local_expert` Phase A (instant skeleton; Phase B enrichment stashed for post-commit firing) | `{section, constraints, enrichment status}` |
+| `validate_plan` | `constraint_guard` checks + input gates (`GATE_THRESHOLDS`) | `{valid, violations, warnings, blocking_count}` |
+| `build_itinerary` | `ItineraryBuilder.build()` (pure Python) | `{success, day_cards, conflicts, activities_placed, activities_dropped, warnings}` |
 
-### Idempotent / Short-Circuit Routing
+`extract_trip_fields`, `validate_plan`, and `build_itinerary` use `InjectedState` so trip fields/tiles/constraints auto-populate from agent state (the LLM does not serialize large JSON payloads).
 
-- Repeated messages with no effective `fields_changed` and an existing itinerary now route to `GENERATE_RESPONSE` only, skipping specialist + logistics + builder.
-- A dedicated `INITIAL_PLAN` guard also skips full recomputation when an itinerary already exists and no fields changed; otherwise it continues with selective tile/build steps when strategy is already present.
-- **Discovery gate:** `INITIAL_PLAN` with a destination but no preferences short-circuits to ask the user for activity preferences before dispatching specialists. Preference sources checked: `classifier.specialist_hints`, `classifier.activity_categories`, existing `strategy_sections`, `trip_plan.activity_categories`, `trip_plan.activity_settings.categories`, and `trip_settings.activity_settings.categories`.
-- Full-invalidation artifact clearing is now gated by `_should_clear_planning_artifacts()`: no-op turns do not wipe derived planning data unless the turn actually carries changed fields, while `GENERATE_PLAN_NOW` still keeps its reuse fast-path except when `activity_categories` changed (including a post-refresh `PATCH /api/document` flow with rebuilt `trip_settings` from the document).
-- `DATE_CHANGE` no longer blindly re-dispatches every Tier 1 specialist. Preserve-vs-dispatch now keys off the specialist midpoint month bucket plus target-count continuity: equal-duration date moves can reuse the existing plan immediately, while longer trips only preserve on same-destination tail extensions that still have reusable specialist content. Coordinator logs `Date change continuity` with explicit `dispatch`/`preserve` topic sets for flow auditing.
-- **Session turn cap:** `execute_turn()` counts `HumanMessage` entries; at ≥40 it emits a capped message and envelope without executing any steps, preventing runaway LLM spend.
-- **Response degradation:** `GENERATE_RESPONSE` wraps the streaming call in `try/except`. On failure, `turn_meta["response_degraded"]=True` and `turn_meta["response_error_type"]` is set (`rate_limit`, `timeout`, or `generation_error`). The envelope still builds with whatever tokens were collected.
-- **Destination change side effects:** `_apply_classifier_to_state()` now clears both `destination_iata` and `country_code` from `trip_plan` when destination changes, forcing re-resolution.
-- **Structured logging:** Key coordinator events (`turn_start`, `turn_complete`, `llm_error`) emit JSON log lines via `_structured_log()` with session_id and event-specific fields for observability.
+### System Prompt (`prompts/planner.py`)
+
+Two layers, split for Gemini implicit-cache efficiency:
+- `build_static_system_prompt()` -- stable cached prefix: orchestrator instructions + registry-derived specialist list, **no per-turn data**. Set once at construction.
+- `build_turn_context(state)` -- volatile per-turn trailing message: CURRENT CONTEXT trip summary (`build_trip_state_summary`) + anti-hallucination grounding (entities returned by tools so far). Injected by `DynamicPromptMiddleware`, never folded into the cached prefix.
+
+The prompt instructs: call `extract_trip_fields` first when fields change; fire independent fetches (`search_tiles`/`get_local_intel`/`get_specialist_advice`) **together in one turn**; ask exactly one question for the single most important missing field; recommend only what tools returned. Voice rules (warm/brief, lead with the answer, no narration between tool calls) live in the prompt's `# Voice` section.
+
+### Middleware Stack (`middleware.py`)
+
+Applied outermost-first as passed to `create_agent` (`agent.py`). 6 entries: 3 stdlib (`ModelCallLimitMiddleware`, `ToolCallLimitMiddleware`, `ModelRetryMiddleware`, imported from `langchain.agents.middleware`) + 3 custom (`ModelSelectionMiddleware`, `DynamicPromptMiddleware`, `TurnLifecycleMiddleware`):
+
+| Order | Middleware | Role |
+| --- | --- | --- |
+| 1 | `ModelCallLimitMiddleware(run_limit=8, exit_behavior="end")` | bounds model rounds per turn |
+| 2 | `ToolCallLimitMiddleware(run_limit=16, exit_behavior="end")` | bounds tool calls per turn |
+| 3 | `ModelSelectionMiddleware` | upgrades to `settings.synthesizer_planning_model` on complex turns (bootstrap + >4 messages, OR `tool_call_count >= 3`) via `get_llm_by_model()` |
+| 4 | `ModelRetryMiddleware(max_retries=2, initial_delay=0.5, max_delay=8.0)` | retries transient provider errors (e.g. Gemini 503) with backoff |
+| 5 | `DynamicPromptMiddleware` | appends `build_turn_context(state)` as a trailing `SystemMessage` each model call (preserves cached prefix) |
+| 6 | `TurnLifecycleMiddleware` | `abefore_agent`: reset `turn_meta`. `abefore_model`: increment `model_turns`. `awrap_tool_call`: merge each tool result into `NomadicAgentState` via `_TOOL_MERGERS`, returning **delta keys only** (wrapped in a `Command`) |
+
+> `SuggestionChipMiddleware` is defined in `middleware.py` but **not registered** — suggestion chips are owned by `_build_envelope`. Module docstrings listing 4 active middleware / gpt-4o upgrades are stale; the live config is the table above.
+
+`_TOOL_MERGERS` maps each tool name to a merge function (`_merge_trip_fields`, `_merge_tiles`, `_merge_specialist`, `_merge_local_intel`, `_merge_validation`, `_merge_itinerary`). Mergers return only their delta; `turn_meta` list keys (`tools_called`, `turn_steps`, `partial_failures`) are concatenated by the `_merge_turn_meta` reducer, which also derives `tool_call_count`. `_merge_trip_fields` clears stale `strategy_sections`/`tiles`/`day_cards`/`constraints` on destination change and drops swapped-out topic sections on `removal_targets`. Tool timeouts/errors are caught in `awrap_tool_call` and returned as error `ToolMessage`s recorded in `partial_failures`.
+
+### Streaming Driver Behavior (`agent_runner.run_agent_turn_streaming`)
+
+ONE `agent.astream(stream_mode=["values","updates","messages","custom"])` is multiplexed into the existing SSE contract:
+
+| `stream_mode` | SSE mapping |
+| --- | --- |
+| `updates` | `node_status`: `started` on `AIMessage.tool_calls`, `completed` on `ToolMessage` (+ `feasibility_warning` when `get_specialist_advice` returns `infeasible`) |
+| `custom` | `partial` `{kind, payload}` — wired but currently dormant (no tool emits `get_stream_writer` events; partials currently arrive via the `complete` envelope) |
+| `messages` | `token` — only on the terminal (no-tool-call) model turn; emits `response` started/completed `node_status` around it |
+| `values` | retained as the final `NomadicAgentState` snapshot fed to `_build_envelope` |
+
+Then `_build_envelope(final_state, ...)` yields `complete`.
+
+Driver-owned behaviors:
+- **40-turn cap** (`SESSION_MAX_TURNS=40`): counts prior `HumanMessage`s; at the cap, returns a cap-notice envelope without invoking the model.
+- **Empty-message guard:** blank `user_message` returns a minimal "tell me more" envelope (avoids Gemini "contents are required").
+- **`GENERATE_PLAN_NOW` rewrite:** the machine build signal is rewritten into an explicit build instruction (Flash does not treat the raw token as a build trigger).
+- **`_trim_conversation_history`:** drops every `ToolMessage` and every tool-calling `AIMessage` from prior turns (state already holds the data, re-shown via CURRENT CONTEXT); keeps human + final assistant text, last 12. Prevents Gemini emptying out on later turns.
+- **Deterministic auto-build (`_should_autobuild`):** builds once when destination + dates + options (sections or tiles) are present, nothing built yet, and the turn progressed the plan (a fetch ran or core fields changed) — since Flash cannot reliably chain a 4th tool round. Calls the `build_itinerary` tool coroutine directly and folds the result via `_merge_itinerary`.
+- **`_prune_stale_sections`:** post-loop reconcile of `strategy_sections` vs `trip_plan.specialist_hints` (additive reducer never removes); drops Tier-1 sections whose topic is no longer an active interest; keeps `local_expert`/unknown types.
+- **Turn-level retry-on-empty:** if a substantive turn produced no tools and no reply (Gemini intermittent empty), re-drives `agent.astream` once (a failed-empty attempt emits zero SSE events, so no duplication).
+- **Degraded path:** on exception with a state snapshot, emits a degraded `complete` envelope (`turn_meta["response_degraded"]=True`, `response_error_type` ∈ `rate_limit`/`timeout`/`generation_error`) so the frontend keeps prior work; otherwise yields `error`.
 
 ---
 
@@ -182,13 +230,13 @@ When `success=True` with day_cards but `activities_placed == 0`, the state is st
 
 ---
 
-## Library Modules (Coordinator-Invoked Modules)
+## Library Modules (Tool-Invoked Modules)
 
-These modules are imported and called directly by coordinator step handlers. They retain their internal logic and can still be called directly for testing.
+These modules are imported and called by the 6 tool wrappers in `planner/tools/`. They retain their internal logic and can still be called directly for testing.
 
 ### RouterExtraction (`router_extraction.py`)
 
-LLM-based intent classification + field extraction. Single LLM call produces `RouterOutput` schema.
+LLM-based intent classification + field extraction (wrapped by `extract_trip_fields`). Single LLM call produces `RouterOutput` schema. `_get_router_extraction_llm()` now builds the LLM with `max_retries=2`.
 
 **Key functions:**
 - `_sanitize_user_message()` -- Escapes prompt-template metacharacters before interpolation.
@@ -328,8 +376,8 @@ Flight/hotel/activity fetching with safety logic.
 - Experience tiles are stashed into `metadata["browseable_activities"]`, and Google Places backfill now propagates rating/review_count/deeplink when available.
 - When generated Tier 2 tiles are below expected density (`free_days * activities_per_day`), logistics executes a browse fallback using mapped alternative categories, appends successful backfill tiles, and preserves them in browseable activity metadata.
 - `enrich_tiles_with_partners()` (in `services/partner_enrichment.py`) is an optional pre-build enrichment pass for activity tiles. Only tiles placed in the itinerary (matched by block IDs from day_cards) are enriched to avoid wasted partner API calls. When Viator and/or GYG are enabled, it searches both providers in parallel via `asyncio.gather`, picks the best match per tile (highest rating, lowest price tiebreaker), throttles requests with `asyncio.Semaphore(5)`, and mutates tiles in place with live pricing, ratings, images, affiliate deeplinks, partner/provider metadata.
-- **Date flex suggestion:** When `grouped_prices` fallback is used, Aviasales provider returns a `FlightSearchResult` dataclass containing `tiles`, `nearby_prices` (full month date→price map), `requested_date_price`, `cheapest_date`, and `cheapest_price` (±3-day window). If the cheapest date saves ≥10% vs the requested date and the trip is >7 days out, logistics_node populates `state.metadata["date_flex_suggestion"]` which the coordinator threads to `turn_meta` and emits as a `date_flex_suggestion` SSE partial.
-- Coordinator tile refresh planning now treats `DAY_COUNT` as a full logistics refresh. Activity/preference mutations can also pull flights when the current or upcoming specialist set has no-fly buffers, while `persistent_meta["user_disabled_booking_types"]` prevents those safety refreshes from silently turning flights back on after a user explicitly disabled them.
+- **Date flex suggestion:** When `grouped_prices` fallback is used, Aviasales provider returns a `FlightSearchResult` dataclass containing `tiles`, `nearby_prices` (full month date→price map), `requested_date_price`, `cheapest_date`, and `cheapest_price` (±3-day window). If the cheapest date saves ≥10% vs the requested date and the trip is >7 days out, logistics_node populates `state.metadata["date_flex_suggestion"]` on the `search_tiles` state proxy. (The `search_tiles` tool result does not currently propagate this delta into `NomadicAgentState`, so it is not surfaced as a separate SSE partial in the agent path.)
+- `persistent_meta["user_disabled_booking_types"]` prevents safety-driven flight refreshes (e.g. no-fly-buffer checks) from silently turning flights back on after a user explicitly disabled them. The disabled-types set is maintained by `_sync_booking_type_overrides()`, called from `_merge_doc_settings()` each turn; `logistics_node` honors it. (Per-turn tile-refresh *scope* is now decided by the orchestrator's tool choices, not deterministic DAG planning.)
 
 ### ConstraintGuard (`constraint_guard.py`)
 
@@ -354,7 +402,7 @@ Mostly deterministic validation. One LLM exception: `check_route_constraint()` c
 
 **Purpose:** Pure Python service that transforms specialist outputs into chronological, constraint-validated timeline. Supports multi-specialist trips with conflict resolution.
 
-Coordinator/build path usage -- called from `coordinator._build_itinerary()` and `/api/expand-itinerary`.
+Build-path usage -- reached via the `build_itinerary` tool, the driver's deterministic auto-build (`agent_runner._should_autobuild`), and `/api/expand-itinerary`.
 
 ### Algorithm Phases
 
@@ -384,7 +432,7 @@ Coordinator/build path usage -- called from `coordinator._build_itinerary()` and
 │  6.8   Free Day Relabel - Cleanup day labels after late phases   │
 │  7.    Temporal Conflict Detection - Post-placement overflow     │
 │                                                                  │
-│  Called from: coordinator._build_itinerary() +                  │
+│  Called from: build_itinerary tool / auto-build +              │
 │              /api/expand-itinerary                               │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -433,7 +481,7 @@ Builder enrichment follows this order:
 2. normalized-title fallback against all activity tiles.
 
 The matched tile object is stored on each enriched activity (`activity._matched_tile`) and drives `booked_tile` assignment in
-`ItineraryBuilder._assign_booked_tiles_for_frontend()`, which powers richer photos/metadata in frontend cards.
+`ItineraryBuilder._assign_booked_tiles_for_frontend()`, which powers richer photos/metadata in frontend cards. When a direct `tile_id` match is found, the activity block now also inherits `price_level` from the matched logistics/Places tile (synthetic specialist tiles built from `content_added` carry no price; uses explicit `is not None` so a Google `price_level` of 0/free is preserved, falling back to `_price_estimate_to_level(price_estimate)`).
 
 **Post-build enrichment** (`_post_build_enrich_placed_activities`) runs after the builder returns day cards. Skipped entirely when all placed blocks already have partner or GP data (deeplink, image_url, or google_place_id). Otherwise enriches only
 blocks that were actually placed in the itinerary and lack a `google_place_id`, using `enrich_activities_with_places` with
@@ -678,13 +726,13 @@ Pydantic structured output is used for LLM calls that need **guaranteed schema e
 
 | Tool / Module | Uses Structured Output? | LLM Used? | Schema(s) | Purpose |
 | --- | --- | --- | --- | --- |
-| **_classify_change** (via `router_extraction.py`) | Yes | `settings.router_model` (via `llm_factory`) | `RouterOutput`, `ChangeClassification`, `ClassifierOutput` | Two-pass intent/extraction + lightweight change classification |
-| **dispatch_specialists** (via `coordinator.py` + `vertical_specialist.py`) | Yes (function_calling, flattened schema) | `settings.specialist_model` (via `llm_factory`) | `LLMSpecialistOutput` via `_SPECIALIST_FLAT_SCHEMA` | Specialist planning with fallback |
-| **local_intel** (via `local_expert.py`) | Yes | `settings.local_expert_model` (via `llm_factory`) | `LocalExpertOutput` | Structured output with `method="function_calling"`, guarded parsing + LLM token accounting |
+| **extract_trip_fields** (via `router_extraction.py`) | Yes | `settings.router_model` (via `llm_factory`, `max_retries=2`) | `RouterOutput`, `ChangeClassification`, `ClassifierOutput` | Two-pass intent/extraction + lightweight change classification |
+| **get_specialist_advice** (via `vertical_specialist.py`) | Yes (function_calling, flattened schema) | `settings.specialist_model` (via `llm_factory`) | `LLMSpecialistOutput` via `_SPECIALIST_FLAT_SCHEMA` | Specialist planning with fallback |
+| **get_local_intel** (via `local_expert.py`) | Yes | `settings.local_expert_model` (via `llm_factory`) | `LocalExpertOutput` | Structured output with `method="function_calling"`, guarded parsing + LLM token accounting |
 | **search_tiles** (via `logistics_node.py`) | No | N/A | N/A | API/provider calls only (Aviasales, Google Places, Mock) |
 | **validate_plan** (via `constraint_guard.py`) | No | `settings.guard_model` (place validation only) | N/A | Mostly deterministic |
 | **build_itinerary** (via `itinerary_builder.py`) | No | N/A | N/A | Pure Python scheduling |
-| **generate_response** (via `conversationalist.py`) | No | `settings.synthesizer_planning_model` | N/A | Free-form natural language responses |
+| **orchestrator reply** (terminal model turn) | No | `settings.router_model` (gemini-2.5-flash), or `settings.synthesizer_planning_model` when `ModelSelectionMiddleware` upgrades | N/A | Free-form natural language reply on the no-tool-call turn |
 
 ### Design Principle
 
@@ -707,9 +755,7 @@ Pydantic structured output is used for LLM calls that need **guaranteed schema e
 
 ### NomadicAgentState (Runtime State)
 
-The agent's runtime state, extending LangChain's `AgentState` with trip planning context.
-
-Note: the coordinator reads and writes this schema through plain dict access rather than an active `StateGraph`, but the reducer metadata remains useful for compatibility with shared planner helpers.
+The agent's runtime state, extending LangChain's `AgentState` with trip planning context. This is the live `state_schema` for the `create_agent` graph; the `Annotated` reducers merge concurrent `Command(update=...)` payloads from parallel tool calls (LangGraph would otherwise raise `INVALID_CONCURRENT_GRAPH_UPDATE`). `_build_envelope` reads the final `values` snapshot via plain dict access.
 
 ```python
 class NomadicAgentState(AgentState):
@@ -1085,7 +1131,9 @@ Stats keys are exposed as `l1_hits`, `l1_misses`, `l1_size`, `l1_maxsize`, `l1_t
 
 ## Selective Regeneration
 
-Selective regeneration minimizes LLM calls when trip inputs change by computing the minimum required execution path based on which fields changed.
+> **Scope:** `regen_strategy.py` (`compute_strategy`, `RegenStrategy`, `FIELD_IMPACT`) is now consumed only by `/api/expand-itinerary` in `streaming.py` — the removed coordinator DAG was its other caller. Main-turn fetch scope is decided by the orchestrator LLM choosing tools, not by this table.
+
+Selective regeneration minimizes recomputation on `/api/expand-itinerary` by mapping changed fields to the minimum required execution path.
 
 ### Strategy Tiers (Lowest to Highest Cost)
 
@@ -1162,114 +1210,58 @@ backend/app/prompts/
 | `specialists/generic_activity.txt` | `vertical_specialist.py` | Fallback prompt for open-ended Tier 2 categories |
 | `specialists/local_expert.txt` | `local_expert.py` | Local expert enrichment and travel-intel prompt |
 
-`conversationalist.py` builds its system prompt dynamically in code (trip context + specialist findings + turn context + quality rules); there is no standalone `planner/prompts/planner.py` template in the current architecture.
+The assistant reply is produced by the **orchestrator's terminal (no-tool-call) model turn**, governed by the `# Voice` and `# Truthfulness` sections of `PLANNER_SYSTEM_PROMPT` (`prompts/planner.py`) plus the per-turn `build_turn_context` grounding (CURRENT CONTEXT + entities returned by tools). There is no separate response-generation step.
 
-### Conversationalist Context Assembly (`build_response_context`)
+> **Legacy:** `conversationalist.py` (`build_response_context`, `_VOICE_*` voice blocks / sentence limits, `_RESPONSE_MAX_TOKENS`) is no longer imported by the agent path — it belonged to the removed coordinator DAG's `GENERATE_RESPONSE` step. Anti-hallucination grounding now lives in the system prompt + trailing context message rather than a context-assembly pipeline.
 
-`build_response_context()` currently assembles the LLM context in this order:
-
-1. **Persona** -- destination-aware (with local culture/style hints) or generic persona block
-2. Trip context block (`_build_trip_context_block`)
-3. **Destination knowledge unlock** (`_build_destination_knowledge_block`) -- injected only for `question` and `destination_change` intents. Gives the LLM explicit permission to use parametric destination knowledge (landmarks, neighborhoods, cultural experiences) while keeping bookable-entity grounding intact. When `start_date` is set, includes a seasonal insight prompt for the travel month (weather, crowds, wildlife, pricing).
-4. **"What the User Sees Right Now"** -- rendered dynamically when `day_cards` or `strategy_sections` exist in state, including day/activity counts and visible hotel/itinerary context while avoiding direct UI description
-5. Specialist findings (`_build_specialist_findings_block`)
-6. Itinerary status (`_build_itinerary_status_block`)
-7. Outcome (`_build_outcome_block`) for mutation turns (add/remove/settings/date/spatial/preference/logistics changes), including optional budget usage summary from candidate tiles
-8. Turn context (`_build_turn_context_block`)
-9. Diff block (`_build_diff_block`) with top-tracked `trip_plan`/`trip_settings` field deltas for change-aware responses
-10. Grounding Facts (`_build_grounding_block`) with tile refresh summary, builder placement/conflict/warning facts, infeasible or omitted requested categories, and bookable entities safe to mention (specific tour operators, hotels, flights only — general destination knowledge is unrestricted)
-11. **Already-Said dedup block** with recent assistant replies (last 6 messages filtered, up to 3 shown), to prevent repetitive responses
-12. **Hard rules** (`_VOICE_BASE`) + intent-specific voice block with per-intent sentence limits (enforced by `_enforce_sentence_limit()`)
-
-This keeps the final assistant turn aligned with what the backend just applied, prevents repetition, and adds an anti-hallucination guard for bookable entities (hotels, flights, tour operators must come from grounding facts). For question/exploration turns, the destination knowledge block explicitly unlocks the LLM's parametric knowledge about landmarks, neighborhoods, and cultural experiences.
-
-**Voice blocks and sentence limits** (`_VOICE_*`, `_SENTENCE_LIMIT`, `_enforce_sentence_limit`):
-
-| Voice Block | Sentence Limit | Used For |
-| --- | --- | --- |
-| `_VOICE_GREETING` | 1 | Greeting / casual |
-| `_VOICE_PLAN_GENERATED` | 2 | Plan rebuild / add activity |
-| `_VOICE_ACTIVITY_CHANGE` | 2 | Remove / swap / spatial / day count |
-| `_VOICE_PREFERENCE_CHANGE` | 2 | Preference / settings / logistics |
-| `_VOICE_DATES_SET` | 2 | Date confirmation |
-| `_VOICE_DESTINATION_SET` | 3 | Destination set / changed |
-| `_VOICE_FALLBACK` | 3 | Unmatched change types |
-| `_VOICE_DISCOVERY` | 3 | Destination set, no preferences yet (discovery gate) |
-| `_VOICE_INFEASIBLE_ACTIVITY` | 4 | Impossible activity redirect |
-| `_VOICE_DESTINATION_EXPLORE` | 5 | No destination yet + question intent — suggests 2-3 destinations with reasons |
-| `_VOICE_QUESTION` | 5 | Destination questions (unlocks world knowledge) |
-| `_VOICE_INITIAL_PLAN` | 5 | First plan reveal |
-
-`_RESPONSE_MAX_TOKENS` is 800. The sentence enforcer hard-cuts the stream at the limit regardless of token budget.
-
-**QUESTION intent execution plan:** QUESTION no longer uses `SHORT_CIRCUIT`. Instead, `plan_turn()` conditionally prepends `LOCAL_INTEL` when a destination exists, the question is destination-related (`classifier.question_type` or `specialist_hints`), and no local expert section is cached for that destination. Otherwise it runs `GENERATE_RESPONSE` only.
-
-**Booked-tile rehydration** (`_rehydrate_trimmed_booked_tiles`): Runs at turn start (after `_merge_doc_settings`, before CLASSIFY). Backfills `image_url` and `geo` onto session-trimmed `booked_tile` dicts from the full activity tiles dict, preventing empty cards on non-rebuild turns.
+> **Legacy:** `_rehydrate_trimmed_booked_tiles` (backfills `image_url`/`geo` onto session-trimmed `booked_tile` dicts) is defined in `coordinator.py` but has no caller in the agent path — it was invoked at turn start by the removed `execute_turn`.
 
 ---
 
 ## Streaming Architecture
 
-### Current Implementation: Coordinator Streaming
+### Current Implementation: Agent Streaming
 
-`generate_sse()` in `streaming.py` restores session state, then always calls `coordinator.execute_turn()`.
+`generate_sse()` in `streaming.py` restores session state with `restore_agent_state()`, then always calls `agent_runner.run_agent_turn_streaming()` (the "seam"). The SSE event contract and persistence are unchanged from the prior coordinator path.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  STREAMING FLOW (streaming.py -> coordinator.execute_turn)                  │
+│  STREAMING FLOW (streaming.py -> run_agent_turn_streaming)                  │
 │                                                                              │
-│  1. Restore session state with restore_agent_state()                         │
-│  2. Execute coordinator steps (classify, specialists/tile fetch, builder)    │
-│  3. Forward SSE events immediately: token/node_status/partial/feasibility_warning/error │
-│  4. Persist complete envelope via apply_planner_update()                     │
+│  1. restore_agent_state(session_state)                                       │
+│  2. run_agent_turn_streaming() -> create_planner_agent().astream(...)        │
+│       orchestrator picks tools -> middleware merges results into state       │
+│  3. Forward SSE events immediately: node_status/partial/token/               │
+│     feasibility_warning/error                                                │
+│  4. _build_envelope() -> complete; persist via apply_planner_update()        │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-`generate_sse()` now passes an `asyncio.Event` cancel token into `coordinator.execute_turn()`. When the client disconnects, the streaming layer sets that event and the coordinator stops at the next step boundary instead of continuing background planner work.
-
-`generate_sse()` prioritizes processing `complete` events before checking for client disconnect, so the envelope is always captured even if the client disconnects mid-stream. It uses `try/finally` with explicit `aclose()` on the coordinator event source for guaranteed cleanup of the async generator.
+`generate_sse()` passes an `asyncio.Event` cancel token into the driver; the `astream` loop breaks at the next event boundary when the client disconnects. It prioritizes processing `complete` events before checking for disconnect (so the envelope is always captured) and uses `try/finally` with explicit `aclose()` on the event source.
 
 ### Pre-Build Partner Enrichment
 
-Partner enrichment (Viator/GYG) now runs **synchronously inside `_build_itinerary()`**, before the builder executes. When a destination exists and at least one partner provider is enabled, `enrich_tiles_with_partners()` is awaited on the activity tiles so the builder picks up affiliate deeplinks/images/prices during Phase 2.5. This eliminates the previous post-build async task pattern and the GP→Viator visual flash.
-
-**Step 7 (pre-envelope)** — `execute_turn()` still calls `_await_pending_itinerary_enrichment()` as a safety no-op. No post-response `tile_enrichment` partials are emitted.
-
-The coordinator also respects `cancel_event` -- if set (e.g. client disconnect), it skips response generation and envelope building entirely.
-
-### Async Cleanup
-
-- `_cleanup_pending_itinerary_enrichment()` now cancels AND awaits the pending enrichment task (not just cancels), preventing detached coroutines.
-- New `_cleanup_unsplash_task()` with `cancel` and `timeout` parameters provides guaranteed cleanup of the Unsplash prefetch task.
-- `execute_turn()` uses these in `try/except/finally` for deterministic task cleanup: normal path awaits with timeout, exception/finally paths cancel and await both tasks.
+Partner enrichment (Viator/GYG) runs **synchronously inside the build path**, before the builder executes. When a destination exists and at least one partner provider is enabled, `enrich_tiles_with_partners()` is awaited on the activity tiles so the builder picks up affiliate deeplinks/images/prices during Phase 2.5. No post-response `tile_enrichment` partials are emitted; enrichment data is in the `complete` envelope.
 
 ### Streaming Events
 
 | Event Type | Data | Description |
 | --- | --- | --- |
-| `node_status` | `{node, status, label, icon_key, estimated_duration_ms}` | Coordinator step progress mapped to legacy node/tool names. `topic` and `stage` are now populated by the coordinator on specialist dispatch events (not just tolerated optional extras). Completed events fire as each parallel step finishes rather than after the whole group. |
-| `token` | `string` | Response text streamed from `conversationalist.generate_response_streaming()` |
-| `partial` | `{kind: "trip_inputs"\|"specialist_preview"\|"strategy_sections"\|"tiles"\|"day_cards"\|"date_flex_suggestion", payload: any, ...}` | Progressive render from coordinator step outputs. `date_flex_suggestion` is emitted alongside tiles when Aviasales grouped_prices found a cheaper nearby date (≥10% savings). `specialist_preview` surfaces lightweight specialist highlights plus the current authoritative `strategy_sections`, and the frontend defers the immediately following compatibility `strategy_sections` merge by one animation frame so the preview can paint without an immediate duplicate merge. `day_cards` partials carry enriched payloads via `_day_cards_partial_payload()` (tiles, strategy_sections, plan_view_state, itinerary context: overview, assumptions, constraint violations, warnings). Enrichment data (partner pricing, deeplinks, Google Places) is now included directly in the `complete` envelope — the backend no longer emits post-response `tile_enrichment` partials. |
-| `feasibility_warning` | `{topic, status, reason, alternative}` | Coordinator feasibility signal. Forwarded by `generate_sse()` as a public SSE event for frontend toast display. |
+| `node_status` | `{node, status, label, icon_key, estimated_duration_ms}` | Tool progress derived from `updates` mode: `started` on `AIMessage.tool_calls`, `completed` on `ToolMessage`. The terminal model turn maps to `response`. `node` strings equal tool names (see `_TOOL_TO_NODE` / `_NODE_META` in `agent_runner.py`). |
+| `token` | `string` | Reply text from the orchestrator's terminal (no-tool-call) model turn (`messages` mode). |
+| `partial` | `{kind, payload}` | Wired from `custom` mode (tools may push via `get_stream_writer`) but currently dormant — no tool emits custom events; progressive data arrives via the `complete` envelope. `date_flex_suggestion` is threaded through `turn_meta` and surfaced in the envelope. |
+| `feasibility_warning` | `{topic, status, reason, alternative}` | Emitted when a `get_specialist_advice` `ToolMessage` reports `feasibility_status="infeasible"`. Forwarded by `generate_sse()` for frontend toast display. |
 | `heartbeat` | `{type: "heartbeat"}` | Connection keepalive emitted every 5s by `generate_sse()` via a background `_heartbeat_emitter` task. Frontend resets the SSE watchdog timer; no state mutation. |
-| `complete` | `{document, session_state, version, response_degraded?, response_error_type?, ...}` | Public SSE payload built in `generate_sse()` after `apply_planner_update()`, wrapping/normalizing coordinator `_build_envelope()` output. When `response_degraded=true`, the LLM response generation failed and `response_error_type` indicates the cause (`rate_limit`, `timeout`, `generation_error`). |
+| `complete` | `{document, session_state, version, response_degraded?, response_error_type?, ...}` | Public SSE payload built in `generate_sse()` after `apply_planner_update()`, wrapping/normalizing `_build_envelope()` output. When `response_degraded=true`, `response_error_type` indicates the cause (`rate_limit`, `timeout`, `generation_error`). |
 | `error` | `{message}` | Error information |
 
-### Step-to-node mapping (`_step_node_name`)
+### Tool-to-node mapping (`_TOOL_TO_NODE` / `_NODE_META`, `agent_runner.py`)
 
-- `DISPATCH_SPECIALISTS` -> `get_specialist_advice`
-- `SEARCH_TILES` -> `search_tiles`
-- `LOCAL_INTEL` -> `get_local_intel`
-- `BUILD_ITINERARY` -> `build_itinerary`
-- `GENERATE_RESPONSE` -> `response`
-- `CLASSIFY` -> `None` (no SSE node status emitted)
-- `SHORT_CIRCUIT` -> `None` (no SSE node status emitted)
-
-Unmapped step types fall back to `step_type.value`.
+Tool names map to identical `node` strings: `extract_trip_fields`, `get_specialist_advice`, `search_tiles`, `get_local_intel`, `validate_plan`, `build_itinerary`. The terminal model turn maps to `response`. Each carries a label/icon/estimated-duration from `_NODE_META`.
 
 ### Complete Envelope (`_build_envelope()`)
 
-Coordinator complete payload includes `plan_view_state`, `tiles`, `strategy_sections`, `itinerary_day_cards`, `constraints_validated`, `constraint_violations`, `ack_status`, `ack_updates`, `applied_updates`, and `trip_cost_estimate`. `ack_status` now supports `partial` when only partial-failure updates were generated.
+The `_build_envelope()` complete payload includes `plan_view_state`, `tiles`, `strategy_sections`, `itinerary_day_cards`, `constraints_validated`, `constraint_violations`, `ack_status`, `ack_updates`, `applied_updates`, and `trip_cost_estimate`. `ack_status` now supports `partial` when only partial-failure updates were generated.
 
 `coordinator._build_envelope()` also emits envelope-level `trip_settings` (fresh booking/hotel/activity settings), plus `itinerary_overview`, `itinerary_assumptions`, and `hotel_filter_cascaded` when present in turn/persistent metadata.
 When destination geocoding has already cached an ISO country code, `_build_envelope()` injects `trip_plan.country_code` into the returned document payload so frontend country-aware UI can render without a second lookup.
@@ -1389,12 +1381,15 @@ INITIATED -> PENDING_PAYMENT -> HOLD -> CONFIRMED
 
 | Module | Exports |
 | --- | --- |
-| `planner` | `execute_turn`, `build_trip_state_summary`, `restore_graph_state`, `state_to_session_state`, `trip_plan_to_trip_inputs`, hashing helpers |
+| `planner` | `GraphState`, `build_trip_state_summary` (lazy), `restore_graph_state`, `state_to_session_state`, `trip_plan_to_trip_inputs`, hashing helpers (`execute_turn` export removed) |
+| `planner.agent` | `create_planner_agent` |
+| `planner.services.agent_runner` | `run_agent_turn_streaming`, `run_agent_turn`, `SESSION_MAX_TURNS` |
+| `planner.tools` | `extract_trip_fields`, `get_specialist_advice`, `search_tiles`, `get_local_intel`, `validate_plan`, `build_itinerary` |
 | `planner.state` | `GraphState`, `TripPlan`, `TripSegment`, `ItineraryBlock`, `SpecialistConstraint`, `SpecialistStateOutput` |
 | `planner.state.agent_state` | `NomadicAgentState` |
 | `planner.hashing` | `stable_hash`, `stable_hash_short`, `canonicalize_destinations`, `make_cache_key`, `field_hash` |
-| `planner.coordinator` | `execute_turn`, `plan_turn`, `_build_envelope`, `_compute_coordinator_s3_state` |
-| `planner.schemas.coordinator_schemas` | `ChangeType`, `ChangeClassification`, `ClassifierOutput`, `TripBrief`, `SpecialistDayPlan`, `SpecialistTransit`, `SpecialistConstraintOutput`, `SpecialistPlan`, `ReplanRequest`, `StepType`, `ExecutionStep`, `ExecutionPlan` |
+| `planner.coordinator` | `_build_envelope`, `_compute_coordinator_s3_state`, `_merge_doc_settings`, `build_trip_state_summary` (DAG functions removed) |
+| `planner.schemas.coordinator_schemas` | `ChangeType`, `ChangeClassification`, `ClassifierOutput`, `TripBrief`, `SpecialistDayPlan`, `SpecialistTransit`, `SpecialistConstraintOutput`, `SpecialistPlan`, `ReplanRequest` (`StepType`/`ExecutionStep`/`ExecutionPlan` removed) |
 
 ---
 
