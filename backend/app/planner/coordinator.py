@@ -778,7 +778,21 @@ async def _run_itinerary_enrichment_pipeline(
         await enrich_tiles_with_partners(tiles_to_enrich, destination, currency)
         _apply_activity_tile_enrichment_to_day_cards(activity_tiles, day_cards)
 
-    # Skip GP enrichment when all placed blocks already have partner or GP data.
+    # Decide whether to run the post-build GP geocode pass. A block needs GP when it
+    # lacks a REAL per-POI coordinate -- partner deeplink/image alone is NOT enough,
+    # because every coord-less Viator/specialist block is stamped with the same
+    # destination centroid (which stacks all markers on one point). We resolve the
+    # centroid once (cached) so centroid-only geo counts as "still needs geocoding".
+    _gate_centroid: tuple[float, float] | None = None
+    if (
+        settings.use_google_places_provider
+        and settings.google_places_enrichment_enabled
+        and destination
+    ):
+        from app.tile_service.google_places_provider import _geocode_destination_async
+
+        _gate_centroid = await _geocode_destination_async(destination)
+
     _blocks_needing_gp = 0
     for dc in day_cards:
         if not isinstance(dc, dict):
@@ -789,10 +803,8 @@ async def _run_itinerary_enrichment_pipeline(
             at = (block.get("activity_type") or "").lower()
             if at in ("arrival", "departure", "check_in", "check_out", "free_day"):
                 continue
-            has_data = bool(
-                block.get("deeplink") or block.get("image_url") or block.get("google_place_id")
-            )
-            if not has_data:
+            # Real per-POI coords => no GP needed; missing/centroid coords => needs GP.
+            if _is_centroid_coords(block.get("coordinates"), _gate_centroid):
                 _blocks_needing_gp += 1
 
     if _blocks_needing_gp == 0 and day_cards:
@@ -1090,14 +1102,63 @@ def _inject_specialist_tiles_into_state(state: Dict[str, Any]) -> None:
         )
 
 
+# Geo within this radius (km) of the destination centroid is treated as
+# "centroid-only" (i.e. not a real per-POI coordinate). Used to detect blocks
+# whose coords are just the destination center so they still get geocoded by
+# title -> distinct map markers.
+_CENTROID_RADIUS_KM = 1.0
+
+
+def _coords_to_lat_lng(coords: Any) -> tuple[float, float] | None:
+    """Normalize a coordinate value ([lng, lat] list or {lat,lng}/{...} dict) to (lat, lng)."""
+    if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+        lng, lat = coords[0], coords[1]
+        if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            return (float(lat), float(lng))
+        return None
+    if isinstance(coords, dict):
+        lat = coords.get("lat")
+        lng = coords.get("lng")
+        if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            return (float(lat), float(lng))
+    return None
+
+
+def _is_centroid_coords(coords: Any, centroid: tuple[float, float] | None) -> bool:
+    """True when coords are missing or essentially the destination centroid.
+
+    Centroid-only geo is NOT a real per-POI coordinate: every coord-less
+    Viator/specialist block gets stamped with the same destination center, so
+    all markers pile on one point. We treat those as "not yet enriched" so the
+    post-build pass geocodes them by title. Robust to the geocode used for the
+    centroid differing slightly from the one that produced the block coords
+    (haversine threshold), and to the destination string mismatching.
+    """
+    from app.utils.geo import haversine_km
+
+    point = _coords_to_lat_lng(coords)
+    if point is None:
+        return True
+    if centroid is None:
+        return False
+    return haversine_km(point, centroid) <= _CENTROID_RADIUS_KM
+
+
 async def _post_build_enrich_placed_activities(
     state: Dict[str, Any], day_cards: list[Dict[str, Any]]
 ) -> None:
     """Enrich placed activity blocks with Google Places data after builder runs.
 
-    Only enriches blocks that were actually placed in the itinerary (not dropped),
-    and only those missing a google_place_id. Respects enrichment_cap=3 via
-    enrich_activities_with_places.
+    Only enriches blocks that were actually placed in the itinerary (not dropped).
+    A block is "needs enrichment" when it lacks a google_place_id OR carries only
+    centroid-level geo (every coord-less Viator/specialist tile gets stamped with
+    the same destination center, which stacks all markers on one point). Those
+    blocks are geocoded by title (Places Text Search via enrich_activities_with_places)
+    so each placed POI gets distinct real coordinates -> distinct map markers.
+
+    Cost: only PLACED blocks are geocoded (never the browse pool); every result is
+    cached (L1+L2) keyed by normalized title|destination. The destination centroid
+    is kept only as a last-resort fallback when geocoding fails.
     """
     if not settings.use_google_places_provider:
         return
@@ -1110,10 +1171,16 @@ async def _post_build_enrich_placed_activities(
 
     try:
         from app.tile_service.google_places_provider import (
+            _geocode_destination_async,
             _normalize_title_for_cache,
             build_signed_photo_url,
             enrich_activities_with_places,
         )
+
+        # Resolve the destination centroid once (cached) so we can detect blocks
+        # whose coords are just the destination center (centroid-stacking) and
+        # treat them as not-yet-geocoded. Also used as the last-resort fallback.
+        centroid = await _geocode_destination_async(destination)
 
         # Build lookup of existing GP-enriched activity tiles to avoid re-searching
         existing_tiles = state.get("tiles", {}).get("activities", [])
@@ -1200,14 +1267,26 @@ async def _post_build_enrich_placed_activities(
                     continue
                 if block.get("activity_type") == "free_day":
                     continue
-                if block.get("google_place_id") and block.get("coordinates"):
+                # Skip only blocks that already have a real per-POI coordinate.
+                # Centroid-only geo (every coord-less Viator/specialist tile gets
+                # stamped with the destination center) is treated as not-yet-geocoded
+                # so the title geocode runs and markers stop stacking on one point.
+                if block.get("google_place_id") and not _is_centroid_coords(
+                    block.get("coordinates"), centroid
+                ):
                     continue
                 summary = block.get("summary", "")
                 if summary.strip().lower().startswith("free day"):
                     continue
                 if not summary:
                     continue
-                if _apply_booked_tile_fallback(block):
+                # Apply booked-tile fallback (sets deeplink/image/price + best-effort
+                # coords), but only short-circuit when it yielded a REAL per-POI coord.
+                # A Viator booked_tile often carries only the destination centroid, so
+                # we let those fall through to the title geocode below.
+                if _apply_booked_tile_fallback(block) and not _is_centroid_coords(
+                    block.get("coordinates"), centroid
+                ):
                     _reused_count += 1
                     continue
 
@@ -1250,15 +1329,19 @@ async def _post_build_enrich_placed_activities(
                     continue
                 lookup_title = title_candidates[0] if title_candidates else summary
                 coords = block.get("coordinates")
+                # Pass real coords through (so enrich short-circuits and we don't pay
+                # for a redundant search), but force None for missing/centroid-only geo
+                # so enrich_activities_with_places actually fires the title search.
                 proxy_coords = None
-                if isinstance(coords, list):
-                    proxy_coords = coords
-                elif (
-                    isinstance(coords, dict)
-                    and coords.get("lat") is not None
-                    and coords.get("lng") is not None
-                ):
-                    proxy_coords = [coords["lng"], coords["lat"]]
+                if not _is_centroid_coords(coords, centroid):
+                    if isinstance(coords, list):
+                        proxy_coords = coords
+                    elif (
+                        isinstance(coords, dict)
+                        and coords.get("lat") is not None
+                        and coords.get("lng") is not None
+                    ):
+                        proxy_coords = [coords["lng"], coords["lat"]]
                 proxies.append(
                     {
                         "id": block.get("id", f"post_enrich_{day_idx}_{block_idx}"),
@@ -1280,8 +1363,16 @@ async def _post_build_enrich_placed_activities(
 
         _tp = state.get("trip_plan", {})
         _travelers = (_tp.get("adults") or 0) + (_tp.get("children") or 0) or 1
+        # Geocode EVERY placed block (not just enrichment_cap=3): the goal is one
+        # distinct marker per placed POI. Placed-block count is naturally bounded by
+        # trip length and each title geocode is L1+L2 cached, so re-builds re-pay
+        # nothing. The default cap still governs the browse/tier1/tier2 paths.
         enriched = await enrich_activities_with_places(
-            proxies, destination, path_label="post_build_enrich", travelers=_travelers
+            proxies,
+            destination,
+            path_label="post_build_enrich",
+            travelers=_travelers,
+            enrich_cap=len(proxies),
         )
 
         # Write enriched fields back to day_card blocks
@@ -1327,6 +1418,26 @@ async def _post_build_enrich_placed_activities(
                     signed_url = build_signed_photo_url(session_id, photo_name)
                     if signed_url:
                         block["image_url"] = signed_url
+
+        # No centroid stamp on geocode misses. Generic multi-stop marketing tours
+        # ("private full-day driver", "shore excursions", "choose your route") have
+        # no single geocodable POI; stamping them all with the destination centroid
+        # collapses every such block onto one point and re-stacks the map. Leaving
+        # their coordinates absent is honest — a private full-day tour has no single
+        # location — and the frontend map (normalizeMapItems) drops coord-less items
+        # gracefully, so the block stays in the itinerary timeline with no map pin.
+        # Real per-POI coords resolved above are always preserved.
+        _unplaced = sum(
+            1
+            for _, (day_idx, block_idx) in zip(proxies, block_locations, strict=True)
+            if not day_cards[day_idx]["blocks"][block_idx].get("coordinates")
+        )
+        if _unplaced:
+            logger.info(
+                "[coordinator] %d placed blocks left coord-less (un-geocodable "
+                "multi-stop tour / geocode miss) — no centroid stamp, no map pin",
+                _unplaced,
+            )
 
         logger.info(
             "[coordinator] Post-build enriched %d/%d placed blocks via Google Places",
@@ -2017,7 +2128,11 @@ def _build_envelope(
         "browseable_activities": browseable_activities,
         "can_expand_to_itinerary": bool(strategy_sections) and ready_to_generate,
         "itinerary_day_cards": (
-            [] if coordinator_reset else day_cards if day_cards else ([] if builder_ran else None)
+            []
+            if coordinator_reset
+            else day_cards
+            if day_cards
+            else ([] if (builder_ran or turn_meta.get("removal_pruned")) else None)
         ),
         "itinerary_overview": (
             builder_result.get("overview")

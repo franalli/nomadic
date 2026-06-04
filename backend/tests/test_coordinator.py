@@ -272,6 +272,194 @@ class TestBuildEnvelopeViewState:
         assert result["document"]["trip_inputs"]["booking_types"]["flights"] == "off"
         assert state["trip_settings"]["booking_types"]["flights"] == "off"
 
+    @patch("app.planner.services.state_serde.serialize_agent_state", return_value="{}")
+    def test_natural_language_specialist_removal_prunes_tiles_and_day_cards(
+        self,
+        _mock_serialize: Any,
+    ) -> None:
+        """'no diving' must prune diving activity tiles + day_cards (not just the section),
+        emit tiles_replaced, and emit itinerary_day_cards=[] (a real clear signal, NOT None)
+        on this non-builder removal turn -- otherwise the frontend re-displays diving."""
+        from app.planner.coordinator import _build_envelope
+        from app.planner.services.agent_runner import _prune_stale_sections
+
+        diving_tiles = [
+            {
+                "id": f"spec_bali_diving_{i}",
+                "type": "activity",
+                "title": f"Dive site {i}",
+                "meta": {"specialist_type": "diving", "category": "diving"},
+            }
+            for i in range(3)
+        ]
+        hotels = [{"id": f"h{i}", "name": f"Hotel {i}"} for i in range(3)]
+        # 7 day_cards, every card holding a single diving activity block (real builder shape).
+        diving_day_cards = [
+            {
+                "day_number": n,
+                "blocks": [
+                    {
+                        "id": f"spec_bali_diving_{n}",
+                        "specialist_type": "diving",
+                        "is_buffer": False,
+                        "summary": f"Dive day {n}",
+                    }
+                ],
+            }
+            for n in range(1, 8)
+        ]
+
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+            tiles={"activities": list(diving_tiles), "hotels": list(hotels)},
+            day_cards=list(diving_day_cards),
+            strategy_sections=[
+                {"specialist_type": "diving", "subtitle": "Bali", "content_blocks": []},
+                {"specialist_type": "local_expert", "subtitle": "Bali", "content_blocks": []},
+            ],
+            specialist_plans={"diving": {"topic": "diving"}, "local_expert": {"topic": "x"}},
+            turn_meta={"removal_targets": ["diving"]},
+        )
+
+        _prune_stale_sections(state)
+        result = _build_envelope(state, "no diving", "sess-1", "Removed diving.")
+
+        # Diving activity tiles gone; hotels retained.
+        activities = state["tiles"]["activities"]
+        assert all(t["meta"]["specialist_type"] != "diving" for t in activities)
+        assert activities == []
+        assert len(state["tiles"]["hotels"]) == 3
+
+        # tiles_replaced flagged; day_cards cleared to a real empty array (NOT None).
+        assert result["document"]["tiles_replaced"] is True
+        assert result["document"]["itinerary_day_cards"] == []
+        assert result["document"]["itinerary_day_cards"] is not None
+
+        # Diving strategy section gone; local_expert retained.
+        section_types = {s["specialist_type"] for s in state["strategy_sections"]}
+        assert "diving" not in section_types
+        assert "local_expert" in section_types
+
+        # Diving key popped from specialist_plans; local_expert retained.
+        assert "diving" not in state["specialist_plans"]
+        assert "local_expert" in state["specialist_plans"]
+
+    def test_partial_specialist_removal_wholesale_clears_day_cards(self) -> None:
+        """Removing ONE specialist from a multi-specialist trip (diving from a
+        diving+hiking trip) must prune only the diving tiles/section/plan while
+        WHOLESALE clearing day_cards. Surgical block pruning silently dropped whole
+        arrival/departure days (the builder co-locates arrival/departure buffers onto
+        the first/last cards, so a `[arrival_buffer, diving_block]` card collapsed to a
+        buffer-only card and was deleted along with its inbound-flight booked_tile) and
+        left gapped day numbers. Wholesale clear lets the frontend rebuild contiguously
+        from the surviving tiles."""
+        from app.planner.services.agent_runner import _prune_stale_sections
+
+        diving_tiles = [
+            {
+                "id": f"spec_bali_diving_{i}",
+                "type": "activity",
+                "title": f"Dive site {i}",
+                "meta": {"specialist_type": "diving", "category": "diving"},
+            }
+            for i in range(2)
+        ]
+        hiking_tiles = [
+            {
+                "id": f"spec_bali_hiking_{i}",
+                "type": "activity",
+                "title": f"Trail {i}",
+                "meta": {"specialist_type": "hiking", "category": "hiking"},
+            }
+            for i in range(2)
+        ]
+        hotels = [{"id": f"h{i}", "name": f"Hotel {i}"} for i in range(3)]
+        # Realistic builder shape: arrival buffer co-located on day 1 with a diving
+        # block; a departure buffer co-located on the last day with a hiking block.
+        day_cards = [
+            {
+                "day_number": 1,
+                "blocks": [
+                    {"id": "arr", "is_buffer": True, "booked_tile": {"id": "flight_in"}},
+                    {"id": "spec_bali_diving_1", "specialist_type": "diving", "is_buffer": False},
+                ],
+            },
+            {
+                "day_number": 2,
+                "blocks": [
+                    {"id": "spec_bali_hiking_1", "specialist_type": "hiking", "is_buffer": False}
+                ],
+            },
+            {
+                "day_number": 3,
+                "blocks": [
+                    {"id": "spec_bali_diving_2", "specialist_type": "diving", "is_buffer": False}
+                ],
+            },
+            {
+                "day_number": 4,
+                "blocks": [
+                    {"id": "dep", "is_buffer": True, "booked_tile": {"id": "flight_out"}},
+                    {"id": "spec_bali_hiking_2", "specialist_type": "hiking", "is_buffer": False},
+                ],
+            },
+        ]
+
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-04",
+            },
+            tiles={
+                "activities": list(diving_tiles) + list(hiking_tiles),
+                "hotels": list(hotels),
+            },
+            day_cards=list(day_cards),
+            strategy_sections=[
+                {"specialist_type": "diving", "subtitle": "Bali", "content_blocks": []},
+                {"specialist_type": "hiking", "subtitle": "Bali", "content_blocks": []},
+                {"specialist_type": "local_expert", "subtitle": "Bali", "content_blocks": []},
+            ],
+            specialist_plans={
+                "diving": {"topic": "diving"},
+                "hiking": {"topic": "hiking"},
+                "local_expert": {"topic": "x"},
+            },
+            turn_meta={"removal_targets": ["diving"]},
+        )
+
+        _prune_stale_sections(state)
+
+        # Diving tiles gone; hiking tiles + hotels retained.
+        activities = state["tiles"]["activities"]
+        assert all(t["meta"]["specialist_type"] != "diving" for t in activities)
+        assert {t["meta"]["specialist_type"] for t in activities} == {"hiking"}
+        assert len(activities) == 2
+        assert len(state["tiles"]["hotels"]) == 3
+
+        # Diving section gone; hiking + local_expert retained.
+        section_types = {s["specialist_type"] for s in state["strategy_sections"]}
+        assert "diving" not in section_types
+        assert "hiking" in section_types
+        assert "local_expert" in section_types
+
+        # Diving popped from specialist_plans; hiking retained.
+        assert "diving" not in state["specialist_plans"]
+        assert "hiking" in state["specialist_plans"]
+
+        # day_cards WHOLESALE cleared -- no arrival/departure day silently lost; the
+        # frontend rebuilds contiguously from the surviving tiles.
+        assert state["day_cards"] == []
+
+        # Removal flags set on turn_meta (consumed by _build_envelope's None-vs-[] fold).
+        assert state["turn_meta"]["tiles_replaced"] is True
+        assert state["turn_meta"]["removal_pruned"] is True
+
 
 # =============================================================================
 # Small helpers

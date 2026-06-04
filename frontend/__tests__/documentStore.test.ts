@@ -115,6 +115,9 @@ beforeEach(() => {
     llmUpdatedFields: new Set(),
     preferredTileIds: new Set(),
     _lastPatchedTripInputs: null,
+    // Sticky UI guard — reset between tests so it never leaks (e.g. into the
+    // bootstrap-seeding test, which expects ['cultural'] with the guard false).
+    hasEverHadPlanContent: false,
   });
   vi.clearAllMocks();
 });
@@ -525,6 +528,78 @@ describe('setFromPlanResponse', () => {
     expect(diagLine).toContain('changed: true');
   });
 
+  it('drops a backend-removed strategy section when tiles_replaced is true (NL removal)', () => {
+    // Same-destination "no diving" removal turn: backend prunes the diving section and
+    // sets tiles_replaced=true. The additive re-push must NOT resurrect the dropped section.
+    const tripInputs = {
+      ...DEFAULT_TRIP_INPUTS,
+      destination: 'Bali',
+      start_date: '2026-04-01',
+      end_date: '2026-04-07',
+    };
+    useDocumentStore.setState({
+      document: makeDoc({
+        trip_inputs: tripInputs,
+        strategy_sections: [
+          makeSection('diving', { specialist_type: 'diving' }),
+          makeSection('hiking', { specialist_type: 'hiking' }),
+        ],
+        plan_view_state: 'S2_STRATEGY_READY',
+      }),
+      version: 1,
+    });
+
+    const response = makePatchResponse(2, {
+      trip_inputs: structuredClone(tripInputs),
+      // Backend dropped diving — only hiking remains in the authoritative set.
+      strategy_sections: [makeSection('hiking', { specialist_type: 'hiking' })],
+      tiles_replaced: true,
+      plan_view_state: 'S2_STRATEGY_READY',
+    });
+
+    useDocumentStore.getState().setFromPlanResponse(response);
+
+    const sections = useDocumentStore.getState().document!.strategy_sections!;
+    expect(sections).toHaveLength(1);
+    expect(sections.map((s) => s.specialist_type)).toEqual(['hiking']);
+    expect(sections.some((s) => s.specialist_type === 'diving')).toBe(false);
+  });
+
+  it('preserves cached strategy sections on a lightweight route when tiles_replaced is falsy', () => {
+    // Origin/settings change: backend re-emits a subset of sections without tiles_replaced.
+    // The additive re-push must keep cached specialists that are absent from the response.
+    const tripInputs = {
+      ...DEFAULT_TRIP_INPUTS,
+      destination: 'Bali',
+      start_date: '2026-04-01',
+      end_date: '2026-04-07',
+    };
+    useDocumentStore.setState({
+      document: makeDoc({
+        trip_inputs: tripInputs,
+        strategy_sections: [
+          makeSection('diving', { specialist_type: 'diving' }),
+          makeSection('hiking', { specialist_type: 'hiking' }),
+        ],
+        plan_view_state: 'S2_STRATEGY_READY',
+      }),
+      version: 1,
+    });
+
+    const response = makePatchResponse(2, {
+      trip_inputs: structuredClone(tripInputs),
+      // Lightweight route only re-emits hiking; tiles_replaced is absent/falsy.
+      strategy_sections: [makeSection('hiking', { specialist_type: 'hiking' })],
+      plan_view_state: 'S2_STRATEGY_READY',
+    });
+
+    useDocumentStore.getState().setFromPlanResponse(response);
+
+    const sections = useDocumentStore.getState().document!.strategy_sections!;
+    expect(sections).toHaveLength(2);
+    expect(sections.map((s) => s.specialist_type).sort()).toEqual(['diving', 'hiking']);
+  });
+
   it('preserves heavy subtree references when complete payload repeats already-merged data', () => {
     const tripInputs = {
       ...DEFAULT_TRIP_INPUTS,
@@ -593,6 +668,207 @@ describe('activity toggles', () => {
 // ==========================================================================
 // Group 3: commitTripInputs
 // ==========================================================================
+
+describe('activity category default seeding (durability)', () => {
+  // Regression: "no diving" on a built Bali plan must NOT re-seed 'cultural'.
+  // The default may only seed at genuine bootstrap (no strategy_sections AND no day_cards).
+  // Once a plan has content, an empty categories list is the user's deliberate removal and
+  // must stay [] across the removal turn AND every subsequent unrelated turn.
+
+  it('keeps categories empty across a removal turn AND a later unrelated turn (built plan)', () => {
+    const baseTripInputs = {
+      ...DEFAULT_TRIP_INPUTS,
+      destination: 'Bali',
+      start_date: '2026-04-01',
+      end_date: '2026-04-07',
+      booking_types: { ...DEFAULT_BOOKING_TYPES, activities: 'suggested' as const },
+    };
+
+    // (a) Start with a BUILT plan: strategy_sections + day_cards present, categories=['diving'].
+    useDocumentStore.setState({
+      document: makeDoc({
+        trip_inputs: {
+          ...baseTripInputs,
+          activity_settings: { categories: ['diving'], skill_level: null, day_preferences: {} },
+        },
+        strategy_sections: [
+          makeSection('diving', { specialist_type: 'diving' }),
+          makeSection('hiking', { specialist_type: 'hiking' }),
+        ],
+        day_cards: [makeDayCard(1), makeDayCard(2)],
+        plan_view_state: 'S3_ITINERARY_READY',
+      }),
+      version: 1,
+    });
+
+    // (b) Removal turn: backend prunes diving (categories=[]) and, as the staleness-clear turn,
+    // ships day_cards=[]. Surviving 'hiking' section remains authoritative.
+    const removalResponse = makePatchResponse(2, {
+      trip_inputs: {
+        ...baseTripInputs,
+        activity_settings: { categories: [], skill_level: null, day_preferences: {} },
+      },
+      strategy_sections: [makeSection('hiking', { specialist_type: 'hiking' })],
+      day_cards: [],
+      tiles_replaced: true,
+      plan_view_state: 'S2_STRATEGY_READY',
+    });
+    useDocumentStore.getState().setFromPlanResponse(removalResponse);
+
+    const afterRemoval = useDocumentStore.getState().document!;
+    // The bug would have flipped this to ['cultural']. It must stay [].
+    expect(afterRemoval.trip_inputs.activity_settings?.categories).toEqual([]);
+
+    // (c) DISCRIMINATOR: one MORE unrelated turn (categories still [], NOT a removal).
+    // A naive one-turn `tiles_replaced` gate would re-default on THIS merge.
+    const unrelatedResponse = makePatchResponse(3, {
+      trip_inputs: {
+        ...baseTripInputs,
+        // An unrelated edit (e.g. adults) — categories untouched, still [].
+        adults: 3,
+        activity_settings: { categories: [], skill_level: null, day_preferences: {} },
+      },
+      strategy_sections: [makeSection('hiking', { specialist_type: 'hiking' })],
+      plan_view_state: 'S2_STRATEGY_READY',
+    });
+    useDocumentStore.getState().setFromPlanResponse(unrelatedResponse);
+
+    const afterUnrelated = useDocumentStore.getState().document!;
+    expect(afterUnrelated.trip_inputs.activity_settings?.categories).toEqual([]);
+  });
+
+  it('keeps categories empty after a TOTAL single-specialist removal across the next turn', () => {
+    // TOTAL removal: the plan had ONLY one specialist. The removal turn drops the sole
+    // section AND ships day_cards=[] (backend staleness-clear), so live plan content is [].
+    // The sticky session guard must latch true on the removal turn (pre-merge currentDoc
+    // still had content) so the NEXT unrelated turn — with live content STILL [] — does
+    // NOT re-seed 'cultural'. Step (c) FAILS without the guard (currentDoc is now empty).
+    //
+    // NOTE ON COMPOSITION: the clearing turn is driven through mergeEnvelope, NOT a PATCH
+    // response. setFromPlanResponse short-circuits an empty strategy_sections payload to
+    // currentSections (resurrection-prevention, see the 'drops a backend-removed strategy
+    // section' test), so the genuine both-empty total-removal shape is only reachable via
+    // mergeEnvelope, which honors an explicit [] wholesale. This mirrors the real SSE flow
+    // (partials clear via mergeEnvelope, completion finalizes via setFromPlanResponse).
+    const baseTripInputs = {
+      ...DEFAULT_TRIP_INPUTS,
+      destination: 'Bali',
+      start_date: '2026-04-01',
+      end_date: '2026-04-07',
+      booking_types: { ...DEFAULT_BOOKING_TYPES, activities: 'suggested' as const },
+    };
+
+    // (a) Built plan with ONLY a diving section + day_cards, categories=['diving'].
+    useDocumentStore.setState({
+      document: makeDoc({
+        trip_inputs: {
+          ...baseTripInputs,
+          activity_settings: { categories: ['diving'], skill_level: null, day_preferences: {} },
+        },
+        strategy_sections: [makeSection('diving', { specialist_type: 'diving' })],
+        day_cards: [makeDayCard(1), makeDayCard(2)],
+        plan_view_state: 'S3_ITINERARY_READY',
+      }),
+      version: 1,
+      // Mirror a fresh session where the built plan was never observed via a merge
+      // (setState bypasses the observation hooks) — the guard starts false.
+      hasEverHadPlanContent: false,
+    });
+
+    // (b) TOTAL removal turn (envelope): backend drops the only section AND clears
+    // day_cards. booking_types.activities stays 'suggested' (not 'off'), categories=[].
+    useDocumentStore.getState().mergeEnvelope({
+      trip_inputs: {
+        ...baseTripInputs,
+        activity_settings: { categories: [], skill_level: null, day_preferences: {} },
+      },
+      strategy_sections: [],
+      day_cards: [],
+      tiles_replaced: true,
+      plan_view_state: 'S2_STRATEGY_READY',
+    });
+
+    const afterRemoval = useDocumentStore.getState().document!;
+    // DISCRIMINATOR PRECONDITION: the store must reach the genuine both-empty shape.
+    // If either is non-empty, step (c) would pass for the wrong reason.
+    expect(afterRemoval.strategy_sections).toEqual([]);
+    expect(afterRemoval.day_cards).toEqual([]);
+    // The removal turn itself is safe (pre-merge currentDoc still had content).
+    expect(afterRemoval.trip_inputs.activity_settings?.categories).toEqual([]);
+    // Guard must have latched true from the pre-merge content.
+    expect(useDocumentStore.getState().hasEverHadPlanContent).toBe(true);
+
+    // (c) DISCRIMINATOR: one MORE unrelated turn via setFromPlanResponse (the completion
+    // path). Live plan content is STILL [] (no sections, no day_cards). Without the sticky
+    // guard, documentHasPlanContent of the now-empty currentDoc is false → re-seeds
+    // 'cultural'. With the guard, categories stay []. Also exercises the setFromPlanResponse
+    // guard read.
+    const unrelatedResponse = makePatchResponse(3, {
+      trip_inputs: {
+        ...baseTripInputs,
+        adults: 3,
+        activity_settings: { categories: [], skill_level: null, day_preferences: {} },
+      },
+      strategy_sections: [],
+      day_cards: [],
+      plan_view_state: 'S2_STRATEGY_READY',
+    });
+    useDocumentStore.getState().setFromPlanResponse(unrelatedResponse);
+
+    const afterUnrelated = useDocumentStore.getState().document!;
+    expect(afterUnrelated.trip_inputs.activity_settings?.categories).toEqual([]);
+  });
+
+  it('keeps categories empty when an envelope removal turn clears them on a built plan', () => {
+    useDocumentStore.setState({
+      document: makeDoc({
+        trip_inputs: {
+          ...DEFAULT_TRIP_INPUTS,
+          destination: 'Bali',
+          start_date: '2026-04-01',
+          end_date: '2026-04-07',
+          booking_types: { ...DEFAULT_BOOKING_TYPES, activities: 'suggested' },
+          activity_settings: { categories: ['diving'], skill_level: null, day_preferences: {} },
+        },
+        strategy_sections: [makeSection('hiking', { specialist_type: 'hiking' })],
+        day_cards: [makeDayCard(1)],
+        plan_view_state: 'S3_ITINERARY_READY',
+      }),
+    });
+
+    // Envelope (SSE partial/complete) clears categories on the same built plan.
+    useDocumentStore.getState().mergeEnvelope({
+      trip_inputs: {
+        ...DEFAULT_TRIP_INPUTS,
+        destination: 'Bali',
+        start_date: '2026-04-01',
+        end_date: '2026-04-07',
+        booking_types: { ...DEFAULT_BOOKING_TYPES, activities: 'suggested' },
+        activity_settings: { categories: [], skill_level: null, day_preferences: {} },
+      },
+    });
+
+    const doc = useDocumentStore.getState().document!;
+    expect(doc.trip_inputs.activity_settings?.categories).toEqual([]);
+  });
+
+  it('seeds the cultural default at bootstrap (no sections and no day_cards)', () => {
+    // Brand-new trip: a bare "trip to Rome" with no stated category at S0/S1 must STILL
+    // seed 'cultural' so the first activity search has something to search for.
+    useDocumentStore.setState({ document: null, version: 0 });
+
+    useDocumentStore.getState().updateTripInputs({
+      destination: 'Rome',
+      booking_types: { ...DEFAULT_BOOKING_TYPES, activities: 'suggested' },
+      activity_settings: { categories: [], skill_level: null, day_preferences: {} },
+    });
+
+    const doc = useDocumentStore.getState().document!;
+    expect(doc.strategy_sections ?? []).toHaveLength(0);
+    expect(doc.day_cards ?? []).toHaveLength(0);
+    expect(doc.trip_inputs.activity_settings?.categories).toEqual(['cultural']);
+  });
+});
 
 describe('commitTripInputs', () => {
   // Track unresolved mock promises so afterEach can force-release the commit lock

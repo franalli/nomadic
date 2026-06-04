@@ -89,7 +89,8 @@ def _should_autobuild(state: Dict[str, Any]) -> bool:
 
 
 def _prune_stale_sections(state: Dict[str, Any]) -> None:
-    """Drop specialist sections that are stale for the active trip.
+    """Drop stale specialist sections AND, on explicit removal turns, the matching
+    activity tiles / day_cards / specialist_plans for the active trip.
 
     The strategy_sections reducer is additive (dedup-by-type, right-wins, NO remove
     branch) and an empty/shortened-list delta from a merger is therefore INERT -- so
@@ -103,14 +104,26 @@ def _prune_stale_sections(state: Dict[str, Any]) -> None:
           turn), so unlike trip_plan.specialist_hints it is NOT clobbered by parallel
           multi-specialist rounds.
 
-    We deliberately do NOT prune by trip_plan.specialist_hints: it's a shallow sub-key of
-    trip_plan, clobbered when two get_specialist_advice calls run in one parallel round --
-    pruning by it wrongly dropped the OTHER specialist's fresh section (the multi-specialist
-    "add hiking to my diving trip" bug).
+    On an EXPLICIT removal turn (removal_targets non-empty) we ALSO prune the activity
+    tiles + specialist_plans for the removed topics and WHOLESALE clear day_cards --
+    otherwise the section disappears but the tiles + day_cards survive and the frontend
+    re-displays the removed specialist. This mirrors the doc_settings category-change
+    cleanup in coordinator.py (which also does `day_cards = []` rather than surgically
+    editing blocks), but is SCOPED to removal_targets (that block nukes ALL activities by
+    design). We clear day_cards wholesale rather than surgically dropping the removed
+    specialist's blocks: the builder co-locates arrival/departure buffers onto the
+    first/last cards, so block-level pruning silently deleted whole arrival/departure days
+    (and their inbound-flight booked_tiles) and left gapped day numbers. Tiles are pruned
+    FIRST, so the frontend re-expands from the surviving tiles + dates, regrouping only the
+    surviving specialists and reconstructing the buffers -- nothing is lost and day numbers
+    stay contiguous.
+
+    We deliberately do NOT prune sections by trip_plan.specialist_hints: it's a shallow
+    sub-key of trip_plan, clobbered when two get_specialist_advice calls run in one parallel
+    round -- pruning by it wrongly dropped the OTHER specialist's fresh section (the
+    multi-specialist "add hiking to my diving trip" bug).
     """
     sections = state.get("strategy_sections") or []
-    if not sections:
-        return
     current_dest = (
         (state.get("trip_plan", {}).get("destination") or "").strip().lower().split(",")[0].strip()
     )
@@ -119,20 +132,76 @@ def _prune_stale_sections(state: Dict[str, Any]) -> None:
         for t in (state.get("turn_meta", {}).get("removal_targets") or [])
         if str(t).strip()
     }
-    if not current_dest and not removal_targets:
+    if not sections and not removal_targets:
         return
-    kept = []
-    for s in sections:
-        if isinstance(s, dict):
-            stype = str(s.get("specialist_type", "")).strip().lower()
-            if stype and stype in removal_targets:
-                continue  # explicitly removed / swapped out this turn
-            sec_dest = (s.get("subtitle") or "").strip().lower().split(",")[0].strip()
-            if current_dest and sec_dest and sec_dest != current_dest:
-                continue  # stale destination -- drop (prev-destination content)
-        kept.append(s)
-    if len(kept) != len(sections):
-        state["strategy_sections"] = kept
+
+    # (1) Section prune -- runs whenever there are sections to evaluate.
+    if sections and (current_dest or removal_targets):
+        kept = []
+        for s in sections:
+            if isinstance(s, dict):
+                stype = str(s.get("specialist_type", "")).strip().lower()
+                if stype and stype in removal_targets:
+                    continue  # explicitly removed / swapped out this turn
+                sec_dest = (s.get("subtitle") or "").strip().lower().split(",")[0].strip()
+                if current_dest and sec_dest and sec_dest != current_dest:
+                    continue  # stale destination -- drop (prev-destination content)
+            kept.append(s)
+        if len(kept) != len(sections):
+            state["strategy_sections"] = kept
+
+    # (2) Full removal cleanup -- prune activity tiles, day_cards, and specialist_plans for
+    # the removed topics. Runs even when the section list was empty (a no-op section prune
+    # must NOT short-circuit the tile/day_card cleanup).
+    if not removal_targets:
+        return
+
+    pruned = False
+
+    tiles = state.get("tiles")
+    if isinstance(tiles, dict):
+        activity_tiles = tiles.get("activities")
+        if isinstance(activity_tiles, list):
+            kept_tiles = []
+            for tile in activity_tiles:
+                meta = tile.get("meta", {}) if isinstance(tile, dict) else {}
+                stype = str(meta.get("specialist_type", "")).strip().lower()
+                cat = str(meta.get("category", "")).strip().lower()
+                if (stype and stype in removal_targets) or (cat and cat in removal_targets):
+                    pruned = True
+                    continue
+                kept_tiles.append(tile)
+            if len(kept_tiles) != len(activity_tiles):
+                tiles["activities"] = kept_tiles
+                state["tiles"] = tiles
+
+    specialist_plans = state.get("specialist_plans")
+    if isinstance(specialist_plans, dict):
+        for key in list(specialist_plans.keys()):
+            if str(key).strip().lower() in removal_targets:
+                specialist_plans.pop(key, None)
+                pruned = True
+
+    if pruned:
+        # WHOLESALE clear of day_cards (mirrors coordinator.py's doc_settings
+        # category-change path, which does `state["day_cards"] = []` rather than
+        # surgically editing blocks). Surgical block-pruning silently dropped whole
+        # cards: the builder co-locates arrival/departure buffers onto the first/last
+        # cards and a removed specialist's activity can share those cards, so dropping
+        # the activity then dropping the now-buffer-only card deleted the arrival/
+        # departure day and its inbound-flight booked_tile/logistics_details, and left
+        # gapped day numbers. Tiles are pruned ABOVE before this clear, so the frontend
+        # re-expands from the surviving tiles + dates -- regrouping only the surviving
+        # specialists and reconstructing the arrival/departure buffers -- with no data
+        # loss and contiguous day numbers. This unifies with the all-removed case
+        # (which also ends at day_cards=[]).
+        state["day_cards"] = []
+        turn_meta = state.get("turn_meta")
+        if not isinstance(turn_meta, dict):
+            turn_meta = {}
+        turn_meta["tiles_replaced"] = True
+        turn_meta["removal_pruned"] = True
+        state["turn_meta"] = turn_meta
 
 
 def _trim_conversation_history(messages: list, keep_turns: int = 12) -> list:

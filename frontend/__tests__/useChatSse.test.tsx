@@ -1159,4 +1159,176 @@ describe('useChatSse', () => {
 
     await expect(streamResult).resolves.toBe('error');
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Auto-expand gate on SSE complete — natural-language specialist removal.
+  //
+  // A removal turn ("no diving") returns day_cards: [] on the complete
+  // envelope and relies on the frontend auto-expand gate to REBUILD the
+  // itinerary from the surviving (pruned) tiles. These two tests are
+  // byte-identical except for `doc.day_cards` ([] vs [card]) — that is the
+  // discrimination: case 1 must fire the expand, case 2 must skip it
+  // (graphBuiltItinerary path). If the gate failed to fire on day_cards=[],
+  // case 1 would behave like case 2 and fail.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  type CompleteEnvelopeOverrides = {
+    dayCards: DayCard[];
+    strategySections: StrategySection[];
+    tiles?: Record<string, Tile>;
+    planViewState?: PlanViewState;
+  };
+
+  function makeCompleteEnvelope({
+    dayCards,
+    strategySections,
+    tiles = {},
+    planViewState = 'S3_ITINERARY_READY',
+  }: CompleteEnvelopeOverrides) {
+    return {
+      version: 1,
+      updated_by: 'planner',
+      updated_at: '2026-04-01T00:00:00Z',
+      changes_made: true,
+      request_id: 'req-1',
+      session_state: {},
+      document: {
+        trip_context_id: null,
+        trip_inputs: {
+          ...DEFAULT_TRIP_INPUTS,
+          destination: 'Bali',
+          start_date: '2026-04-01',
+          end_date: '2026-04-07',
+          trip_duration: 7,
+        },
+        branches: [],
+        tiles,
+        strategy_sections: strategySections,
+        day_cards: dayCards,
+        plan_view_state: planViewState,
+        tiles_replaced: true,
+      },
+    };
+  }
+
+  it('schedules an auto-expand when a removal turn clears day_cards to [] on complete', async () => {
+    // Surviving (non-removed) section after "no diving" — the diving section
+    // is absent. Pre-turn store already has an itinerary (this is a removal,
+    // not a first build).
+    const survivingSection = makeSection('local-intel', {
+      title: 'Local Intel',
+      specialist_type: 'local_expert',
+    });
+
+    seedDocument({
+      strategySections: [survivingSection],
+      dayCards: [makeDayCard(1, { label: 'Existing itinerary' })],
+      planViewState: 'S3_ITINERARY_READY',
+    });
+
+    const { result, callbacks, refs, params } = renderUseChatSse();
+
+    // Mirror the real onPlanResult: apply the response document's day_cards to
+    // the store (the no-op default would leave the seeded itinerary in place).
+    (callbacks.onPlanResult as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      useDocumentStore.setState((state) => ({
+        document: state.document
+          ? { ...state.document, day_cards: [], strategy_sections: [survivingSection] }
+          : state.document,
+      }));
+    });
+
+    // Pre-removal specialist/tile state so the surviving section does NOT read
+    // as a *new* specialist — the gate then resolves CATCH_ALL (not STRUCTURAL).
+    refs.prevSpecialistTypesRef.current = new Set(['local_expert']);
+    refs.prevTileTypesRef.current = new Set();
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    await act(async () => {
+      streamCallbacks.onComplete(
+        makeCompleteEnvelope({
+          dayCards: [],
+          strategySections: [survivingSection],
+          planViewState: 'S3_ITINERARY_READY',
+        })
+      );
+    });
+
+    await expect(streamResult).resolves.toBe('complete');
+
+    // Auto-expand is scheduled via setTimeout(..., 100); flush it.
+    expect(callbacks.onAutoExpandItinerary).not.toHaveBeenCalled();
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(callbacks.onAutoExpandItinerary).toHaveBeenCalledTimes(1);
+    expect(callbacks.onAutoExpandItinerary).toHaveBeenCalledWith({
+      forceFullRebuild: true,
+    });
+  });
+
+  it('skips auto-expand when the graph response already includes day_cards', async () => {
+    // Identical to the previous test except day_cards is non-empty — the
+    // graphBuiltItinerary path must short-circuit the expand.
+    const survivingSection = makeSection('local-intel', {
+      title: 'Local Intel',
+      specialist_type: 'local_expert',
+    });
+
+    seedDocument({
+      strategySections: [survivingSection],
+      dayCards: [makeDayCard(1, { label: 'Existing itinerary' })],
+      planViewState: 'S3_ITINERARY_READY',
+    });
+
+    const { result, callbacks, refs, params } = renderUseChatSse();
+
+    const graphDayCards = [makeDayCard(1, { label: 'Graph-built day 1' })];
+    (callbacks.onPlanResult as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      useDocumentStore.setState((state) => ({
+        document: state.document
+          ? {
+              ...state.document,
+              day_cards: graphDayCards,
+              strategy_sections: [survivingSection],
+            }
+          : state.document,
+      }));
+    });
+
+    refs.prevSpecialistTypesRef.current = new Set(['local_expert']);
+    refs.prevTileTypesRef.current = new Set();
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    await act(async () => {
+      streamCallbacks.onComplete(
+        makeCompleteEnvelope({
+          dayCards: graphDayCards,
+          strategySections: [survivingSection],
+          planViewState: 'S3_ITINERARY_READY',
+        })
+      );
+    });
+
+    await expect(streamResult).resolves.toBe('complete');
+
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(callbacks.onAutoExpandItinerary).not.toHaveBeenCalled();
+  });
 });

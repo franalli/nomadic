@@ -1790,6 +1790,7 @@ async def enrich_activities_with_places(
     destination: str,
     path_label: str = "tier2_enrich",
     travelers: int = 1,
+    enrich_cap: int | None = None,
 ) -> list[dict]:
     """Post-process LLM-generated activities by resolving each against Google Places.
 
@@ -1799,6 +1800,12 @@ async def enrich_activities_with_places(
     3. If no match: keep LLM data as-is (graceful degradation)
 
     Feature-gated: caller must check settings.use_google_places_provider before calling.
+
+    ``enrich_cap`` overrides the default ``settings.google_places_enrichment_cap``
+    ceiling on how many activities are searched. The post-build placed-block pass
+    passes the placed-block count so every PLACED POI gets a distinct coordinate
+    (the count is bounded by trip length and every result is L1+L2 cached). When
+    None, the default cap applies (browse / tier1 / tier2 paths).
 
     Returns the enriched list.
     """
@@ -1850,7 +1857,8 @@ async def enrich_activities_with_places(
     semaphore = asyncio.Semaphore(_enrich_max_parallel())
 
     # Enrich all provided activities; concurrency is controlled by semaphore.
-    max_enrich = min(len(activities), settings.google_places_enrichment_cap)
+    cap = enrich_cap if enrich_cap is not None else settings.google_places_enrichment_cap
+    max_enrich = min(len(activities), max(cap, 0))
     to_enrich = activities[:max_enrich]
     passthrough = activities[max_enrich:]
 

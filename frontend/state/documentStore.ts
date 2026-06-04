@@ -317,7 +317,38 @@ const NON_ACTIVITY_BLOCK_TYPES = new Set([
 
 const DEFAULT_ACTIVITY_CATEGORY = 'cultural';
 
-function applyActivityCategoryDefaults(tripInputs: DocumentTripInputs): DocumentTripInputs {
+/**
+ * Computes whether a document already has rendered plan content (strategy or itinerary).
+ * Used as the `hasPlanContent` signal for applyActivityCategoryDefaults: once a plan has
+ * content, an empty categories list means "the user removed their categories" and must be
+ * left as [] — never re-defaulted to 'cultural'.
+ */
+function documentHasPlanContent(
+  document: { strategy_sections?: unknown[] | null; day_cards?: unknown[] | null } | null | undefined
+): boolean {
+  return (
+    (document?.strategy_sections?.length ?? 0) > 0 || (document?.day_cards?.length ?? 0) > 0
+  );
+}
+
+/**
+ * Normalizes activity_settings and seeds the bootstrap 'cultural' default ONLY for brand-new
+ * trips that have not yet produced a plan.
+ *
+ * @param hasPlanContent  REQUIRED. True when the surrounding document already has
+ *   strategy_sections or day_cards. When true, an empty categories list is the user's
+ *   deliberate removal and is preserved as [] — it is NEVER re-seeded to 'cultural'.
+ *   When false (genuine bootstrap, no plan content yet), an empty list seeds 'cultural'
+ *   so the first activity search has something to search for.
+ *
+ * Pass an explicit value at every call site. Computing it from the *incoming* payload is a
+ * trap: the "no diving" staleness-clear turn ships day_cards=[], so the content signal MUST
+ * be read from the pre-merge `currentDoc`/`document`, not from the response/envelope.
+ */
+function applyActivityCategoryDefaults(
+  tripInputs: DocumentTripInputs,
+  hasPlanContent: boolean
+): DocumentTripInputs {
   const bookingTypes: BookingTypes = {
     ...(tripInputs.booking_types ?? DEFAULT_BOOKING_TYPES),
   };
@@ -334,10 +365,11 @@ function applyActivityCategoryDefaults(tripInputs: DocumentTripInputs): Document
     if (bookingTypes.activities === 'off') {
       // Explicit clear: keep empty categories and clear stale day_preferences.
       activitySettings.day_preferences = {};
-    } else {
-      // Default behavior for untouched/new destinations.
+    } else if (!hasPlanContent) {
+      // Bootstrap only: seed the default so a brand-new trip's first activity search is seeded.
       activitySettings.categories = [DEFAULT_ACTIVITY_CATEGORY];
     }
+    // Otherwise (plan already has content): the user removed their categories — leave [].
   }
 
   return {
@@ -767,6 +799,15 @@ type DocumentState = {
   // Envelope-driven generation status (store-owned, not persisted in document)
   generation: GenerationState | null;
 
+  // Sticky UI guard (NOT trip state, NOT persisted to the doc): true once any
+  // merge/load has OBSERVED strategy_sections.length>0 OR day_cards.length>0 in
+  // this session. Once a trip has EVER produced plan content, an empty categories
+  // list is always a deliberate removal — never re-seed 'cultural'. Survives the
+  // total-removal turn where live content is [] (backend ships empty sections AND
+  // empty day_cards). Resets via reset() (spreads initialState). Residual: a reload
+  // AFTER a total removal resets it (no persisted signal) — accepted tradeoff.
+  hasEverHadPlanContent: boolean;
+
   // Progressive preview state for skeleton rendering before full day_cards land
   _specialistPreview: SpecialistPreviewActivity[] | null;
   _partialVersion: number | null;
@@ -901,6 +942,8 @@ const initialState = {
   cartTileIds: new Set<string>(),
   // Envelope-driven generation status (not persisted in document payload)
   generation: null as GenerationState | null,
+  // Sticky UI guard — true once any merge/load observed plan content this session.
+  hasEverHadPlanContent: false,
   _specialistPreview: null as SpecialistPreviewActivity[] | null,
   _partialVersion: null as number | null,
   // Stashed activity tiles (Tier 1 suppressed — available for Browse Activities sheet)
@@ -1177,7 +1220,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ...document.trip_inputs,
       ...updates,
     };
-    mergedTripInputs = applyActivityCategoryDefaults(mergedTripInputs);
+    mergedTripInputs = applyActivityCategoryDefaults(
+      mergedTripInputs,
+      get().hasEverHadPlanContent || documentHasPlanContent(document)
+    );
 
     const suppressedLocalDayCards = shouldSuppressActivitiesFromTripInputs(mergedTripInputs)
       ? (stripActivitiesFromDayCards(document.day_cards) ?? document.day_cards)
@@ -1259,7 +1305,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         // Keep current missing_fields until backend responds with authoritative value
         missing_fields: document.trip_inputs.missing_fields ?? [],
       };
-      updatedTripInputs = applyActivityCategoryDefaults(updatedTripInputs);
+      updatedTripInputs = applyActivityCategoryDefaults(
+        updatedTripInputs,
+        documentHasPlanContent(document)
+      );
 
       // Optimistically update the store
       set({
@@ -1319,7 +1368,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         };
         const normalizedPatchDocument: PlanDocumentData = {
           ...mergedPatchDocument,
-          trip_inputs: applyActivityCategoryDefaults(mergedPatchDocument.trip_inputs),
+          trip_inputs: applyActivityCategoryDefaults(
+            mergedPatchDocument.trip_inputs,
+            // Pre-merge content signal: currentDoc holds the true prior
+            // strategy_sections AND day_cards. The merged doc's day_cards come
+            // from the PATCH response, which can drop them on a clear turn.
+            // The sticky session guard also keeps an empty categories list as a
+            // deliberate removal once any plan content has ever been observed.
+            get().hasEverHadPlanContent || documentHasPlanContent(currentDoc)
+          ),
         };
 
         // === FULL DIAGNOSTIC — REMOVE AFTER FIX ===
@@ -1392,7 +1449,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             };
             const normalizedRetryDocument: PlanDocumentData = {
               ...mergedRetryDocument,
-              trip_inputs: applyActivityCategoryDefaults(mergedRetryDocument.trip_inputs),
+              trip_inputs: applyActivityCategoryDefaults(
+                mergedRetryDocument.trip_inputs,
+                // Pre-merge content signal (see PATCH path above) + sticky guard.
+                get().hasEverHadPlanContent || documentHasPlanContent(currentDocRetry)
+              ),
             };
 
             set({
@@ -1646,6 +1707,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           ...(normalizedResponseDocument.browseable_activities !== undefined && {
             browseableActivities: normalizedResponseDocument.browseable_activities,
           }),
+          // Re-derive the sticky guard on rehydration: a loaded doc that still has
+          // plan content latches it true so a later removal won't re-seed 'cultural'.
+          hasEverHadPlanContent:
+            get().hasEverHadPlanContent ||
+            documentHasPlanContent(normalizedResponseDocument),
         });
         return normalizedResponseDocument;
       } catch (err) {
@@ -1950,7 +2016,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           ?? DEFAULT_BOOKING_TYPES.activities,
       },
     };
-    mergedTripInputs = applyActivityCategoryDefaults(mergedTripInputs);
+    // Read plan-content from the PRE-MERGE currentDoc, NOT the response. The "no diving"
+    // staleness-clear turn ships day_cards=[], so using the response here would re-seed
+    // 'cultural' and resurrect the bug. The sticky session guard additionally covers
+    // TOTAL removal, where the pre-merge currentDoc already had its only section/day_cards
+    // dropped on the prior turn — so an empty categories list still stays a deliberate
+    // removal across every later unrelated turn.
+    mergedTripInputs = applyActivityCategoryDefaults(
+      mergedTripInputs,
+      get().hasEverHadPlanContent || documentHasPlanContent(currentDoc)
+    );
     if (currentDoc?.trip_inputs && _jsonStableEqual(currentDoc.trip_inputs, mergedTripInputs)) {
       mergedTripInputs = currentDoc.trip_inputs;
     }
@@ -2170,10 +2245,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         return section;
       });
 
-      // Add current sections that aren't in the response (preserve existing specialists)
-      for (const current of currentSections) {
-        if (!responseByType.has(current.specialist_type)) {
-          merged.push(current);
+      // Add current sections that aren't in the response (preserve existing specialists).
+      // SKIP this additive re-push when the backend signals an authoritative replace
+      // (tiles_replaced). On a removal turn the backend drops the pruned specialist's
+      // section, so responseSections is the authoritative active set — re-pushing absent
+      // sections would resurrect the dropped specialist. Lightweight routes (origin/
+      // settings changes) leave tiles_replaced falsy and legitimately omit content_added,
+      // so for those we keep the additive merge to avoid losing cached sections.
+      if (!tilesReplaced) {
+        for (const current of currentSections) {
+          if (!responseByType.has(current.specialist_type)) {
+            merged.push(current);
+          }
         }
       }
 
@@ -2213,6 +2296,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // Keep shadow in sync so filterNoopTripInputPatch has an accurate baseline
       // after graph runs that modify trip_inputs (e.g., backend adds categories).
       _lastPatchedTripInputs: structuredClone(mergedTripInputs),
+      // Sticky guard: observe content from the PRE-MERGE currentDoc as well as the
+      // resulting doc. On the total-removal turn the response ships empty content but
+      // the pre-merge currentDoc still had its last section/day_cards — so the guard
+      // latches true and the next unrelated turn never re-seeds 'cultural'.
+      hasEverHadPlanContent:
+        get().hasEverHadPlanContent ||
+        documentHasPlanContent(currentDoc) ||
+        finalStrategySections.length > 0 ||
+        finalDayCards.length > 0,
       _specialistPreview: null,
       ...(response.document.day_cards !== undefined && {
         _partialVersion: Date.now(),
@@ -2287,10 +2379,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (!currentDoc) {
       currentDoc = {
         trip_context_id: null,
-        trip_inputs: applyActivityCategoryDefaults({
-          ...DEFAULT_TRIP_INPUTS,
-          ...(envelope.trip_inputs ?? {}),
-        }),
+        // Genuine bootstrap: no document exists yet, so seed the 'cultural' default.
+        trip_inputs: applyActivityCategoryDefaults(
+          {
+            ...DEFAULT_TRIP_INPUTS,
+            ...(envelope.trip_inputs ?? {}),
+          },
+          false
+        ),
         branches: [],
         tiles: {},
         ...(envelope.plan_view_state !== undefined && {
@@ -2495,7 +2591,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ? { ...currentDoc.trip_inputs, ...envelope.trip_inputs }
       : undefined;
     if (mergedEnvelopeTripInputs) {
-      mergedEnvelopeTripInputs = applyActivityCategoryDefaults(mergedEnvelopeTripInputs);
+      // Read plan-content from the PRE-MERGE currentDoc. The "no diving" staleness-clear
+      // turn ships day_cards=[] in this same envelope, so the content signal must come from
+      // the existing document, never the incoming envelope. The sticky session guard also
+      // covers total removal across later unrelated turns.
+      mergedEnvelopeTripInputs = applyActivityCategoryDefaults(
+        mergedEnvelopeTripInputs,
+        get().hasEverHadPlanContent || documentHasPlanContent(currentDoc)
+      );
     }
 
     const effectiveTripInputs = mergedEnvelopeTripInputs ?? currentDoc.trip_inputs;
@@ -2544,6 +2647,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       updatedAt: new Date().toISOString(),
       generation: envelope.generation !== undefined ? envelope.generation : get().generation,
       isRegenerating: nextIsRegenerating,
+      // Sticky guard: observe content from the PRE-MERGE currentDoc and the merged
+      // result so a later total-removal turn (live content []) never re-seeds 'cultural'.
+      hasEverHadPlanContent:
+        get().hasEverHadPlanContent ||
+        documentHasPlanContent(currentDoc) ||
+        documentHasPlanContent(updatedDoc),
       ...(envelope.day_cards !== undefined && {
         _specialistPreview: null,
         _partialVersion: Date.now(),

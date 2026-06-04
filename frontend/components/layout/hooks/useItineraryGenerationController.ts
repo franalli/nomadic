@@ -175,16 +175,21 @@ export function useItineraryGenerationController({
           if (!rawTripInputs) return rawTripInputs;
           const categories = rawTripInputs.activity_settings?.categories ?? [];
           if (categories.length > 0) return rawTripInputs;
+          // Empty categories means "no category preference" — it does NOT imply the
+          // user disabled activities. `booking_types.activities` is the authoritative
+          // disable signal (set explicitly via the settings UI / activity toggle), so
+          // it is passed through unchanged. Forcing it to 'off' here wrongly wiped the
+          // surviving general activities when the user removed only their sole
+          // specialist category (e.g. "remove diving" → categories=[] but activities
+          // still 'suggested'), collapsing the plan into all-Free-Day cards. The
+          // backend maps categories=[] + activities!='off' to "no filter" and places
+          // the remaining activity tiles; categories=[] + activities='off' skips all.
           return {
             ...rawTripInputs,
             activity_settings: {
               ...(rawTripInputs.activity_settings ?? {}),
               categories: [] as string[],
               day_preferences: {},
-            },
-            booking_types: {
-              ...(rawTripInputs.booking_types ?? {}),
-              activities: 'off' as const,
             },
           };
         })();
