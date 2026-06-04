@@ -1,18 +1,16 @@
 """
-Coordinator protocol schemas -- typed contracts between classifier, coordinator,
-specialists, and the execution planner.
+Coordinator protocol schemas -- typed contracts between the classifier,
+specialists, and the planner agent.
 
-These schemas define the data shapes that flow through the coordinator architecture:
+These schemas define the data shapes that flow through the planner:
 
   User message
        |
   ClassifierOutput  (extends RouterOutput with change classification)
-       |
-  ExecutionPlan     (ordered steps the coordinator will execute)
-       |
-  TripBrief  -----> SpecialistPlan   (per-specialist contract)
-       |
-  ReplanRequest     (iteration on existing plans)
+
+The deterministic execution-plan schemas (StepType / ExecutionStep /
+ExecutionPlan) were removed with the coordinator DAG; turns now run through the
+LangChain create_agent loop (see app/planner/services/agent_runner.py).
 
 All schemas are Pydantic v2 BaseModel with strict type hints.
 """
@@ -20,7 +18,7 @@ All schemas are Pydantic v2 BaseModel with strict type hints.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -310,98 +308,8 @@ class ClassifierOutput(BaseModel):
 
 
 # =============================================================================
-# Trip Brief -- what the coordinator sends to specialists
-# =============================================================================
-
-
-class TripBrief(BaseModel):
-    """Structured packet sent to a specialist with everything they need to plan.
-
-    The specialist never sees raw user text. It sees this brief.
-    The coordinator assembles this from trip_inputs + other specialist plans.
-    """
-
-    # Core trip parameters
-    destination: str
-    start_date: str
-    end_date: str
-    num_days: int
-
-    # Traveler context
-    adults: int = 1
-    children: int = 0
-    skill_level: Optional[str] = None
-
-    # Budget allocation for this specialist's domain
-    budget_total: Optional[float] = None
-    budget_allocation_pct: float = Field(
-        default=0.25,
-        description="Coordinator-decided budget share for this specialist.",
-    )
-
-    # Scheduling constraints from other specialists
-    reserved_days: List[int] = Field(
-        default_factory=list,
-        description="Day numbers already claimed by other specialists.",
-    )
-    target_day_count: Optional[int] = Field(
-        None,
-        description="User-requested number of days for this activity.",
-    )
-    activities_per_day: int = Field(
-        default=2,
-        description="Global pace setting: activities per day (1=relaxed, 2=moderate, 3=packed).",
-    )
-
-    # Cross-specialist spatial context
-    hotel_zone: Optional[str] = None
-    other_specialist_zones: Dict[str, str] = Field(
-        default_factory=dict,
-        description=("topic -> zone mapping. E.g., {'diving': 'Amed, East Bali'}"),
-    )
-
-    # Trip intent
-    trip_vibe: Optional[str] = None  # "adventure", "relaxation", etc.
-
-    # All active categories for fair-share allocation across specialists
-    categories: List[str] = Field(
-        default_factory=list,
-        description="All active trip categories for fair-share allocation.",
-    )
-
-
-# =============================================================================
 # Specialist Output Protocol -- what specialists return
 # =============================================================================
-
-
-class SpecialistDayPlan(BaseModel):
-    """Plan for a single day from a specialist."""
-
-    day_number: int
-    period: Literal["morning", "afternoon", "evening", "full_day"] = "morning"
-    title: str
-    description: str = ""
-    location: Optional[str] = None
-    lat: Optional[float] = None
-    lng: Optional[float] = None
-    duration_hours: float = 3.0
-    difficulty: str = "beginner"
-    # Topic-specific optional fields
-    depth_meters: Optional[int] = None
-    elevation_meters: Optional[int] = None
-    certification_required: Optional[str] = None
-    logic_hook: Optional[str] = None  # "Why this matters" tip
-
-
-class SpecialistTransit(BaseModel):
-    """Transit requirement between activities."""
-
-    from_day: int
-    to_day: int
-    mode: Literal["walk", "drive", "boat", "internal_flight"] = "drive"
-    estimated_minutes: int = 30
-    note: Optional[str] = None
 
 
 class SpecialistConstraintOutput(BaseModel):
@@ -414,90 +322,3 @@ class SpecialistConstraintOutput(BaseModel):
     reason: str = ""
     label: Optional[str] = None
     icon: Optional[str] = None
-
-
-class SpecialistPlan(BaseModel):
-    """Complete output from a specialist dispatch.
-
-    Replaces LLMSpecialistOutput with richer structure that supports
-    coordinator merging and selective re-planning.
-    """
-
-    topic: str
-    feasibility_status: Literal["feasible", "infeasible", "conditional"] = "feasible"
-    feasibility_reason: Optional[str] = None
-
-    day_plans: List[SpecialistDayPlan] = Field(default_factory=list)
-    constraints: List[SpecialistConstraintOutput] = Field(default_factory=list)
-    transit_requirements: List[SpecialistTransit] = Field(default_factory=list)
-
-    # Budget tracking
-    estimated_cost: Optional[float] = None
-
-    # Specialist's editorial insight (fed to conversationalist)
-    editorial: str = ""
-
-    # Confidence in the plan quality (0-1)
-    confidence: float = 0.8
-
-
-# =============================================================================
-# Replan Request
-# =============================================================================
-
-
-class ReplanRequest(BaseModel):
-    """When the user modifies an existing plan, the coordinator sends
-    the original plan + what changed, not a blank brief.
-    """
-
-    original_brief: TripBrief
-    original_plan: SpecialistPlan
-    change_trigger: str  # "User requested 3 dive days instead of 4"
-    change_type: ChangeType
-    updated_brief: TripBrief  # Brief with updated fields
-    cross_specialist_context: Dict[str, Any] = Field(
-        default_factory=dict,
-        description=("Plans from other specialists for spatial/temporal awareness."),
-    )
-    preserve: List[str] = Field(
-        default_factory=list,
-        description=("What to keep from original plan. E.g., ['hotel_zone', 'day_1_activity']"),
-    )
-
-
-# =============================================================================
-# Execution Plan -- coordinator's step-by-step execution strategy
-# =============================================================================
-
-
-class StepType(str, Enum):
-    """Types of steps the coordinator can execute."""
-
-    CLASSIFY = "classify"
-    DISPATCH_SPECIALISTS = "dispatch_specialists"
-    SEARCH_TILES = "search_tiles"
-    BUILD_ITINERARY = "build_itinerary"
-    GENERATE_RESPONSE = "generate_response"
-    LOCAL_INTEL = "local_intel"
-    SHORT_CIRCUIT = "short_circuit"  # greeting, reset, simple question
-
-
-class ExecutionStep(BaseModel):
-    """A single step in the coordinator's execution plan."""
-
-    step_type: StepType
-    params: Dict[str, Any] = Field(default_factory=dict)
-    parallel_with: Optional[StepType] = None  # Run in parallel with this step
-
-
-class ExecutionPlan(BaseModel):
-    """The coordinator's deterministic plan for handling this turn.
-
-    Pure Python produces this. No LLM involved.
-    """
-
-    steps: List[ExecutionStep] = Field(default_factory=list)
-    reason: str = ""  # For debugging/logging
-    estimated_llm_calls: int = 0
-    estimated_wall_ms: int = 0

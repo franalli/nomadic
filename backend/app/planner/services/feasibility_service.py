@@ -250,30 +250,3 @@ async def check_feasibility(
         return ("caveat", reason, None)
 
     return ("feasible", None, None)
-
-
-async def batch_feasibility_precheck(
-    topics: list[str],
-    destination: str,
-) -> dict[str, tuple[str, str | None, str | None]]:
-    """Parallel feasibility checks for multiple topics.
-
-    Only checks topics with has_geographic_constraint=True.
-    Uses existing cache + singleflight dedup.
-
-    Returns: {topic: (status, reason, alternative)} for non-feasible topics only.
-    """
-    topics_to_check = [
-        t
-        for t in topics
-        if t in SPECIALIST_REGISTRY and SPECIALIST_REGISTRY[t].has_geographic_constraint
-    ]
-    if not topics_to_check:
-        return {}
-
-    results = await asyncio.gather(*[check_feasibility(t, destination) for t in topics_to_check])
-    return {
-        topic: result
-        for topic, result in zip(topics_to_check, results, strict=True)
-        if result[0] != "feasible"
-    }

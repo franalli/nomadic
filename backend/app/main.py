@@ -3414,7 +3414,13 @@ async def fill_day_endpoint(
         generated_tiles: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """Best-effort Places enrichment for fill-day generated activities."""
-        if not generated_tiles or not settings.google_maps_api_key:
+        # Respect the master GP flag (this path previously bypassed it). When GP is disabled,
+        # fill-day tiles keep their LLM/vendor data -- no paid Places enrichment.
+        if (
+            not generated_tiles
+            or not settings.google_maps_api_key
+            or not settings.use_google_places_provider
+        ):
             return generated_tiles
         try:
             from app.tile_service.google_places_provider import enrich_activities_with_places

@@ -869,22 +869,9 @@ async def generate_experience_tiles_for_day(
     # Discard LLM-generated coordinate outliers before GP enrichment
     _discard_coordinate_outliers(all_tiles)
 
-    # ENRICH: Ground fill-day tiles with Google Places
-    if all_tiles and settings.use_google_places_provider:
-        try:
-            from app.tile_service.google_places_provider import enrich_activities_with_places
-
-            _cap = settings.google_places_enrichment_cap
-            to_enrich = all_tiles[:_cap]
-            keep_as_is = all_tiles[_cap:]
-            enriched = await enrich_activities_with_places(
-                to_enrich,
-                destination=destination,
-                path_label="tier2_enrich",
-            )
-            all_tiles = enriched + keep_as_is
-        except Exception as e:
-            logger.warning("[EXPERIENCE] fill-day enrichment failed, using LLM data: %s", e)
+    # Inline Google Places enrichment removed (vendor-first cost policy): GP enrichment runs only
+    # post-build as a minimal gap-fill on PLACED blocks after Viator/GYG matching. Fill tiles keep
+    # LLM values; placed ones are backfilled by _post_build_enrich_placed_activities.
 
     logger.info(f"[EXPERIENCE] fill-day: generated {len(all_tiles)} tiles for day {day_number}")
     return all_tiles
@@ -1248,22 +1235,9 @@ async def _generate_experiences_impl(
         # Discard LLM-generated coordinate outliers before GP enrichment
         _discard_coordinate_outliers(new_tile_dicts)
 
-        # ENRICH: Ground tiles with Google Places (real coords, photos, place_id)
-        if settings.use_google_places_provider:
-            try:
-                from app.tile_service.google_places_provider import enrich_activities_with_places
-
-                _cap = settings.google_places_enrichment_cap
-                to_enrich = new_tile_dicts[:_cap]
-                keep_as_is = new_tile_dicts[_cap:]
-                enriched = await enrich_activities_with_places(
-                    to_enrich,
-                    destination=destination,
-                    path_label="tier2_enrich",
-                )
-                new_tile_dicts = enriched + keep_as_is
-            except Exception as e:
-                logger.warning("[EXPERIENCE] Places enrichment failed, using LLM data: %s", e)
+        # Inline Google Places enrichment removed (vendor-first cost policy): GP enrichment runs
+        # only post-build as minimal gap-fill on PLACED blocks after Viator/GYG matching. Tiles
+        # keep LLM values; placed ones are backfilled by _post_build_enrich_placed_activities.
 
         # Prefetch Unsplash images in background (non-blocking)
         async def _background_prefetch():

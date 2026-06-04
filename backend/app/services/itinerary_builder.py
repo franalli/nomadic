@@ -1165,6 +1165,21 @@ class ItineraryBuilder:
                         activity.rating = tile["rating"]
                     if activity.user_ratings_count is None and tile.get("review_count") is not None:
                         activity.user_ratings_count = tile["review_count"]
+                    # Price level: linked specialist tiles built from content_added
+                    # don't carry price fields, so inherit them from the matched
+                    # logistics/Places tile here (otherwise blocks render price_level
+                    # None even though the booked_tile has it). Use explicit
+                    # ``is not None`` so a legitimate Google price_level of 0 (free)
+                    # is preserved rather than dropped by truthiness.
+                    if activity.price_level is None:
+                        link_meta = tile.get("meta") or {}
+                        link_pl = link_meta.get("price_level")
+                        if link_pl is None:
+                            link_pl = tile.get("price_level")
+                        if link_pl is not None:
+                            activity.price_level = link_pl
+                        elif tile.get("price_estimate") is not None:
+                            activity.price_level = _price_estimate_to_level(tile["price_estimate"])
                     # Viator override: affiliate deeplinks/images/ratings always win
                     if tile.get("provider") == "viator":
                         vt_dl = tile.get("deeplink") or tile.get("deeplink_url")
@@ -1192,7 +1207,9 @@ class ItineraryBuilder:
                     )
 
                 if activity.price_level is None:
-                    pl = meta.get("price_level") or tile.get("price_level")
+                    pl = meta.get("price_level")
+                    if pl is None:
+                        pl = tile.get("price_level")
                     if pl is not None:
                         activity.price_level = pl
                     elif tile.get("price_estimate") is not None:

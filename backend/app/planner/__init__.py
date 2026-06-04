@@ -47,7 +47,6 @@ from app.planner.test_mode import (
 if TYPE_CHECKING:
     from app.planner.coordinator import (
         build_trip_state_summary,
-        execute_turn,
     )
     from app.planner.services.admin_utils import (
         CACHE_SCHEMA_VERSION,
@@ -99,7 +98,6 @@ def __getattr__(name: str):
         "trip_plan_to_trip_inputs",
     }
     _COORDINATOR_EXPORTS = {
-        "execute_turn",
         "build_trip_state_summary",
     }
 
@@ -159,8 +157,7 @@ __all__ = [
     "restore_graph_state",
     "state_to_session_state",
     "trip_plan_to_trip_inputs",
-    # Coordinator
-    "execute_turn",
+    # Coordinator helpers (envelope/state utilities; the DAG was removed)
     "build_trip_state_summary",
     # Test mode
     "is_test_mode",

@@ -38,7 +38,13 @@ def _merge_turn_meta(left: dict, right: dict) -> dict:
       (e.g. two ``get_specialist_advice``) are counted correctly for
       ModelSelectionMiddleware upgrade thresholds.
     - ``tool_call_count``: derived from len(tools_called) after merge
+    - ``turn_steps`` / ``partial_failures``: concatenation so per-tool entries
+      from a parallel fetch round accumulate instead of clobbering each other.
     - All other keys: right wins (validation_result, builder_result, etc.)
+
+    Each producer must return only its DELTA for the concatenated keys (e.g.
+    ``{"tools_called": [name]}``); returning the full accumulated list would
+    re-concatenate it on every merge.
     """
     if not left:
         return right or {}
@@ -46,13 +52,18 @@ def _merge_turn_meta(left: dict, right: dict) -> dict:
         return left
     merged = {**left, **right}
 
-    # Merge tools_called lists -- simple concatenation preserves duplicates
-    left_tools: list[str] = left.get("tools_called", [])
-    right_tools: list[str] = right.get("tools_called", [])
-    if isinstance(left_tools, list) and isinstance(right_tools, list):
-        combined = list(left_tools) + right_tools
-        merged["tools_called"] = combined
-        merged["tool_call_count"] = len(combined)
+    # Concatenated list keys -- preserve every entry across parallel tool calls.
+    for key in ("tools_called", "turn_steps", "partial_failures"):
+        left_list = left.get(key, [])
+        right_list = right.get(key, [])
+        if isinstance(left_list, list) and isinstance(right_list, list):
+            combined = list(left_list) + list(right_list)
+            if combined:
+                merged[key] = combined
+
+    # tool_call_count is always derived from the merged tools_called length.
+    if isinstance(merged.get("tools_called"), list):
+        merged["tool_call_count"] = len(merged["tools_called"])
 
     return merged
 

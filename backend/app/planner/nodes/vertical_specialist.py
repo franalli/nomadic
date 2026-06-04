@@ -18,15 +18,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
-
-if TYPE_CHECKING:
-    from app.planner.schemas.coordinator_schemas import ReplanRequest, TripBrief
 
 from app.config import settings
 from app.placeholders import get_activity_image
@@ -330,9 +326,9 @@ def _build_specialist_prompt(
 ) -> tuple[Optional[str], str, int]:
     """Build the system + user prompts for a specialist LLM call.
 
-    Encapsulates prompt construction so that both the existing
-    ``generate_specialist_output_llm`` path and the new coordinator
-    ``dispatch_specialist_with_brief`` path share identical prompt logic.
+    Encapsulates prompt construction so that the
+    ``generate_specialist_output_llm`` path has a single, reusable place
+    for specialist prompt logic.
 
     Args:
         topic: Specialist topic (e.g. "diving", "hiking").
@@ -565,8 +561,7 @@ async def generate_specialist_output_llm(
         except Exception as e:
             _debug_log(f"[LLM_SPECIALIST] Cache lookup error: {e}")
 
-    # Build prompts via shared helper (same logic, now reusable by
-    # dispatch_specialist_with_brief and the existing path).
+    # Build prompts via shared helper.
     system_prompt, user_prompt, max_acts = _build_specialist_prompt(
         topic=topic,
         destination=destination,
@@ -831,223 +826,6 @@ async def generate_specialist_output_llm(
             except Exception:
                 pass
     return None
-
-
-# =============================================================================
-# Coordinator Bridge — TripBrief-based dispatch
-# =============================================================================
-
-
-def build_scheduling_context(brief: TripBrief) -> str:
-    """Build a scheduling-context block from a TripBrief.
-
-    The returned string is appended verbatim to the specialist user prompt
-    so the LLM is aware of cross-specialist scheduling constraints without
-    any changes to the specialist system prompt or LLM schema.
-
-    Args:
-        brief: TripBrief assembled by the coordinator.
-
-    Returns:
-        Multi-line string suitable for prompt injection.
-    """
-    lines: list[str] = ["SCHEDULING CONTEXT (from coordinator):"]
-    lines.append(f"- Trip duration: {brief.num_days} days ({brief.start_date} to {brief.end_date})")
-    if brief.reserved_days:
-        lines.append(f"- Days already reserved by other specialists: {brief.reserved_days}")
-    if brief.target_day_count is not None:
-        lines.append(f"- Target day count for your activities: {brief.target_day_count}")
-    if brief.other_specialist_zones:
-        lines.append(f"- Other specialist zones: {brief.other_specialist_zones}")
-    if brief.hotel_zone:
-        lines.append(f"- Hotel zone: {brief.hotel_zone}")
-
-    lines.append("")
-    lines.append("Plan your activities to FIT within the available days.")
-    if brief.hotel_zone:
-        lines.append("Prefer locations NEAR the hotel zone when possible.")
-    return "\n".join(lines)
-
-
-class _BriefAsTripPlan:
-    """Minimal adapter exposing TripBrief fields as trip_plan attributes.
-
-    ``generate_specialist_output_llm`` reads ``trip_plan.start_date``,
-    ``trip_plan.end_date``, ``trip_plan.adults``, and ``trip_plan.children``
-    via attribute access. This thin wrapper avoids importing the full
-    TripPlan model and keeps the bridge layer lightweight.
-    """
-
-    __slots__ = (
-        "start_date",
-        "end_date",
-        "adults",
-        "children",
-        "destination",
-        "activities_per_day",
-        "categories",
-        "budget_total",
-        "budget_allocation_pct",
-        "trip_vibe",
-    )
-
-    def __init__(self, brief: TripBrief) -> None:
-        self.start_date: str = brief.start_date
-        self.end_date: str = brief.end_date
-        self.adults: int = brief.adults
-        self.children: int = brief.children
-        self.destination: str = brief.destination
-        self.activities_per_day: int = brief.activities_per_day
-        self.categories: list = getattr(brief, "categories", [])
-        self.budget_total: float | None = brief.budget_total
-        self.budget_allocation_pct: float = brief.budget_allocation_pct
-        self.trip_vibe: str | None = brief.trip_vibe
-
-
-async def dispatch_specialist_with_brief(
-    brief: TripBrief,
-    topic: str,
-    replan: Optional[ReplanRequest] = None,
-    db: Optional[Any] = None,
-    raw_day_pref: Optional[int] = _CACHE_DAY_PREF_UNSET,
-) -> Optional[LLMSpecialistOutput]:
-    """Bridge between the coordinator's TripBrief and the existing
-    specialist LLM pipeline.
-
-    Converts TripBrief fields into the arguments expected by
-    ``generate_specialist_output_llm`` and optionally enriches the
-    prompt with cross-specialist scheduling context built from the
-    brief's reserved_days / other_specialist_zones / hotel_zone.
-
-    Args:
-        brief: Structured packet assembled by the coordinator.
-        topic: Specialist topic (e.g. "diving", "hiking").
-        replan: Optional ReplanRequest when iterating on an existing
-            plan. Currently used for logging; future phases will feed
-            the original plan into the prompt for delta-aware replanning.
-        db: Optional AsyncSession for persistent caching (passed through
-            to ``generate_specialist_output_llm`` unchanged).
-
-    Returns:
-        LLMSpecialistOutput or None on failure (same contract as
-        ``generate_specialist_output_llm``).
-    """
-    _logger = logging.getLogger(__name__)
-
-    # Build a trip-plan-like object from the brief
-    trip_plan_proxy = _BriefAsTripPlan(brief)
-
-    # Determine target_activities from brief
-    target_activities = brief.target_day_count
-
-    # Resolve raw_day_pref for cache key alignment with parallel dispatch path.
-    # The parallel path caches with day_preferences.get(topic) (raw user pref),
-    # while target_activities may be a computed value from _scaled_target.
-    _cache_pref = raw_day_pref
-
-    # Build scheduling context when the brief carries cross-specialist info.
-    # Phase 3B will thread this into the specialist prompt via a dedicated
-    # code path; for now we log it for observability.
-    has_cross_context = brief.reserved_days or brief.other_specialist_zones or brief.hotel_zone
-    scheduling_ctx: Optional[str] = None
-    if has_cross_context:
-        scheduling_ctx = build_scheduling_context(brief)
-        _logger.debug(
-            "[dispatch_specialist_with_brief] Scheduling context for %s:\n%s",
-            topic,
-            scheduling_ctx,
-        )
-
-    if replan is not None:
-        _logger.info(
-            "[dispatch_specialist_with_brief] Replanning %s — trigger: %s",
-            topic,
-            replan.change_trigger,
-        )
-        replan_context = (
-            "REPLAN CONTEXT:\n"
-            f"- Trigger: {replan.change_trigger}\n"
-            f"- Preserve where possible: {replan.preserve}\n"
-            "- Keep valid activities from original plan unless they conflict with new constraints."
-        )
-        scheduling_ctx = (
-            f"{scheduling_ctx}\n\n{replan_context}" if scheduling_ctx else replan_context
-        )
-
-    # Check cache — handle both negative sentinels and positive hits to avoid
-    # a duplicate L1/L2 lookup inside generate_specialist_output_llm.
-    skip_cache = False
-    if db is not None:
-        try:
-            from app.services.specialist_cache import (
-                get_cached_specialist_output,
-                is_negative_cache,
-            )
-
-            _read_day_pref = (
-                target_activities if _cache_pref is _CACHE_DAY_PREF_UNSET else _cache_pref
-            )
-            cached = await get_cached_specialist_output(
-                db=db,
-                topic=topic,
-                destination=brief.destination,
-                start_date=brief.start_date,
-                end_date=brief.end_date,
-                skill_level=brief.skill_level,
-                day_pref=_read_day_pref,
-            )
-            if cached is not None:
-                if is_negative_cache(cached):
-                    _logger.info(
-                        "[dispatch_specialist_with_brief] %s negative cache hit — skipping LLM",
-                        topic,
-                    )
-                    return None
-                # Positive cache hit — return directly, skip second lookup
-                try:
-                    output = LLMSpecialistOutput.model_validate(cached)
-                    output = _reanchor_constraint_dates(output)
-                    _logger.info(
-                        "[dispatch_specialist_with_brief] %s cache hit (%d activities)",
-                        topic,
-                        len(output.activities),
-                    )
-                    return output
-                except (ValueError, TypeError):
-                    pass  # Corrupt entry — fall through to LLM
-            skip_cache = True  # Already checked — tell downstream to skip
-        except Exception:
-            pass
-
-    # Delegate to generate_specialist_output_llm which handles retries and padding.
-    #
-    # NOTE: scheduling_context is NOT part of the cache key (by design).
-    # The specialist cache is keyed on (topic, destination, dates,
-    # skill_level, day_pref). Scheduling context is ephemeral
-    # coordinator state that should not poison the cache.
-    result = await generate_specialist_output_llm(
-        topic=topic,
-        destination=brief.destination,
-        trip_plan=trip_plan_proxy,
-        db=db,
-        skill_level=brief.skill_level,
-        target_activities=target_activities,
-        scheduling_context=scheduling_ctx,
-        skip_cache_lookup=skip_cache,
-        cache_day_pref=_cache_pref,
-    )
-
-    if result is not None:
-        _logger.info(
-            "[dispatch_specialist_with_brief] %s returned %d activities (status=%s)",
-            topic,
-            len(result.activities),
-            result.feasibility_status,
-        )
-    else:
-        _logger.warning("[dispatch_specialist_with_brief] %s returned None", topic)
-
-    return result
 
 
 def _get_minimal_safety_constraints(
@@ -2195,24 +1973,11 @@ async def _merge_specialist_into_state(
         content_added = content_added[:max_activities]
         log("SPECIALIST", f"Trimmed activities: {original_count} → {max_activities}")
 
-    # ENRICH: Ground activities with Google Places (real coords, photos, place_id)
-    if content_added and settings.use_google_places_provider:
-        try:
-            from app.tile_service.google_places_provider import enrich_activities_with_places
-
-            _cap = settings.google_places_enrichment_cap
-            to_enrich = content_added[:_cap]
-            keep_as_is = content_added[_cap:]
-            _travelers = (state.trip_plan.adults or 0) + (state.trip_plan.children or 0) or 1
-            enriched = await enrich_activities_with_places(
-                to_enrich,
-                destination=state.trip_plan.destination or "",
-                path_label="tier1_enrich",
-                travelers=_travelers,
-            )
-            content_added = enriched + keep_as_is
-        except Exception as e:
-            _debug_log(f"[SPECIALIST] Places enrichment failed, using LLM data: {e}")
+    # Google Places enrichment is intentionally NOT done inline here. Per the vendor-first cost
+    # policy, GP enrichment runs ONLY post-build (coordinator._post_build_enrich_placed_activities)
+    # -- after Viator/GYG partner matching and only on PLACED blocks still missing data (minimal
+    # gap-fill). Inline enrichment here ran pre-vendor (redundant double-spend) and mostly failed
+    # to geocode specialist dive-site names anyway; content_added keeps the LLM-produced values.
 
     # Determine hero_image
     hero_image = None

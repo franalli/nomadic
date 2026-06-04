@@ -181,8 +181,10 @@ class RouterOutput(BaseModel):
     removal_targets: List[str] = Field(
         default_factory=list,
         description=(
-            "Activities/categories user wants to REMOVE from their plan. "
-            'E.g., "skip hiking" -> ["hiking"], "remove yoga and diving" -> ["yoga", "diving"]. '
+            "Activities/categories the user wants to REMOVE/drop from their plan, INCLUDING the "
+            "old activity in a swap. "
+            'E.g., "skip hiking" -> ["hiking"]; "remove yoga and diving" -> ["yoga", "diving"]; '
+            '"switch from diving to hiking" -> ["diving"] (hiking added separately). '
             "Empty list if no removal."
         ),
     )
@@ -487,6 +489,12 @@ If the user wants to REMOVE activities from their plan, populate removal_targets
 - "skip hiking" -> removal_targets: ["hiking"]
 - "remove yoga and diving" -> removal_targets: ["yoga", "diving"]
 - "I changed my mind about cycling" -> removal_targets: ["cycling"]
+SWAPS also remove the OLD activity (the NEW one is added via the normal category/specialist
+extraction above -- put ONLY the dropped activity in removal_targets):
+- "switch from diving to hiking" -> removal_targets: ["diving"]  (hiking is added separately)
+- "swap yoga for pilates" -> removal_targets: ["yoga"]  (pilates is added separately)
+- "change from surfing to paragliding" -> removal_targets: ["surfing"]
+- "instead of rock climbing, let's do kayaking" -> removal_targets: ["rock climbing"]
 
 If the user specifies skill/experience level, populate skill_level:
 - "I'm a beginner" -> "beginner"
@@ -572,6 +580,10 @@ def _get_router_extraction_llm():
         settings.router_model,
         temperature=0,  # Deterministic extraction
         max_tokens=700,  # Need more tokens for field extraction + activity_categories
+        # Modest retry for transient 429/503 (with backoff). NOT a long timeout:
+        # empty structured-output responses are not exceptions, so retries don't
+        # help them, and a long per-call timeout serializes the whole curl suite.
+        max_retries=2,
     )
 
 

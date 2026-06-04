@@ -124,7 +124,6 @@ class Settings(BaseSettings):
     aviasales_api_token: str = ""
     aviasales_marker: str = ""
     aviasales_enabled: bool = False
-    aviasales_cache_ttl_hours: int = 1
 
     # Booking.com hotel deeplink aid parameter (optional, future)
     booking_affiliate_aid: str = ""
@@ -146,6 +145,10 @@ class Settings(BaseSettings):
     geocode_cache_ttl_hours: int = 24
     # Max activities to enrich per call (caps Google Places API spend)
     google_places_enrichment_cap: int = 3
+    # Min vendor (Viator/GYG) browse tiles needed to skip the paid GP base-activity fetch.
+    # When browse returns at least this many tiles the vendor pool becomes the base activities;
+    # below it we fall back to the GP fetch so a vendor-sparse destination never loses activities.
+    google_places_browse_min_threshold: int = 4
     # Enrichment concurrency and retry tuning
     google_places_enrichment_max_parallel: int = 4
     google_places_enrichment_retry_attempts: int = 2

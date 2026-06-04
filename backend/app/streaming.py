@@ -639,19 +639,23 @@ async def generate_sse(
 
                 doc_settings = session_state.pop("_doc_settings", None)
 
-                from app.planner.coordinator import execute_turn
+                from app.planner.services.agent_runner import run_agent_turn_streaming
                 from app.planner.services.state_serde import restore_agent_state
 
-                coordinator_state = restore_agent_state(session_state)
+                agent_state = restore_agent_state(session_state)
                 # Propagate patch-driven field changes past restore_agent_state
                 # (which only copies keys from _agent_state_defaults).
                 _pcf = session_state.get("_patch_changed_fields")
                 if _pcf:
-                    coordinator_state["_patch_changed_fields"] = _pcf
+                    agent_state["_patch_changed_fields"] = _pcf
                 cancel_event = asyncio.Event()
-                event_source = execute_turn(
+                # The create_agent planner replaces the deterministic coordinator.
+                # It yields the same SSE event contract (node_status / partial /
+                # token / feasibility_warning / complete / error), so the
+                # heartbeat/forwarder/persistence machinery below is unchanged.
+                event_source = run_agent_turn_streaming(
                     user_message=req.message,
-                    state=coordinator_state,
+                    state=agent_state,
                     session_id=session_id,
                     doc_settings=doc_settings,
                     cancel_event=cancel_event,

@@ -1471,6 +1471,50 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
             ),
             _safe_browse(),
         )
+    elif activities_requested and _has_partner_browse:
+        # Vendor enabled (general trip): prefer Viator/GYG browse over the paid GP base-activity
+        # fetch (browse runs in parallel with hotels, no added latency). Fall back to GP-3 only
+        # when browse is too thin, so base activities are never lost on a vendor-sparse destination.
+        hotel_dicts, _browse_prefetched = await asyncio.gather(
+            _fetch_hotels(
+                async_session_factory,
+                plan,
+                hotel_settings,
+                provider,
+                dest_key,
+                start_date,
+                end_date,
+                activity_settings,
+                flight_settings,
+                dest_lat=dest_lat,
+                dest_lng=dest_lng,
+            ),
+            _safe_browse(),
+        )
+        if len(_browse_prefetched or []) >= settings.google_places_browse_min_threshold:
+            # usable vendor pool -> skip the paid GP base-activity fetch.
+            # Use the vendor browse pool AS the base activities -- do NOT discard it. This avoids
+            # the paid GP fetch AND gives the tier-2 generation timeout/keyword fallbacks a real
+            # base, so a generation failure can't zero out activities. (The pure-tier1 branch sets
+            # [] on purpose because the specialist supplies activities there; this general branch
+            # has no specialist, so the browse tiles ARE the activities.)
+            activity_dicts = list(_browse_prefetched or [])
+        else:
+            activity_dicts = await _fetch_activities(
+                async_session_factory,
+                plan,
+                activity_settings,
+                provider,
+                dest_key,
+                start_date,
+                end_date,
+                hotel_settings,
+                flight_settings,
+                max_results=activity_max_results,
+                dest_lat=dest_lat,
+                dest_lng=dest_lng,
+                activity_categories=activity_categories,
+            )
     elif activities_requested:
         hotel_dicts, activity_dicts = await asyncio.gather(
             _fetch_hotels(
