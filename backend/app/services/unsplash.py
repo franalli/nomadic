@@ -20,6 +20,7 @@ from typing import List, Optional
 import httpx
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -636,41 +637,39 @@ async def _save_all_variants_to_db(
     images: List[UnsplashImage],
     activities: list[str] | None = None,
 ) -> None:
-    """Save all image variants to database cache in one commit."""
+    """Save all image variants to database cache in one commit.
+
+    Uses an idempotent ``on_conflict_do_nothing`` upsert keyed on the
+    ``(destination, variant)`` primary key so concurrent saves that both miss
+    cache no longer raise a UniqueViolationError on the losing writer — a
+    genuine duplicate is silently ignored (first write wins).
+    """
     from app.db_models import UnsplashImageCache
 
     db_key = _db_destination_key(destination, activities)
     logger.info(f"[UNSPLASH-DB] Saving {len(images)} variants to DB for: {db_key}")
 
+    if not images:
+        return
+
     try:
-        for variant, image in enumerate(images):
-            result = await db.execute(
-                select(UnsplashImageCache).where(
-                    UnsplashImageCache.destination == db_key,
-                    UnsplashImageCache.variant == variant,
-                )
-            )
-            existing = result.scalar_one_or_none()
-
-            if existing:
-                existing.image_id = image.image_id
-                existing.photographer = image.photographer
-                existing.photographer_url = image.photographer_url
-                existing.unsplash_url = image.unsplash_url
-                existing.download_location = image.download_location
-                existing.cached_at = datetime.now(UTC)
-            else:
-                cache_entry = UnsplashImageCache(
-                    destination=db_key,
-                    variant=variant,
-                    image_id=image.image_id,
-                    photographer=image.photographer,
-                    photographer_url=image.photographer_url,
-                    unsplash_url=image.unsplash_url,
-                    download_location=image.download_location,
-                )
-                db.add(cache_entry)
-
+        now = datetime.now(UTC)
+        rows = [
+            {
+                "destination": db_key,
+                "variant": variant,
+                "image_id": image.image_id,
+                "photographer": image.photographer,
+                "photographer_url": image.photographer_url,
+                "unsplash_url": image.unsplash_url,
+                "download_location": image.download_location,
+                "cached_at": now,
+            }
+            for variant, image in enumerate(images)
+        ]
+        stmt = pg_insert(UnsplashImageCache).values(rows)
+        stmt = stmt.on_conflict_do_nothing(index_elements=["destination", "variant"])
+        await db.execute(stmt)
         await db.commit()
         logger.info(f"[UNSPLASH-DB] Saved {len(images)} variants for {db_key}")
     except Exception as e:

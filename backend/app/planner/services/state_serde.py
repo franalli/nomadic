@@ -226,6 +226,11 @@ def _trim_messages(
 
     If total messages <= max_messages, returns the full list unchanged.
     Otherwise, returns [first_2] + [last (max_messages - 2)].
+
+    NOTE: No longer used by ``serialize_agent_state`` -- that path now strips
+    tool-call noise via ``_trim_conversation_history`` and applies a tail-only
+    cap (NO head-preservation, so a stale early tool-call turn can't be re-pinned
+    and re-bloat the persisted blob). Retained for compatibility / direct callers.
     """
     if len(messages) <= max_messages:
         return list(messages)
@@ -257,6 +262,8 @@ def serialize_agent_state(
 
     # Convert everything to BaseMessage first so trimming and
     # serialization treat all messages uniformly and preserve order.
+    # NOTE: build a fresh list -- never mutate state["messages"], which the
+    # live agent loop and _build_envelope still read this turn.
     message_objects: list[BaseMessage] = []
     for m in raw_messages:
         if isinstance(m, BaseMessage):
@@ -266,7 +273,29 @@ def serialize_agent_state(
             # trim + messages_to_dict uniformly (preserves original order).
             message_objects.append(HumanMessage(content=str(m.get("content", ""))))
 
-    trimmed = _trim_messages(message_objects, max_messages)
+    # Strip prior-turn tool-call noise from the PERSISTED blob before trimming.
+    # ToolMessages + tool-call AIMessages dominate session_state size (37-65KB/turn)
+    # and breach the 64KB cap, but they are pure dead weight: the next turn's
+    # agent_runner._trim_conversation_history drops every one of them before the
+    # model runs, so the model never sees persisted tool noise. We reuse that exact
+    # predicate here (function-level import to avoid a module-load cycle, mirroring
+    # how agent_runner imports the coordinator) so the two can never drift. Dropping
+    # both halves of each call/response pair keeps the roundtrip valid (no orphaned
+    # tool_calls / tool_call_id). This intentionally has NO head-preservation, so an
+    # old tool-call AIMessage can never be re-pinned to the head and re-bloat it.
+    from app.planner.services.agent_runner import _trim_conversation_history
+
+    stripped = _trim_conversation_history(message_objects)
+
+    # After stripping, this is a near no-op: _trim_conversation_history already
+    # bounded the list to the last ~12 text turns. We deliberately apply only a
+    # tail cap here (NO head-preservation) -- pinning the first messages could
+    # re-pin a stale early turn and is exactly the bloat path we are removing.
+    # max_messages now acts purely as an additional tail bound for callers that
+    # want fewer than the 12-turn keep window.
+    trimmed = (
+        stripped[-max_messages:] if max_messages and len(stripped) > max_messages else stripped
+    )
     serialized_messages = messages_to_dict(trimmed)
 
     result: Dict[str, Any] = {"messages": serialized_messages}

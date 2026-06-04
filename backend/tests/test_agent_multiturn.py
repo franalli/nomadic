@@ -53,8 +53,16 @@ class TestSerializeAgentState:
             assert "data" in m
         assert result["trip_plan"] == {"destination": "Bali"}
 
-    def test_tool_messages_preserved(self):
-        """AIMessage with tool_calls and ToolMessage with tool_call_id survive roundtrip."""
+    def test_tool_messages_dropped_from_persisted_blob(self):
+        """Tool-call noise is intentionally stripped from the PERSISTED session blob.
+
+        ToolMessages and tool-call AIMessages dominate session_state size and are
+        pure dead weight: the next turn's agent_runner._trim_conversation_history
+        drops them all before the model runs. serialize_agent_state therefore strips
+        them up front. What MUST survive is the conversational skeleton --
+        HumanMessage + final non-empty assistant text -- in order, and the roundtrip
+        must yield a model-valid message list with no orphaned tool_calls.
+        """
         state = {
             "messages": [
                 HumanMessage(content="Plan my trip"),
@@ -74,24 +82,33 @@ class TestSerializeAgentState:
             ],
         }
         serialized = serialize_agent_state(state)
-        assert len(serialized["messages"]) == 4
 
-        # Roundtrip
+        # Only the human turn + final assistant text survive; both halves of the
+        # tool call/response pair are dropped together (no orphaned tool_call_id).
+        assert len(serialized["messages"]) == 2
+
+        # Roundtrip must produce model-valid messages -- no ToolMessage, no
+        # tool-call AIMessage left dangling.
         restored = restore_agent_state(serialized)
         msgs = restored["messages"]
-        assert len(msgs) == 4
+        assert len(msgs) == 2
         assert isinstance(msgs[0], HumanMessage)
+        assert msgs[0].content == "Plan my trip"
         assert isinstance(msgs[1], AIMessage)
-        assert msgs[1].tool_calls[0]["name"] == "extract_trip_fields"
-        assert isinstance(msgs[2], ToolMessage)
-        assert msgs[2].tool_call_id == "tc_1"
-        assert isinstance(msgs[3], AIMessage)
-        assert msgs[3].content == "Got it, Bali!"
+        assert msgs[1].content == "Got it, Bali!"
+        # No tool noise survived the persist boundary.
+        assert not any(isinstance(m, ToolMessage) for m in msgs)
+        assert not any(getattr(m, "tool_calls", None) for m in msgs)
 
-    def test_message_trimming(self):
-        """Messages are trimmed to max_messages, keeping first 2 + last N."""
+    def test_message_trimming_keeps_tail_no_head_preservation(self):
+        """Messages are trimmed to the LAST max_messages text turns -- no head pin.
+
+        Head-preservation was removed deliberately: pinning the first messages
+        could re-pin a stale early (potentially tool-call) turn and re-bloat the
+        persisted blob. So the oldest turns are dropped, not preserved.
+        """
         messages = [SystemMessage(content="System"), HumanMessage(content="First")]
-        # Add 30 more messages
+        # Add 30 more text messages (all non-empty so none are dropped as noise).
         for i in range(30):
             if i % 2 == 0:
                 messages.append(HumanMessage(content=f"Human {i}"))
@@ -102,12 +119,12 @@ class TestSerializeAgentState:
         result = serialize_agent_state(state, max_messages=10)
         assert len(result["messages"]) == 10
 
-        # First 2 should be the system + first human
         restored = restore_agent_state(result)
-        assert isinstance(restored["messages"][0], SystemMessage)
-        assert restored["messages"][0].content == "System"
-        assert isinstance(restored["messages"][1], HumanMessage)
-        assert restored["messages"][1].content == "First"
+        # NO head-preservation: the System + "First" head was dropped.
+        assert not any(isinstance(m, SystemMessage) for m in restored["messages"])
+        assert restored["messages"][0].content != "First"
+        # The tail (most recent turns) is what survives.
+        assert restored["messages"][-1].content == "AI 29"
 
     def test_no_trimming_when_under_limit(self):
         state = {
@@ -159,6 +176,78 @@ class TestSerializeAgentState:
         # turn_meta is per-turn state — intentionally NOT serialized
         assert "turn_meta" not in result
         assert result["persistent_meta"] == state["persistent_meta"]
+
+    def test_tool_noise_state_stays_under_session_state_cap(self):
+        """A turn full of large ToolMessages must serialize well under the 64KB cap.
+
+        Regression for the multi-turn 422 breach: add-specialist flows accumulated
+        ~6 ToolMessages of ~10KB each (build_itinerary day_cards /
+        get_specialist_advice briefs / search_tiles tiles), pushing session_state to
+        83-85KB and making the NEXT turn fail schemas.py's 64KB validator. Stripping
+        tool noise from the persisted blob must keep it under cap.
+        """
+        big_payload = json.dumps({"chunk": "x" * 10_000})  # ~10KB ToolMessage content
+        messages: list = [HumanMessage(content="Plan diving + add hiking in Bali")]
+        for idx in range(6):
+            tc_id = f"tc_{idx}"
+            tool_name = ("get_specialist_advice", "search_tiles", "build_itinerary")[idx % 3]
+            messages.append(
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"name": tool_name, "args": {"i": idx}, "id": tc_id, "type": "tool_call"}
+                    ],
+                )
+            )
+            messages.append(ToolMessage(content=big_payload, tool_call_id=tc_id))
+        messages.append(AIMessage(content="Here is your updated Bali plan."))
+
+        # Sanity: the raw (untrimmed) message blob is well over the cap.
+        raw_blob_bytes = len(json.dumps([{"content": m.content} for m in messages], default=str))
+        assert raw_blob_bytes > 60_000
+
+        serialized = serialize_agent_state({"messages": messages})
+        size = len(json.dumps(serialized, default=str))
+
+        assert size <= 65536  # hard cap (schemas.py _limit_session_state)
+        assert size < 51200  # soft cap headroom
+
+        # Only the human + final assistant text survive; tool noise is gone.
+        restored = restore_agent_state(serialized)
+        msgs = restored["messages"]
+        assert [type(m).__name__ for m in msgs] == ["HumanMessage", "AIMessage"]
+        assert not any(isinstance(m, ToolMessage) for m in msgs)
+        assert not any(getattr(m, "tool_calls", None) for m in msgs)
+        assert msgs[-1].content == "Here is your updated Bali plan."
+
+    def test_normal_built_trip_serializes_well_under_cap(self):
+        """A normal completed trip (no tool noise) serializes comfortably under cap."""
+        state = {
+            "messages": [
+                HumanMessage(content="Plan 5 days in Lisbon"),
+                AIMessage(content="Here is your 5-day Lisbon itinerary."),
+                HumanMessage(content="Make day 2 more relaxed"),
+                AIMessage(content="Updated day 2 to a slower pace."),
+            ],
+            "trip_plan": {
+                "destination": "Lisbon",
+                "start_date": "2030-05-01",
+                "end_date": "2030-05-05",
+            },
+            "tiles": {
+                "hotels": [
+                    {"id": "h1", "type": "hotel", "title": "Hotel A", "price_estimate": 180.0}
+                ],
+                "activities": [
+                    {"id": "a1", "type": "activity", "title": "Tram 28", "price_estimate": 3.0}
+                ],
+            },
+            "strategy_sections": [{"id": "sec_local", "specialist_type": "local_expert"}],
+            "persistent_meta": {"plan_view_state": "S3_ITINERARY_READY"},
+        }
+        serialized = serialize_agent_state(state)
+        size = len(json.dumps(serialized, default=str))
+        assert size < 51200
 
 
 class TestRestoreAgentState:

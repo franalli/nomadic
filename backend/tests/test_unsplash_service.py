@@ -1,13 +1,24 @@
 """Unsplash service behavior tests (fallback + cache guarantees)."""
 
 import asyncio
+import os
 from unittest.mock import AsyncMock
 from urllib.parse import urlparse
 
 import httpx
 import pytest
 
-from app.services import unsplash
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+
+from sqlalchemy import func, select  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from app.db_models import Base, UnsplashImageCache  # noqa: E402
+from app.services import unsplash  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -232,3 +243,49 @@ async def test_interactive_retry_and_timeout_budget_are_config_driven(
     assert images == []
     assert observed_timeouts == [0.123, 0.123, 0.123]
     assert sleep_mock.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_save_all_variants_to_db_is_idempotent_on_duplicate() -> None:
+    """Concurrent/duplicate saves must not raise; first write wins."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        first_batch = [
+            unsplash.UnsplashImage(image_id="first0"),
+            unsplash.UnsplashImage(image_id="first1"),
+        ]
+        # Same primary keys (destination/variant), different image_ids — simulates
+        # a second concurrent writer that also missed cache.
+        second_batch = [
+            unsplash.UnsplashImage(image_id="second0"),
+            unsplash.UnsplashImage(image_id="second1"),
+        ]
+
+        async with session_factory() as db:
+            await unsplash._save_all_variants_to_db(db, "Bali", first_batch)
+        # Must not raise UniqueViolationError / IntegrityError on the duplicate save.
+        async with session_factory() as db:
+            await unsplash._save_all_variants_to_db(db, "Bali", second_batch)
+
+        async with session_factory() as db:
+            count = (
+                await db.execute(select(func.count()).select_from(UnsplashImageCache))
+            ).scalar()
+            variant0 = (
+                await db.execute(
+                    select(UnsplashImageCache).where(
+                        UnsplashImageCache.destination == "bali",
+                        UnsplashImageCache.variant == 0,
+                    )
+                )
+            ).scalar_one()
+
+        # No duplicate rows, and first write wins (do-nothing on conflict).
+        assert count == 2
+        assert variant0.image_id == "first0"
+    finally:
+        await engine.dispose()
