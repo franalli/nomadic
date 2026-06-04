@@ -452,7 +452,7 @@ async def test_generate_sse_closes_coordinator_event_source_on_disconnect(
         lambda state: state,
     )
     monkeypatch.setattr(
-        "app.planner.coordinator.execute_turn",
+        "app.planner.services.agent_runner.run_agent_turn_streaming",
         _fake_execute_turn,
     )
 
@@ -560,7 +560,7 @@ async def test_generate_sse_preserves_complete_event_before_disconnect_short_cir
         lambda state: state,
     )
     monkeypatch.setattr(
-        "app.planner.coordinator.execute_turn",
+        "app.planner.services.agent_runner.run_agent_turn_streaming",
         _fake_execute_turn,
     )
 

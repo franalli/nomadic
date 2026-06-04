@@ -378,6 +378,12 @@ reset_state() {
 # Reads session_state from SS_FILE → includes in body → saves response session_state back.
 send_message() {
   local msg="$1"
+  # Inter-turn pacing: the create_agent loop fires several Gemini calls per turn
+  # (orchestrator rounds + router extraction), far denser than the old
+  # coordinator. Without a pause between turns the suite saturates the account's
+  # throughput window, causing Gemini to return empty/slow responses that drop
+  # extraction. A short pause keeps calls within the rate window.
+  sleep "${CURL_TURN_PACING_S:-2}"
   python3 - "$msg" "$SS_FILE" "$BODY_FILE" <<'PYEOF'
 import sys, json
 msg, ss_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -2829,10 +2835,14 @@ except: print('false')
 " 2>/dev/null || echo "false")
 check "Skiing section marked infeasible" "$HAS_INFEASIBLE_SKIING" "true" || F=false
 
-# ── get_specialist_advice should NOT be called (no LLM dispatch for skiing) ──
+# ── Agent loop: get_specialist_advice IS called to determine feasibility ──
+# (The old coordinator pre-checked geography deterministically and skipped the
+# call; the agent has no hardcoded geography, so it calls the specialist, gets
+# feasibility_status=infeasible back, emits the warning, and marks the section
+# infeasible -- all asserted above. Calling it is the agent-loop-correct path.)
 TOOLS=$(extract_tools)
 echo "  ℹ  Tools called: $TOOLS"
-check_not_contains "get_specialist_advice NOT called (infeasible skip)" "$TOOLS" "get_specialist_advice" || F=false
+check_contains "get_specialist_advice called (agent determines feasibility)" "$TOOLS" "get_specialist_advice" || F=false
 
 # ── Tokens streamed (conversationalist still runs) ──
 TOKEN_CT=$(count_sse "token")
@@ -3666,15 +3676,16 @@ PYEOF
 echo "  ℹ  Human messages in session_state: $MSG_CT"
 check_gte "Messages tracked in session_state" "$MSG_CT" 1 || F=false
 
-# Verify the turn cap constant exists in coordinator source
+# Verify the turn cap guard exists in the agent runner (the create_agent loop
+# replaced the coordinator DAG; the cap now lives in run_agent_turn_streaming).
 # (defense: if someone removes the cap, this check catches it)
 CAP_EXISTS=$(python3 -c "
 import ast, sys
-with open('$BACKEND_DIR/app/planner/coordinator.py') as f:
+with open('$BACKEND_DIR/app/planner/services/agent_runner.py') as f:
     src = f.read()
-print('true' if '_human_turns >= 40' in src or 'SESSION_MAX_TURNS' in src else 'false')
+print('true' if '_human_turns >= SESSION_MAX_TURNS' in src or 'SESSION_MAX_TURNS' in src else 'false')
 " 2>/dev/null)
-check "Turn cap guard exists in coordinator" "$CAP_EXISTS" "true" || F=false
+check "Turn cap guard exists in agent_runner" "$CAP_EXISTS" "true" || F=false
 
 else F=false; fi; else F=false; fi
 $F && _flow pass 31 || _flow fail 31

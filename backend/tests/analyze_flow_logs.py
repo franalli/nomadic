@@ -179,8 +179,12 @@ FLOW_EXPECTED_TOOLS: dict[int, dict[str, Any]] = {
     },
     23: {
         "name": "Infeasible Activity — Skiing in Bali",
-        "required_tools": ["extract_trip_fields"],
-        "forbidden_tools": ["get_specialist_advice"],
+        # Agent loop: the agent has no hardcoded geography, so it CALLS
+        # get_specialist_advice to learn skiing is infeasible, then emits the
+        # feasibility_warning and marks the section infeasible (vs the old
+        # coordinator's deterministic precheck that skipped the call).
+        "required_tools": ["extract_trip_fields", "get_specialist_advice"],
+        "forbidden_tools": [],
         "max_llm_calls": 8,
         "skip_day_fill_rate": True,
     },
@@ -710,18 +714,6 @@ def check_tool_contract(backend_log: str, sse_data: str, flow_num: int, report: 
 
 def check_wasted_operations(backend_log: str, report: FlowReport) -> None:
     """Detect operations that produced no useful output."""
-    # Specialist returned None (wasted LLM call)
-    null_specialist = re.findall(
-        r"\[dispatch_specialist_with_brief\] (\w+) returned None",
-        backend_log,
-    )
-    for topic in null_specialist:
-        report.warn(f"Specialist '{topic}' returned None — wasted LLM call")
-
-    # Empty conversationalist response
-    if "[coordinator] Empty response from conversationalist" in backend_log:
-        report.error("Conversationalist produced empty response — wasted LLM call + bad UX")
-
     # Itinerary build failed
     build_fails = re.findall(
         r"\[coordinator\] Itinerary build failed: (.+)",
@@ -1474,61 +1466,6 @@ def check_image_urls(sse_data: str, flow_num: int, report: FlowReport) -> None:
         report.metrics["tiles_with_images"] = f"{total - missing}/{total}"
 
 
-def check_specialist_tile_presence(
-    sse_data: str,
-    backend_log: str,
-    flow_num: int,
-    report: FlowReport,
-) -> None:
-    """When specialist advice was dispatched, verify matching tiles exist.
-
-    If get_specialist_advice was called successfully but zero tiles with
-    matching specialist tags appear in the output, the specialist result
-    was silently dropped (e.g. TripBrief crash).
-    """
-    spec = FLOW_EXPECTED_TOOLS.get(flow_num, {})
-    if spec.get("skip_sse"):
-        return
-
-    # Check if specialist was dispatched
-    specialist_topics: list[str] = []
-    for m in re.finditer(r"\[dispatch_specialist_with_brief\] Dispatching (\w+)", backend_log):
-        specialist_topics.append(m.group(1).lower())
-
-    if not specialist_topics:
-        return
-
-    complete_events = _parse_sse_complete_events(sse_data)
-    for evt in complete_events:
-        tiles = evt.get("tiles") or {}
-        if not isinstance(tiles, dict):
-            continue
-
-        for topic in specialist_topics:
-            matching = 0
-            for tile_id, tile in tiles.items():
-                if not isinstance(tile, dict):
-                    continue
-                tags = [t.lower() for t in (tile.get("tags") or [])]
-                title = (tile.get("title") or "").lower()
-                meta = tile.get("meta") or {}
-                source_cats = [c.lower() for c in (meta.get("source_categories") or [])]
-                if (
-                    topic in tags
-                    or topic in title
-                    or topic in source_cats
-                    or tile_id.startswith(f"exp_{topic}")
-                ):
-                    matching += 1
-
-            report.metrics[f"specialist_{topic}_tiles"] = matching
-            if matching == 0:
-                report.error(
-                    f"Specialist '{topic}' was dispatched but zero matching tiles "
-                    f"in output — specialist result may have been silently dropped"
-                )
-
-
 def check_day_fill_rate(
     sse_data: str,
     flow_num: int,
@@ -1669,7 +1606,6 @@ def analyze_flow(
     check_day_card_continuity(sse_data, flow_num, report)
     check_image_urls(sse_data, flow_num, report)
     check_bookend_blocks(sse_data, flow_num, report)
-    check_specialist_tile_presence(sse_data, backend_log, flow_num, report)
     check_day_fill_rate(sse_data, flow_num, report)
 
     return report

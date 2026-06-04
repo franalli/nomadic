@@ -216,6 +216,20 @@ class TestRouterOutputSchema:
         obj = RouterOutput(intent="PLANNING", confidence=0.8, reasoning="r")
         assert obj.removal_targets == []
 
+    def test_swap_shape_removes_old_and_adds_new(self) -> None:
+        """A swap ("switch from diving to hiking") drops the old activity via
+        removal_targets while the new one is carried by the normal add fields."""
+        obj = RouterOutput(
+            intent="PLANNING",
+            confidence=0.85,
+            reasoning="swap diving -> hiking",
+            removal_targets=["diving"],
+            activity_categories=["hiking"],
+        )
+        assert obj.removal_targets == ["diving"]
+        assert "hiking" in obj.activity_categories
+        assert "diving" not in obj.activity_categories
+
     def test_hotel_amenities_defaults_to_empty_list(self) -> None:
         obj = RouterOutput(intent="PLANNING", confidence=0.8, reasoning="r")
         assert obj.hotel_amenities == []

@@ -17,6 +17,7 @@ wiring with typed metadata). Focuses on deterministic validation logic only.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -279,7 +280,12 @@ class TestCheckTemporalConstraints:
 
     def test_valid_dates_no_violations(self):
         """A normal future trip produces no violations."""
-        plan = _make_plan(start_date="2026-06-01", end_date="2026-06-10")
+        # Anchor to today so the trip stays in the future -- check_temporal_constraints
+        # emits a DATE_IN_PAST violation for past start dates, which would make a
+        # hardcoded calendar date silently fail once that date elapses.
+        start = date.today() + timedelta(days=30)
+        end = start + timedelta(days=9)
+        plan = _make_plan(start_date=start.isoformat(), end_date=end.isoformat())
 
         violations = check_temporal_constraints(plan, {})
         assert violations == []

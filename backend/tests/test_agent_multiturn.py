@@ -946,12 +946,14 @@ class TestRestoreAgentState:
 
 
 def test_selective_redispatch_preserves_unaffected_plans() -> None:
-    """Verify that specialist_plans survives round-trip and _compute_preserve_list
-    returns topics not in the dispatch list."""
-    from app.planner.coordinator import _compute_dispatch_list, _compute_preserve_list
-    from app.planner.schemas.coordinator_schemas import ChangeType, ClassifierOutput
+    """specialist_plans survive the serde round-trip untouched.
 
-    # Simulate a session with two specialist plans
+    Selective re-dispatch is now the orchestrator's decision in the agent loop
+    (the deterministic _compute_dispatch_list/_compute_preserve_list were removed
+    with the coordinator DAG). What the state layer must still guarantee is that
+    persisting and restoring a turn does not mutate or drop existing specialist
+    plans -- so an unaffected plan (e.g. hiking) is preserved verbatim.
+    """
     original_state = {
         "messages": [HumanMessage(content="Plan diving and hiking in Bali")],
         "trip_plan": {"destination": "Bali", "start_date": "2026-03-01", "end_date": "2026-03-08"},
@@ -970,25 +972,11 @@ def test_selective_redispatch_preserves_unaffected_plans() -> None:
         },
     }
 
-    # Round-trip through serde
     serialized = serialize_agent_state(original_state)
     restored = restore_agent_state(serialized)
 
-    # Classifier says only diving is affected
-    classifier = ClassifierOutput(
-        intent="PLANNING",
-        reasoning="User wants to change dive sites",
-        change_type=ChangeType.SWAP_ACTIVITY,
-        affects=["diving"],
-        preserves=["hiking"],
-    )
-
-    dispatch = _compute_dispatch_list(classifier, restored)
-    preserve = _compute_preserve_list(classifier, restored)
-
-    assert dispatch == ["diving"]
-    assert preserve == ["hiking"]
-    # Hiking plan survives untouched
+    # Both plans survive the round-trip verbatim.
+    assert restored["specialist_plans"]["diving"]["day_plans"] == [{"day_number": 2}]
     assert restored["specialist_plans"]["hiking"]["day_plans"] == [{"day_number": 5}]
 
 

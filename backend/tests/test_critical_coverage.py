@@ -7,16 +7,11 @@ stale data, and broken progressive rendering when they regress.
 Tier 1 (ship-blocking):
   - merge_trip_inputs: CRDT-style trip input merging
   - _ensure_block_display_floor: minimum viable block display data
-  - _flatten_tiles_payload: tiles dict normalization for SSE
-  - _is_pure_tail_extension: extension detection for specialist preservation
   - _carry_forward_partner_enrichment: affiliate data survival across tile refresh
 
 Tier 2 (pre-progressive-rendering):
-  - _tile_enrichment_partial_event: enrichment partial SSE event
-  - _day_cards_partial_payload: progressive day_cards partial shape
   - state serde round-trip: field survival through serialize/deserialize
   - _has_partner_enrichment + _copy_partner_enrichment_fields: partner helpers
-  - _day_cards_partial_event: SSE event shape
 
 Run with: pytest tests/test_critical_coverage.py -v
 """
@@ -30,13 +25,7 @@ from app.crud_document import merge_trip_inputs
 from app.planner.coordinator import (
     _carry_forward_partner_enrichment,
     _copy_partner_enrichment_fields,
-    _day_cards_partial_event,
-    _day_cards_partial_payload,
-    _flatten_tiles_payload,
-    _flatten_tiles_payload_filtered,
     _has_partner_enrichment,
-    _is_pure_tail_extension,
-    _tile_enrichment_partial_event,
 )
 from app.planner.services.state_serde import (
     restore_agent_state,
@@ -212,164 +201,6 @@ class TestEnsureBlockDisplayFloor:
 
 
 # =============================================================================
-# Tier 1: _flatten_tiles_payload
-# =============================================================================
-
-
-class TestFlattenTilesPayload:
-    def test_category_keyed_dict(self):
-        tiles = {
-            "activities": [
-                {"id": "act1", "title": "Dive", "type": "activity"},
-                {"id": "act2", "title": "Hike", "type": "activity"},
-            ],
-            "hotels": [{"id": "htl1", "title": "Beach Hotel", "type": "hotel"}],
-        }
-        result = _flatten_tiles_payload(tiles)
-        assert len(result) == 3
-        assert "act1" in result and "act2" in result and "htl1" in result
-
-    def test_empty_dict(self):
-        assert _flatten_tiles_payload({}) == {}
-
-    def test_non_dict_returns_empty(self):
-        assert _flatten_tiles_payload([]) == {}  # type: ignore[arg-type]
-
-    def test_skips_non_list_values(self):
-        tiles = {"activities": [{"id": "a1", "title": "X"}], "meta": "string"}
-        assert len(_flatten_tiles_payload(tiles)) == 1
-
-    def test_tiles_without_id_skipped(self):
-        assert len(_flatten_tiles_payload({"a": [{"title": "No ID"}]})) == 0
-
-    def test_deeplink_url_normalized_to_deeplink(self):
-        tiles = {"a": [{"id": "a1", "deeplink_url": "https://viator.com/123"}]}
-        result = _flatten_tiles_payload(tiles)
-        assert result["a1"].get("deeplink") == "https://viator.com/123"
-
-    def test_coordinates_normalized_to_geo(self):
-        tiles = {"a": [{"id": "a1", "coordinates": [115.2, -8.5]}]}
-        geo = _flatten_tiles_payload(tiles)["a1"].get("geo")
-        assert geo == {"lat": -8.5, "lng": 115.2}
-
-
-# =============================================================================
-# Tier 1: _flatten_tiles_payload_filtered
-# =============================================================================
-
-
-class TestFlattenTilesPayloadFiltered:
-    """Tests for the category-filtered tile flattener used by split tile emission."""
-
-    _TILES = {
-        "hotels": [{"id": "h1", "title": "Beach Hotel"}],
-        "flights": [{"id": "f1", "title": "SFO→DPS"}],
-        "activities": [{"id": "a1", "title": "Dive"}, {"id": "a2", "title": "Hike"}],
-    }
-
-    def test_hotels_and_flights_only(self):
-        result = _flatten_tiles_payload_filtered(self._TILES, ("hotels", "flights"))
-        assert set(result.keys()) == {"h1", "f1"}
-
-    def test_activities_only(self):
-        result = _flatten_tiles_payload_filtered(self._TILES, ("activities",))
-        assert set(result.keys()) == {"a1", "a2"}
-
-    def test_empty_when_no_matching_categories(self):
-        result = _flatten_tiles_payload_filtered(self._TILES, ("ground_transport",))
-        assert result == {}
-
-    def test_empty_tiles_dict(self):
-        assert _flatten_tiles_payload_filtered({}, ("hotels",)) == {}
-
-    def test_all_categories(self):
-        result = _flatten_tiles_payload_filtered(self._TILES, ("hotels", "flights", "activities"))
-        assert set(result.keys()) == {"h1", "f1", "a1", "a2"}
-
-
-# =============================================================================
-# Tier 1: _is_pure_tail_extension
-# =============================================================================
-
-
-class TestIsPureTailExtension:
-    def _p(self, dest, start, end):
-        return {"destination": dest, "start_date": start, "end_date": end}
-
-    def test_same_start_later_end(self):
-        assert (
-            _is_pure_tail_extension(
-                self._p("Bali", "2030-03-01", "2030-03-07"),
-                self._p("Bali", "2030-03-01", "2030-03-14"),
-            )
-            is True
-        )
-
-    def test_different_start(self):
-        assert (
-            _is_pure_tail_extension(
-                self._p("Bali", "2030-03-01", "2030-03-07"),
-                self._p("Bali", "2030-03-03", "2030-03-14"),
-            )
-            is False
-        )
-
-    def test_same_dates(self):
-        assert (
-            _is_pure_tail_extension(
-                self._p("Bali", "2030-03-01", "2030-03-07"),
-                self._p("Bali", "2030-03-01", "2030-03-07"),
-            )
-            is False
-        )
-
-    def test_shorter_end(self):
-        assert (
-            _is_pure_tail_extension(
-                self._p("Bali", "2030-03-01", "2030-03-14"),
-                self._p("Bali", "2030-03-01", "2030-03-07"),
-            )
-            is False
-        )
-
-    def test_different_destination(self):
-        assert (
-            _is_pure_tail_extension(
-                self._p("Bali", "2030-03-01", "2030-03-07"),
-                self._p("Rome", "2030-03-01", "2030-03-14"),
-            )
-            is False
-        )
-
-    def test_missing_dates(self):
-        assert (
-            _is_pure_tail_extension(
-                self._p("Bali", "2030-03-01", "2030-03-07"),
-                {"destination": "Bali"},
-            )
-            is False
-        )
-
-    def test_case_insensitive(self):
-        assert (
-            _is_pure_tail_extension(
-                self._p("bali", "2030-03-01", "2030-03-07"),
-                self._p("Bali", "2030-03-01", "2030-03-14"),
-            )
-            is True
-        )
-
-    def test_empty_destination(self):
-        assert (
-            _is_pure_tail_extension(
-                self._p("", "2030-03-01", "2030-03-07"),
-                self._p("", "2030-03-01", "2030-03-14"),
-            )
-            is False
-        )
-
-
-# =============================================================================
 # Tier 1: _carry_forward_partner_enrichment
 # =============================================================================
 
@@ -434,85 +265,6 @@ class TestCarryForwardPartnerEnrichment:
             [self._enriched("t1", title="Coral Garden")],
         )
         assert result[0]["provider"] == "google_places"
-
-
-# =============================================================================
-# Tier 2: _tile_enrichment_partial_event
-# =============================================================================
-
-
-class TestTileEnrichmentPartialEvent:
-    def _s(self, **kw):
-        return {"tiles": {}, "strategy_sections": [], **kw}
-
-    def test_none_when_nothing_changed(self):
-        assert (
-            _tile_enrichment_partial_event(
-                self._s(), [], {}, day_cards_changed=False, tiles_changed=False
-            )
-            is None
-        )
-
-    def test_partial_when_day_cards_changed(self):
-        r = _tile_enrichment_partial_event(
-            self._s(), [], {}, day_cards_changed=True, tiles_changed=False
-        )
-        assert r["type"] == "partial"
-        assert r["data"]["kind"] == "tile_enrichment"
-        assert r["data"]["payload"]["day_cards_changed"] is True
-
-    def test_partial_when_tiles_changed(self):
-        r = _tile_enrichment_partial_event(
-            self._s(), [], {}, day_cards_changed=False, tiles_changed=True
-        )
-        assert r["data"]["payload"]["tiles_changed"] is True
-
-    def test_tiles_replaced_flag(self):
-        r = _tile_enrichment_partial_event(
-            self._s(turn_meta={"tiles_replaced": True}),
-            [],
-            {},
-            day_cards_changed=True,
-            tiles_changed=False,
-        )
-        assert r["data"].get("tiles_replaced") is True
-
-    def test_no_tiles_replaced_by_default(self):
-        r = _tile_enrichment_partial_event(
-            self._s(), [], {}, day_cards_changed=True, tiles_changed=False
-        )
-        assert "tiles_replaced" not in r["data"]
-
-
-# =============================================================================
-# Tier 2: _day_cards_partial_payload + _day_cards_partial_event
-# =============================================================================
-
-
-class TestDayCardsPartials:
-    def test_payload_has_required_keys(self):
-        state = {
-            "tiles": {"activities": [{"id": "a1", "title": "X"}]},
-            "strategy_sections": [{"specialist_type": "diving"}],
-        }
-        r = _day_cards_partial_payload(state, [{"day": 1}])
-        assert "day_cards" in r and "tiles" in r and "strategy_sections" in r
-
-    def test_payload_uses_explicit_tiles(self):
-        state = {"tiles": {}, "strategy_sections": []}
-        r = _day_cards_partial_payload(state, [], tiles_payload={"x": {"id": "x"}})
-        assert r["tiles"] == {"x": {"id": "x"}}
-
-    def test_payload_flattens_when_no_explicit(self):
-        state = {"tiles": {"a": [{"id": "a1", "title": "X"}]}, "strategy_sections": []}
-        assert "a1" in _day_cards_partial_payload(state, [])["tiles"]
-
-    def test_event_structure(self):
-        state = {"tiles": {}, "strategy_sections": []}
-        r = _day_cards_partial_event(state, [{"day": 1}])
-        assert r["type"] == "partial"
-        assert r["data"]["kind"] == "day_cards"
-        assert "payload" in r["data"]
 
 
 # =============================================================================

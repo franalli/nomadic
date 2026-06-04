@@ -552,6 +552,29 @@ def validate_grounding() -> None:
                 add_name(trip_plan.get("destination"))
                 add_name(trip_plan.get("origin"))
 
+                # Ground proper nouns from the TOOL-OUTPUT fields (strategy
+                # sections, tiles, day cards) -- the agent orchestrator writes
+                # richer prose than the old templated voice and legitimately
+                # names local-intel details (streets, neighborhoods, tips), section
+                # labels, and fetched entities. Deliberately NOT the whole document:
+                # it carries assistant_message, which would self-ground the very
+                # prose we're checking. A name absent from all tool output is a
+                # hallucination.
+                _grounding_sources = json.dumps(
+                    [
+                        document.get("strategy_sections")
+                        or session_state.get("strategy_sections")
+                        or [],
+                        document.get("tiles") or session_state.get("tiles") or {},
+                        document.get("itinerary_day_cards")
+                        or document.get("day_cards")
+                        or session_state.get("day_cards")
+                        or [],
+                    ],
+                    default=str,
+                )
+                _extract_proper_nouns(_grounding_sources, safe_names)
+
                 day_cards = (
                     document.get("day_cards")
                     or document.get("itinerary_day_cards")
@@ -574,8 +597,11 @@ def validate_grounding() -> None:
                 tile_values = tiles.values() if isinstance(tiles, dict) else tiles
                 for tile in tile_values:
                     if isinstance(tile, dict):
-                        if tile.get("selected") or tile.get("booked") or tile.get("preferred"):
-                            add_name(tile.get("title"))
+                        # Any FETCHED tile is a groundable entity -- the agent
+                        # orchestrator describes the options it found, not only
+                        # the ones already selected/booked. (Anti-hallucination
+                        # still flags names that appear in NO tool output.)
+                        add_name(tile.get("title"))
                         meta = tile.get("meta") or {}
                         if isinstance(meta, dict):
                             _extract_proper_nouns(meta.get("description", ""), safe_names)
