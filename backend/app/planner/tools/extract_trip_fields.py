@@ -58,6 +58,7 @@ class TripFieldsResult(BaseModel):
 
     # Modifications
     removal_targets: List[str] = Field(default_factory=list)
+    remove_all_activities: bool = False
     skill_level: Optional[str] = None
     reset_budget: bool = False
     reset_hotel: bool = False
@@ -161,6 +162,8 @@ def _detect_changed_fields(
             changed.append("activity_categories")
     if result.removal_targets:
         changed.append("removal_targets")
+    if result.remove_all_activities:
+        changed.append("remove_all_activities")
     if result.origin_iata:
         changed.append("origin_iata")
     if result.destination_iata:
@@ -238,6 +241,29 @@ async def extract_trip_fields(
         current_budget = trip_plan.get("budget", 0) or 0
         current_categories = ",".join(trip_plan.get("activity_categories", []) or [])
 
+    # InjectedState is AUTHORITATIVE for the current turn's message, not just
+    # prior context. The create_agent model intermittently passes a garbled
+    # ``user_message`` -- e.g. the whole conversation history concatenated
+    # WITHOUT separators ("...baliJul 1 - Jul 7remove diving") -- which makes the
+    # router read a smushed instruction and recompute dates/duration from earlier
+    # turns (e.g. "10 days" + "Jul 1" -> end = Jul 10), silently overriding an
+    # explicit later range. Prefer the latest real HumanMessage from state so
+    # extraction is robust to whatever arg the model fabricated.
+    extraction_message = user_message
+    if state is not None:
+        for _msg in reversed(state.get("messages", []) or []):
+            _is_human = type(_msg).__name__ == "HumanMessage" or (
+                isinstance(_msg, dict) and _msg.get("type") == "human"
+            )
+            if not _is_human:
+                continue
+            _content = getattr(_msg, "content", None)
+            if _content is None and isinstance(_msg, dict):
+                _content = _msg.get("content")
+            if isinstance(_content, str) and _content.strip():
+                extraction_message = _content
+            break
+
     # 1. Build lightweight state proxy for context fingerprinting
     state_proxy = _build_state_proxy(
         current_destination=current_destination,
@@ -254,7 +280,9 @@ async def extract_trip_fields(
     try:
         router_output: RouterOutput
         token_usage: dict
-        router_output, token_usage = await _classify_and_extract_with_llm(user_message, state_proxy)
+        router_output, token_usage = await _classify_and_extract_with_llm(
+            extraction_message, state_proxy
+        )
     except Exception as exc:
         logger.error("[extract_trip_fields] Extraction failed: %s", exc)
         # Return a minimal PLANNING result so the agent can continue
@@ -288,6 +316,7 @@ async def extract_trip_fields(
         activity_day_preferences=router_output.activity_day_preferences,
         # Modifications
         removal_targets=router_output.removal_targets,
+        remove_all_activities=router_output.remove_all_activities,
         skill_level=router_output.skill_level,
         reset_budget=router_output.reset_budget,
         reset_hotel=router_output.reset_hotel,

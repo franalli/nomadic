@@ -61,6 +61,7 @@ export function LandingSheets({
         planViewState={planViewState}
         activeSheet={activeSheet}
         closeSheet={closeSheet}
+        openSheet={openSheet}
         addToast={addToast}
         storeUpdateTripInputs={storeUpdateTripInputs}
         storeCommitTripInputs={storeCommitTripInputs}

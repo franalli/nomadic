@@ -1,13 +1,12 @@
 ---
 name: backend-specialist
 description: >
-  Delegate to this agent for ALL backend Python work: planner coordinator, nodes,
+  Delegate to this agent for ALL backend Python work: planner agent loop, nodes,
   services, state layers, LLM factory, structured output, caching, config/settings.
-  Triggers on: itinerary builder, constraint guard, coordinator execution,
-  router extraction, specialist registry, state serialization, coordinator,
-  conversationalist, change classifier, specialist dispatch, trip brief,
+  Triggers on: itinerary builder, constraint guard, router extraction,
+  specialist registry, state serialization, specialist dispatch,
   create_agent, agent loop, orchestrator, middleware, tool wrappers,
-  run_agent_turn_streaming, agent_runner,
+  run_agent_turn_streaming, agent_runner, _build_envelope, auto-build,
   FastAPI endpoints, tile service, caching, llm_factory,
   experience_generator, regen_strategy, iata_resolver, validation, debug_utils,
   activity_browser, partner_enrichment, circuit_breaker, spend_guard,
@@ -19,7 +18,7 @@ Use `backend/.venv` (e.g. `backend/.venv/bin/python`, `backend/.venv/bin/pytest`
 
 # Nomadic Backend Specialist
 
-Backend engineer for a coordinator-driven travel planning engine.
+Backend engineer for an agent-loop travel planning engine (LangChain `create_agent`).
 Python 3.12 / FastAPI / SQLAlchemy / LangChain (OpenAI + Gemini).
 
 ## MANDATORY: Read Before Writing Code
@@ -28,7 +27,7 @@ ALWAYS read every file the plan touches and its direct imports before executing.
 
 Before ANY code change, read the relevant SSoT doc:
 
-- `docs/plan_graph_analysis.md` — Coordinator architecture, caching, builder phases, constraint validation
+- `docs/plan_graph_analysis.md` — Backend architecture, caching, builder phases, constraint validation
 - `docs/data-contracts.md` — API routes, streaming protocols, core schemas, rate limiting, enums
 - `CLAUDE.md` — Current sprint, hard rules, delegation policy (authoritative)
 
@@ -46,9 +45,10 @@ Before ANY code change, read the relevant SSoT doc:
 backend/app/planner/
   agent.py           → create_planner_agent() factory (create_agent loop)
   agent_constants.py → AGENT_MAX_TOKENS / AGENT_TEMPERATURE / AGENT_TIMEOUT
-  middleware.py      → 4 custom AgentMiddleware (+ stdlib limits); _TOOL_MERGERS
+  middleware.py      → 3 custom AgentMiddleware (ModelSelection / DynamicPrompt /
+                       TurnLifecycle) + langchain limit middleware (ModelCallLimit /
+                       ToolCallLimit / ModelRetry); _TOOL_MERGERS
   coordinator.py     → Envelope-builder helper library (_build_envelope + closure)
-  conversationalist.py → Single-LLM response generator
   chip_generator.py  → Suggestion chips for complete envelope
   tools/             → 6 @tool wrappers: extract_trip_fields, get_specialist_advice,
                        search_tiles, get_local_intel, validate_plan, build_itinerary;
@@ -63,8 +63,8 @@ backend/app/planner/
                        itinerary_adapter.py, iata_resolver.py, admin_utils.py,
                        feasibility_service.py
   state/             → graph_state.py, agent_state.py (NomadicAgentState), typed_meta.py
-  schemas/           → coordinator_schemas.py (ChangeType, ClassifierOutput, TripBrief,
-                       SpecialistPlan, ReplanRequest)
+  schemas/           → coordinator_schemas.py (ChangeType, ChangeClassification,
+                       ClassifierOutput, SpecialistConstraintOutput)
   *.py               → specialist_registry.py, hashing.py,
                        llm_factory.py, test_mode.py
 backend/app/

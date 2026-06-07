@@ -35,7 +35,7 @@ Before ANY code change, read the relevant SSoT doc:
 
 ## Critical Invariants (reinforced from CLAUDE.md)
 
-- **Coordinator architecture is law.** Backend emits `plan_view_state` from coordinator envelopes — frontend reads it, never fabricates it. Frontend-only strings: `S0_EMPTY` (reset sentinel — in the `PlanViewState` union but never emitted by the backend) and `S1_DESTINATION_SET` (NOT a `PlanViewState` member; lives only in `documentStore` `VIEW_STATE_ORDER` for downgrade-protection ordering). Every renderable state (`S1_FRAMING`, `S2_*`, `S3_*`) comes from the backend.
+- **Backend owns view-state.** Backend emits `plan_view_state` in the `complete` envelope (built by `coordinator._build_envelope`) — frontend reads it, never fabricates it. Frontend-only strings: `S0_EMPTY` (reset sentinel — in the `PlanViewState` union but never emitted by the backend) and `S1_DESTINATION_SET` (NOT a `PlanViewState` member; lives only in `documentStore` `VIEW_STATE_ORDER` for downgrade-protection ordering). Every renderable state (`S1_FRAMING`, `S2_*`, `S3_*`) comes from the backend.
 - **PlanDocumentData is the only state SSoT.** No parallel state objects on frontend.
 - **No hardcoded world data.** No location lists, city enums, airport codes, coordinate lookups.
 - **Single Renderer Pattern.** `StrategyStageRenderer` adapts to data density — never swap for separate view components.

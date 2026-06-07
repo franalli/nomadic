@@ -13,22 +13,22 @@ import type { Tile, TileSelection } from '@/types/tile';
 import { selectionsToTileSelection } from './useTileSelection';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Session Expiration Constants
+// Session Timestamp Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Maximum session age in milliseconds (24 hours).
- * Sessions older than this will be cleared during hydration.
- */
-const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-
-/**
  * LocalStorage key for tracking session start time.
+ *
+ * Used only for the `is_return` analytics flag and to re-seed a fresh
+ * timestamp when a brand-new session is created. The backend session cookie
+ * (Max-Age 14d) and persisted document are the sole source of truth for
+ * whether a session is still valid — the frontend never gates hydration on a
+ * localStorage age check.
  */
 const SESSION_TIMESTAMP_KEY = 'nomadic-session-timestamp';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Session Expiration Utilities
+// Session Timestamp Utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -59,21 +59,6 @@ function setSessionTimestamp(): void {
 export function clearSessionTimestamp(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(SESSION_TIMESTAMP_KEY);
-}
-
-/**
- * Check if the current session has expired.
- * A session is considered expired if it's older than SESSION_MAX_AGE_MS.
- *
- * @returns true if expired or no timestamp exists, false otherwise.
- */
-function isSessionExpired(): boolean {
-  const timestamp = getSessionTimestamp();
-  if (timestamp === null) {
-    // No timestamp = treat as new session (not expired, but will need to be set)
-    return false;
-  }
-  return Date.now() - timestamp > SESSION_MAX_AGE_MS;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,8 +124,10 @@ interface UseSessionHydrationOptions {
   onToast: (message: string) => void;
 
   /**
-   * Callback when session is expired and needs to be reset.
-   * Called before clearing state to allow parent component to handle cleanup.
+   * @deprecated No longer invoked. Hydration always defers to the backend's
+   * session lifetime (cookie + persisted document) and never expires a session
+   * client-side, so this cleanup callback is never called. Retained for caller
+   * compatibility only.
    */
   onSessionExpired?: () => void;
 }
@@ -180,18 +167,20 @@ interface UseSessionHydrationReturn {
  *
  * @remarks
  * The hydration process:
- * 1. Checks if session has expired (>24 hours old)
- * 2. If expired, clears state and returns (user starts fresh)
- * 3. Fetches document from documentStore (cached or API)
- * 4. If document exists with branches, restores all state
- * 5. Converts server-side ID selections to tile objects
- * 6. Selects the primary branch (or first branch as fallback)
- * 7. If primary branch lacks tiles, fetches them from API
+ * 1. Fetches document from documentStore (cached or API)
+ * 2. If document exists with branches, restores all state
+ * 3. Converts server-side ID selections to tile objects
+ * 4. Selects the primary branch (or first branch as fallback)
+ * 5. If primary branch lacks tiles, fetches them from API
  *
- * Session expiration (Tier 10 improvement):
- * - Sessions older than 24 hours are considered stale
- * - On expiration, state is cleared and user starts a new session
- * - This prevents data loss from stale/invalid sessions
+ * Session validity:
+ * - The backend owns session lifetime (session cookie Max-Age 14d +
+ *   persisted document). Hydration NEVER expires a session client-side.
+ * - A stale localStorage timestamp must not blank out a still-valid backend
+ *   document, so hydration always calls fetchDocument() and defers to the
+ *   backend's 200 (restore) / 204 (no document → fresh) response.
+ * - The timestamp is kept only for the `is_return` analytics flag and to
+ *   re-seed a fresh stamp when a brand-new session is created.
  *
  * TODO: Consider adding retry logic for failed hydration.
  *
@@ -221,7 +210,6 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
     setSelectedBranchId,
     setTilesBranchId,
     onToast,
-    onSessionExpired,
   } = options;
 
   const [isHydratingSnapshot, setIsHydratingSnapshot] = useState(true);
@@ -266,30 +254,14 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
 
         // Debug: Log session state
         debugLog('[useSessionHydration] Session timestamp:', getSessionTimestamp());
-        debugLog('[useSessionHydration] Is expired:', isSessionExpired());
 
-        // Check for session expiration before fetching document
-        // This prevents loading stale data that may cause issues
-        if (isSessionExpired()) {
-          debugLog('[useSessionHydration] Session expired (>24 hours old), starting fresh session');
-          // Clear session timestamp and notify parent
-          clearSessionTimestamp();
-          onSessionExpired?.();
-          // Clear local state to start fresh
-          setBranches([]);
-          setTilesMap({});
-          setBranchSelections({});
-          setSelectedBranchId(null);
-          setTilesBranchId(null);
-          // Set new session timestamp for fresh session
-          setSessionTimestamp();
-
-          if (await tryAutoResume()) return;
-
-          onToast('Your previous session has expired. Starting a new trip planning session.');
-          return;
-        }
-        debugLog('[useSessionHydration] ✅ Session not expired, proceeding to fetch...');
+        // NOTE: We intentionally do NOT gate hydration on a localStorage age
+        // check. The backend session cookie (Max-Age 14d) and the persisted
+        // document are the sole source of truth for session validity. Always
+        // proceed to fetchDocument() and let the backend's 200/204 decide
+        // whether there is a session to restore — a stale localStorage
+        // timestamp must never blank out a still-valid backend document.
+        debugLog('[useSessionHydration] ✅ Proceeding to fetch (backend decides validity)...');
 
         // Fetch document from store (handles caching internally)
         debugLog('[useSessionHydration] 📡 Calling fetchDocument()...');

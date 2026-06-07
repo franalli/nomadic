@@ -21,6 +21,10 @@ ACTIVITY GENERATION:
 - Generate 2-4 surf breaks at or within ~50km of the user's destination (include nearest coast if inland)
 - Use your world knowledge to identify real breaks. Do NOT limit yourself to a predefined list.
 - For each activity, include approximate `lat` (latitude) and `lng` (longitude) coordinates
+- For each activity, set `location` to the REAL break / beach name as a geocodable place
+  string (e.g. "Kuta Beach, Bali" or "Batu Bolong Beach, Canggu"), NOT the lesson phrasing.
+  The `title` may describe the session ("Longboard Session at Batu Bolong"), but `location`
+  must be the named place a map can resolve. Always provide `location` even if you omit lat/lng.
 - Include wave_height range and best tide conditions
 - Add skill level requirements
 - Consider seasonal swell patterns

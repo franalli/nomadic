@@ -165,10 +165,19 @@ class TestEnrichTilesWithPartners:
             },
         ]
 
-        with patch(
-            "app.services.partner_enrichment.match_activity_to_best_partner",
-            new=AsyncMock(side_effect=[GYG_TILE, None]),
-        ) as mock_match:
+        # Isolate merge logic from the centroid geo-compat check (covered
+        # separately below): with no source coords and centroid unresolved, the
+        # synthetic GYG_TILE geo (3,4) must not be geo-rejected.
+        with (
+            patch(
+                "app.services.partner_enrichment.match_activity_to_best_partner",
+                new=AsyncMock(side_effect=[GYG_TILE, None]),
+            ) as mock_match,
+            patch(
+                "app.tile_service.google_places_provider._geocode_destination_async",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
             await enrich_tiles_with_partners(tiles, "Bali")
 
         assert mock_match.await_count == 2

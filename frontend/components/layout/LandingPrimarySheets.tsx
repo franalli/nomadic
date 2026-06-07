@@ -1,13 +1,17 @@
 'use client';
 
-import { PLAN_ACTIVE_STATES } from '@/components/plan/planStateHelpers';
+import {
+  guardedGeneratePlan,
+  PLAN_ACTIVE_STATES,
+  shouldAutoTriggerItinerary,
+} from '@/components/plan/planStateHelpers';
 import { BudgetSheet } from '@/components/plan/sheets/BudgetSheet';
 import { DatesSheet } from '@/components/plan/sheets/DatesSheet';
 import { DestinationSheet } from '@/components/plan/sheets/DestinationSheet';
 import { OriginSheet } from '@/components/plan/sheets/OriginSheet';
 import { TravelersSheet } from '@/components/plan/sheets/TravelersSheet';
 import { parseISODateLocal } from '@/lib/date-utils';
-import { GENERATE_PLAN_TRIGGER } from '@/state/chatStore';
+import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
@@ -19,6 +23,7 @@ interface LandingPrimarySheetsProps {
   planViewState: PlanViewState | undefined;
   activeSheet: SheetType | null;
   closeSheet: () => void;
+  openSheet: (name: SheetType) => void;
   addToast: (message: string, type?: ToastType) => void;
   storeUpdateTripInputs: (inputs: Partial<DocumentTripInputs>) => void;
   storeCommitTripInputs: (inputs: Partial<DocumentTripInputs>) => Promise<boolean>;
@@ -30,6 +35,7 @@ export function LandingPrimarySheets({
   planViewState,
   activeSheet,
   closeSheet,
+  openSheet,
   addToast,
   storeUpdateTripInputs,
   storeCommitTripInputs,
@@ -69,7 +75,19 @@ export function LandingPrimarySheets({
             closeSheet();
             addToast(`Origin: ${value}`, 'confirmation');
             if (planViewState && PLAN_ACTIVE_STATES.has(planViewState)) {
-              onSendMessage(GENERATE_PLAN_TRIGGER);
+              // Gate the BUILD on dates — origin can be set at S2 (no dates).
+              // Defer to the Dates sheet instead of building dateless (principle B).
+              guardedGeneratePlan({
+                tripInputs: useDocumentStore.getState().document?.trip_inputs,
+                sendBuild: () => onSendMessage(GENERATE_PLAN_TRIGGER),
+                openDates: () => openSheet('dates'),
+                addNudge: (text) =>
+                  useChatStore.getState().addMessage({
+                    id: `a_ui_${Date.now()}`,
+                    role: 'assistant',
+                    content: text,
+                  }),
+              });
             }
           } catch {
             addToast('Failed to save — please try again', 'error');
@@ -96,8 +114,40 @@ export function LandingPrimarySheets({
             });
             closeSheet();
             addToast(`Dates: ${startStr} to ${endStr}`, 'confirmation');
-            if (planViewState && PLAN_ACTIVE_STATES.has(planViewState)) {
-              onSendMessage(GENERATE_PLAN_TRIGGER);
+            // Read PVS FRESH from the store — the `planViewState` prop is
+            // prerequisite-gated and is null/undefined at the exact moment the
+            // user is adding the missing dates (see useLandingDerived). The
+            // dates we just committed are already in the store here.
+            const freshDoc = useDocumentStore.getState().document;
+            const currentPVS = freshDoc?.plan_view_state;
+            if (currentPVS && PLAN_ACTIVE_STATES.has(currentPVS)) {
+              // AVOID DOUBLE-BUILD: for multi-specialist trips the auto-trigger
+              // effect (useItineraryGenerationController) ALSO fires a build via
+              // /api/expand-itinerary once dates flip true. Only fire our trigger
+              // when that auto-trigger will NOT handle it.
+              const willAutoTrigger = shouldAutoTriggerItinerary(
+                currentPVS,
+                freshDoc?.executed_strategy_topics,
+                true, // dates just committed above
+                null, // not generating yet
+                (freshDoc?.day_cards?.length ?? 0) > 0
+              );
+              if (!willAutoTrigger) {
+                // Gate the BUILD on dates via the tested helper — dates are
+                // already committed so it fires sendBuild; if somehow absent it
+                // defers to the Dates sheet (keeps the dateless-build invariant).
+                guardedGeneratePlan({
+                  tripInputs: freshDoc?.trip_inputs,
+                  sendBuild: () => onSendMessage(GENERATE_PLAN_TRIGGER),
+                  openDates: () => openSheet('dates'),
+                  addNudge: (text) =>
+                    useChatStore.getState().addMessage({
+                      id: `a_ui_${Date.now()}`,
+                      role: 'assistant',
+                      content: text,
+                    }),
+                });
+              }
             }
           } catch {
             addToast('Failed to save — please try again', 'error');

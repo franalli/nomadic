@@ -6,11 +6,67 @@
  * Data-driven via envelope.generation, not state-inferred.
  */
 
+import type { DocumentTripInputs } from '@/types/document';
 import type { GenerationState, PlanState, PlanViewState } from '@/types/plan-envelope';
 import { normalizePlanViewState } from '@/types/plan-envelope';
 
 // Re-export for convenience
 export type { GenerationState };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dates gate for plan builds
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * True when the trip has a full date range (start + end).
+ * Single source of truth for the "can we BUILD a plan yet?" gate so every
+ * GENERATE_PLAN_TRIGGER fire site stays consistent.
+ *
+ * A plan must never be built without dates — doing so produces a phantom
+ * itinerary the backend builds against unpersisted default dates.
+ */
+export function hasTripDates(
+  tripInputs: Pick<DocumentTripInputs, 'start_date' | 'end_date'> | undefined | null
+): boolean {
+  return Boolean(tripInputs?.start_date && tripInputs?.end_date);
+}
+
+/** Short, friendly nudge shown in chat when a build is deferred for missing dates. */
+export const MISSING_DATES_NUDGE =
+  "Almost there — pick your travel dates and I'll build your itinerary.";
+
+interface GuardedGeneratePlanArgs {
+  /** Current trip inputs (read fresh at invocation, not stale props). */
+  tripInputs: Pick<DocumentTripInputs, 'start_date' | 'end_date'> | undefined | null;
+  /** Fires the actual GENERATE_PLAN_TRIGGER build. */
+  sendBuild: () => void;
+  /** Opens the Dates sheet so the user can supply the missing dates. */
+  openDates: () => void;
+  /** Optional: append a brief assistant nudge to chat when deferring. */
+  addNudge?: (text: string) => void;
+}
+
+/**
+ * Gate a plan BUILD on having dates. When dates are missing, drive the
+ * conversation forward: open the Dates sheet (+ optional chat nudge) instead
+ * of silently building a broken, dateless plan.
+ *
+ * @returns true when the build fired, false when it was deferred for dates.
+ */
+export function guardedGeneratePlan({
+  tripInputs,
+  sendBuild,
+  openDates,
+  addNudge,
+}: GuardedGeneratePlanArgs): boolean {
+  if (hasTripDates(tripInputs)) {
+    sendBuild();
+    return true;
+  }
+  addNudge?.(MISSING_DATES_NUDGE);
+  openDates();
+  return false;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared state constant sets — use these instead of inline literal arrays

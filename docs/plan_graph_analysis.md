@@ -42,8 +42,8 @@ Agentic trip-planning system. Turns run through a LangChain 1.0 `create_agent` t
 | Category | Count | Description |
 | --- | --- | --- |
 | Agent tools | 6 | `extract_trip_fields`, `get_specialist_advice`, `search_tiles`, `get_local_intel`, `validate_plan`, `build_itinerary` |
-| Custom middleware | 4 | `ModelSelectionMiddleware`, `DynamicPromptMiddleware`, `TurnLifecycleMiddleware` (active) + `SuggestionChipMiddleware` (defined, NOT registered — chips come from `_build_envelope`) |
-| Coordinator protocol types | 9 | `ChangeType`, `ChangeClassification`, `ClassifierOutput`, `TripBrief`, `SpecialistDayPlan`, `SpecialistTransit`, `SpecialistConstraintOutput`, `SpecialistPlan`, `ReplanRequest` (`StepType`/`ExecutionStep`/`ExecutionPlan` removed with the DAG) |
+| Custom middleware | 3 | `ModelSelectionMiddleware`, `DynamicPromptMiddleware`, `TurnLifecycleMiddleware` (suggestion chips are owned by `_build_envelope`, not middleware) |
+| Coordinator protocol types | 4 | `ChangeType`, `ChangeClassification`, `ClassifierOutput`, `SpecialistConstraintOutput` |
 
 > **Note:** `ItineraryBuilder` remains pure Python (no LLM) and is reached via the `build_itinerary` tool, the driver's deterministic auto-build, and `/api/expand-itinerary`.
 
@@ -68,9 +68,8 @@ backend/app/planner/
 ├── __init__.py              # Facade exports (stable public API)
 ├── agent.py                 # create_planner_agent() factory (create_agent + 6 tools + middleware + NomadicAgentState)
 ├── agent_constants.py       # AGENT_MAX_TOKENS=4000, AGENT_TEMPERATURE=0.0, AGENT_TIMEOUT=45.0
-├── middleware.py            # 4 custom AgentMiddleware (3 registered) + tool-result mergers (_TOOL_MERGERS)
+├── middleware.py            # 3 custom AgentMiddleware + tool-result mergers (_TOOL_MERGERS)
 ├── chip_generator.py        # Suggestion chip templates for complete envelope
-├── conversationalist.py     # Legacy response generator — NOT imported by the agent path (orphaned)
 ├── coordinator.py           # Helpers library: _build_envelope + enrichment/normalization + _merge_doc_settings (NOT a DAG)
 ├── hashing.py               # Stable hashing utilities (make_cache_key, field_hash)
 ├── llm_factory.py           # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing) + extract_token_usage(), resolve_schema_refs()
@@ -81,7 +80,7 @@ backend/app/planner/
 │   └── planner.py           # Orchestrator system prompt: build_static_system_prompt() (cached prefix) + build_turn_context(state) (volatile trailing message)
 ├── schemas/                 # Coordinator protocol schemas
 │   ├── __init__.py
-│   └── coordinator_schemas.py  # ChangeType, ChangeClassification, ClassifierOutput, TripBrief, SpecialistDayPlan, SpecialistTransit, SpecialistConstraintOutput, SpecialistPlan, ReplanRequest
+│   └── coordinator_schemas.py  # ChangeType, ChangeClassification, ClassifierOutput, SpecialistConstraintOutput
 ├── tools/                   # 6 @tool wrappers (return plain dicts; state mutation in TurnLifecycleMiddleware)
 │   ├── __init__.py          # Exports the 6 tools
 │   ├── _parsing.py          # Shared JSON parsing helpers (tiles/constraints)
@@ -130,8 +129,11 @@ backend/app/planner/
 │  3) _trim_conversation_history() (drop prior-turn tool messages)            │
 │  4) agent.astream(stream_mode=["values","updates","messages","custom"])     │
 │       orchestrator LLM picks tools -> middleware merges results into state  │
-│  5) deterministic auto-build (_should_autobuild) if Flash didn't chain it   │
-│  6) _prune_stale_sections() then _build_envelope() -> complete              │
+│  5) post-loop reconcile (in order): _merge_patch_changed_fields ->          │
+│     auto-build (_should_autobuild) -> drop-unbookable-specialist ->         │
+│     _prune_stale_sections -> _reenable_activities -> remove-all (LAST) ->   │
+│     autovalidate backstop                                                   │
+│  6) _build_envelope() -> complete                                          │
 │                                                                              │
 │  SSE events: token | node_status | partial | feasibility_warning            │
 │              | complete | error                                              │
@@ -146,7 +148,7 @@ The orchestrator LLM chooses which tools to call per message. Tool names equal t
 
 | Tool | Wraps | Returns |
 | --- | --- | --- |
-| `extract_trip_fields` | `router_extraction` (`_classify_and_extract_with_llm` + `_validate_extraction`) | `TripFieldsResult` dict: intent, core trip fields, `specialist_hints`, `activity_categories`, settings, `removal_targets`, `fields_changed` |
+| `extract_trip_fields` | `router_extraction` (`_classify_and_extract_with_llm` + `_validate_extraction`) | `TripFieldsResult` dict: intent, core trip fields, `specialist_hints`, `activity_categories`, settings, `removal_targets`, `remove_all_activities`, `fields_changed` |
 | `get_specialist_advice` | `vertical_specialist.generate_specialist_output_llm()` (feasibility + LLM plan + section build) | `SpecialistAdviceResult` dict: `topic`, `feasibility_status`, `feasibility_reason`, `activities`, `constraints`, `strategy_section`, `enhancements` |
 | `search_tiles` | delegates to `logistics_node(state)` | `{flights, hotels, activities, browseable_activities, hotel_filter_cascaded}` tile arrays |
 | `get_local_intel` | `local_expert` Phase A (instant skeleton; Phase B enrichment stashed for post-commit firing) | `{section, constraints, enrichment status}` |
@@ -154,6 +156,13 @@ The orchestrator LLM chooses which tools to call per message. Tool names equal t
 | `build_itinerary` | `ItineraryBuilder.build()` (pure Python) | `{success, day_cards, conflicts, activities_placed, activities_dropped, warnings}` |
 
 `extract_trip_fields`, `validate_plan`, and `build_itinerary` use `InjectedState` so trip fields/tiles/constraints auto-populate from agent state (the LLM does not serialize large JSON payloads).
+
+Tool behavior notes (InjectedState is authoritative over model-supplied args, which Flash can garble):
+- `extract_trip_fields` reads the latest real `HumanMessage` from `InjectedState` as the authoritative turn message — the model sometimes passes the whole history concatenated without separators, which made the router recompute dates from earlier turns. It also flags `remove_all_activities` for global activity-wipe phrasings ("remove all activities", "no activities", "start over on activities") with `removal_targets` left empty.
+- `search_tiles` prefers the authoritative `trip_plan` (InjectedState) for destination/dates/origin over the model's free-text args (which can carry a stale year or omit `start_date`).
+- `validate_plan` takes a hidden `skip_route_check` `InjectedToolArg`: the post-loop backstop passes `True` (pure-Python checks only, no LLM place/route call); a model-invoked call runs the full check. It drops local-expert `generic_fallback` travel-intel constraints (visa/booking-window/money) that can never validate against the safety-oriented `SpecialistConstraint` schema.
+- `build_itinerary` uses the authoritative agent-state `strategy_sections` (carrying specialist `content_added` POI coordinates) when present, and `_merge_tiles_by_category` makes state/specialist tiles win id collisions over a model-supplied `tiles_json` refresh — so specialist tiles survive a category-change rebuild.
+- `get_specialist_advice` writes specialist constraints as `type="safety"` with the LLM's `constraint_type` normalized as the *severity* (`blocking`/`strong`/`soft`) — `SpecialistConstraintOutput.constraint_type` is a misnamed severity, and writing it as the `type` failed the `SpecialistConstraint.type` Literal (silently dropped by `validate_plan`).
 
 ### System Prompt (`prompts/planner.py`)
 
@@ -163,9 +172,11 @@ Two layers, split for Gemini implicit-cache efficiency:
 
 The prompt instructs: call `extract_trip_fields` first when fields change; fire independent fetches (`search_tiles`/`get_local_intel`/`get_specialist_advice`) **together in one turn**; ask exactly one question for the single most important missing field; recommend only what tools returned. Voice rules (warm/brief, lead with the answer, no narration between tool calls) live in the prompt's `# Voice` section.
 
+`build_turn_context` filters out `generic_fallback`-tagged constraints (the generic travel-info floor: visa/insurance/embassy/currency) so the model stops re-listing the same robotic checklist in chat every turn; that intel still reaches the plan panel via `strategy_sections`. On a turn where `extract_trip_fields` flagged `remove_all_activities`, the prompt steers the model NOT to re-add activities and to acknowledge the removal (the deterministic post-loop clear empties the plan).
+
 ### Middleware Stack (`middleware.py`)
 
-Applied outermost-first as passed to `create_agent` (`agent.py`). 6 entries: 3 stdlib (`ModelCallLimitMiddleware`, `ToolCallLimitMiddleware`, `ModelRetryMiddleware`, imported from `langchain.agents.middleware`) + 3 custom (`ModelSelectionMiddleware`, `DynamicPromptMiddleware`, `TurnLifecycleMiddleware`):
+Applied outermost-first as passed to `create_agent` (`agent.py`). 6 entries: 3 from langchain (`ModelCallLimitMiddleware`, `ToolCallLimitMiddleware`, `ModelRetryMiddleware`, imported from `langchain.agents.middleware`) + 3 custom (`ModelSelectionMiddleware`, `DynamicPromptMiddleware`, `TurnLifecycleMiddleware`):
 
 | Order | Middleware | Role |
 | --- | --- | --- |
@@ -176,9 +187,9 @@ Applied outermost-first as passed to `create_agent` (`agent.py`). 6 entries: 3 s
 | 5 | `DynamicPromptMiddleware` | appends `build_turn_context(state)` as a trailing `SystemMessage` each model call (preserves cached prefix) |
 | 6 | `TurnLifecycleMiddleware` | `abefore_agent`: reset `turn_meta`. `abefore_model`: increment `model_turns`. `awrap_tool_call`: merge each tool result into `NomadicAgentState` via `_TOOL_MERGERS`, returning **delta keys only** (wrapped in a `Command`) |
 
-> `SuggestionChipMiddleware` is defined in `middleware.py` but **not registered** — suggestion chips are owned by `_build_envelope`. Module docstrings listing 4 active middleware / gpt-4o upgrades are stale; the live config is the table above.
+> Suggestion chips are owned by `_build_envelope`, not by any middleware — there is no chip middleware in the live config (the table above is authoritative).
 
-`_TOOL_MERGERS` maps each tool name to a merge function (`_merge_trip_fields`, `_merge_tiles`, `_merge_specialist`, `_merge_local_intel`, `_merge_validation`, `_merge_itinerary`). Mergers return only their delta; `turn_meta` list keys (`tools_called`, `turn_steps`, `partial_failures`) are concatenated by the `_merge_turn_meta` reducer, which also derives `tool_call_count`. `_merge_trip_fields` clears stale `strategy_sections`/`tiles`/`day_cards`/`constraints` on destination change and drops swapped-out topic sections on `removal_targets`. Tool timeouts/errors are caught in `awrap_tool_call` and returned as error `ToolMessage`s recorded in `partial_failures`.
+`_TOOL_MERGERS` maps each tool name to a merge function (`_merge_trip_fields`, `_merge_tiles`, `_merge_specialist`, `_merge_local_intel`, `_merge_validation`, `_merge_itinerary`). Mergers return only their delta; `turn_meta` list keys (`tools_called`, `turn_steps`, `partial_failures`) are concatenated by the `_merge_turn_meta` reducer, which also derives `tool_call_count`. `_merge_trip_fields` clears stale `strategy_sections`/`tiles`/`day_cards`/`constraints` on destination change and drops swapped-out topic sections on `removal_targets`. `_merge_tiles` preserves active-specialist activity tiles that `search_tiles` would otherwise drop (`_preserve_active_specialist_tiles`, scoped via `_active_specialist_topics`/`_tile_specialist_topic` to topics that still own a `strategy_sections` entry) — so a tile refresh keeps a specialist's Viator card/pin. `_merge_local_intel` also emits a model-facing summary (`_summarize_local_intel_for_model`). Tool timeouts/errors are caught in `awrap_tool_call` and returned as error `ToolMessage`s recorded in `partial_failures`.
 
 ### Streaming Driver Behavior (`agent_runner.run_agent_turn_streaming`)
 
@@ -198,8 +209,14 @@ Driver-owned behaviors:
 - **Empty-message guard:** blank `user_message` returns a minimal "tell me more" envelope (avoids Gemini "contents are required").
 - **`GENERATE_PLAN_NOW` rewrite:** the machine build signal is rewritten into an explicit build instruction (Flash does not treat the raw token as a build trigger).
 - **`_trim_conversation_history`:** drops every `ToolMessage` and every tool-calling `AIMessage` from prior turns (state already holds the data, re-shown via CURRENT CONTEXT); keeps human + final assistant text, last 12. Prevents Gemini emptying out on later turns.
-- **Deterministic auto-build (`_should_autobuild`):** builds once when destination + dates + options (sections or tiles) are present, nothing built yet, and the turn progressed the plan (a fetch ran or core fields changed) — since Flash cannot reliably chain a 4th tool round. Calls the `build_itinerary` tool coroutine directly and folds the result via `_merge_itinerary`.
-- **`_prune_stale_sections`:** post-loop reconcile of `strategy_sections` vs `trip_plan.specialist_hints` (additive reducer never removes); drops Tier-1 sections whose topic is no longer an active interest; keeps `local_expert`/unknown types.
+- **Post-loop reconcile sequence (strict order):** runs after the astream loop, before `_build_envelope`. Each step is flag-/state-gated and inert otherwise:
+  1. `_merge_patch_changed_fields` — folds Dates-sheet PATCH field changes (recorded as `_patch_changed_fields` on the initial state by `streaming.py`) into `turn_meta.fields_changed` so the autobuild/autovalidate gates fire even when nothing was extracted from chat text.
+  2. `_should_autobuild` → auto-build: builds once when destination + dates + options (sections or tiles) are present, nothing built yet, and the turn progressed the plan (a fetch ran or core fields changed) — since Flash cannot reliably chain a 4th tool round. Calls the `build_itinerary` tool coroutine directly and folds the result via `_merge_itinerary`.
+  3. Post-build enrichment + `_drop_unbookable_specialist_blocks` (built turns only): after `_run_itinerary_enrichment_pipeline` resolves placeholder deeplinks to real affiliate matches, drops AI-suggested Tier-1 specialist day-card blocks left with no Viator/GYG product (affiliate-evidence gated — see Unbookable-Specialist Policy).
+  4. `_prune_stale_sections`: reconciles `strategy_sections` vs `trip_plan.specialist_hints` (additive reducer never removes); drops Tier-1 sections whose topic is no longer an active interest; keeps `local_expert`/unknown types.
+  5. `_reenable_activities_if_requested`: un-sticks `booking_types.activities="off"` (set by a prior remove-all turn) when the traveler shows fresh activity interest; never fires on a remove-all turn.
+  6. `_apply_remove_all_activities` (**runs LAST**): THE GUARANTEE for "remove all activities" — flag-gated on `turn_meta.remove_all_activities`, clears every activity block/tile/section except `_REMOVE_ALL_KEEP_TYPES` structural blocks, so nothing earlier re-seeds it.
+  7. `_should_autovalidate` → backstop `validate_plan`: deterministic checks only (`skip_route_check=True`), de-duped when the model already called `validate_plan`, skipped on pure Q&A.
 - **Turn-level retry-on-empty:** if a substantive turn produced no tools and no reply (Gemini intermittent empty), re-drives `agent.astream` once (a failed-empty attempt emits zero SSE events, so no duplication).
 - **Degraded path:** on exception with a state snapshot, emits a degraded `complete` envelope (`turn_meta["response_degraded"]=True`, `response_error_type` ∈ `rate_limit`/`timeout`/`generation_error`) so the frontend keeps prior work; otherwise yields `error`.
 
@@ -212,7 +229,7 @@ Driver-owned behaviors:
 Core behaviors:
 - Builds `trip_inputs` from `trip_plan` + `trip_settings`
 - Computes `plan_view_state` (`S0_BOOTSTRAP` / `S2_STRATEGY_READY` / `S3_*`)
-- Generates chips via `chip_generator._generate_chips_from_state()` (up to 4 chips; injects contextual chips from local expert `must_dos` when slots remain)
+- Generates chips via `chip_generator._generate_chips_from_state()` (up to 4 chips; injects contextual chips from local expert `must_dos` when slots remain). The "build/browse" chip is gated on `start_date` — when dates are still missing, it falls through to the date-prompt branch so the date CTA isn't buried.
 - Sets `ack_status` from route violations, applied field changes, and partial failures
 - Emits `constraints_validated`, `constraint_violations`, `applied_updates`, `ack_updates`
 - Computes `trip_cost_estimate` from tile prices (hotels, flights, activities) — pure arithmetic, no LLM
@@ -322,14 +339,13 @@ Domain specialist with LLM-first architecture. 8 specialists (diving, hiking, sk
 **Key functions:**
 - `generate_specialist_output_llm()` -- Core LLM generation (wrapped by `get_specialist_advice` tool)
 - `generate_all_specialists_parallel()` -- Batch parallel execution with caching
-- `_build_specialist_prompt()` -- Shared prompt builder (system + user prompt) used by specialist generation and coordinator `dispatch_specialist_with_brief()`. Accepts optional `scheduling_context` for cross-specialist coordination.
-- `dispatch_specialist_with_brief()` -- Coordinator bridge: converts `TripBrief` into `generate_specialist_output_llm()` arguments via `_BriefAsTripPlan` adapter. Supports `ReplanRequest` for selective re-dispatch.
-- `build_scheduling_context()` -- Builds a scheduling-context block from a `TripBrief` (reserved days, target day count, hotel zone) appended to the specialist user prompt.
+- `_build_specialist_prompt()` -- Shared prompt builder (system + user prompt) used by specialist generation. Accepts optional `scheduling_context` for cross-specialist coordination and `activities_per_day` for density-aware capping.
+- `vertical_specialist(state)` -- Library entry point that merges specialist output into `GraphState` (still callable directly for testing).
 
 **Behavior notes:**
 - `_build_specialist_prompt()` returns `(system, user, max_acts)` and applies category-aware, density-aware capping. It caps specialist `available_days` at 60% of trip duration to preserve room for mixed non-specialist activities.
 - Seasonal context: when `start_date` is set, the user prompt includes the travel month with guidance to consider weather, visibility, wildlife, crowds, closures, and pricing for the destination.
-- `TripBrief` flows into `_BriefAsTripPlan` with `activities_per_day` and active `categories` to bias distribution across specialists.
+- `activities_per_day` and active `categories` bias activity distribution across specialists.
 - Specialist outputs are additionally capped after parsing so `max_acts` is never exceeded in cacheable payloads.
 - Structured function-calling responses fail closed: `parsed=None` raises immediately, and `_coerce_llm_specialist_output()` rejects partial payloads that would otherwise validate through default `"feasible"` / empty-list fallbacks.
 - Constraint text is anchored to relative wording (for example, "day before departure"), and cached outputs are re-anchored by `_reanchor_constraint_dates()` before merge.
@@ -338,6 +354,7 @@ Domain specialist with LLM-first architecture. 8 specialists (diving, hiking, sk
 - Safety buffer days are explicitly excluded from the specialist activity-count ceiling in prompt context.
 - `_calculate_activity_days()` mirrors builder-side short-trip math: trips of 2+ days get a shared `0.8` arrival/departure credit for non-diving specialists, no-fly topics still lose a full day, and altitude buffers only subtract on trips of 4+ days.
 - `SafetyHealth` includes advisory fields: `advisory_level` (`none`, `caution`, `warning`, `avoid`) and `advisory_reason`.
+- Each Tier-1 specialist prompt (all except `diving.txt`) plus `generic_activity.txt` instructs the model to set a geocodable `location` (named place a map can resolve, distinct from the activity-phrased `title`); this flows end-to-end to `DayBlock.location` for accurate map pins.
 
 **LLM-first architecture:** Single LLM call generates feasibility + activities + constraints. Falls back to minimal safety constraints if LLM fails (parse error, timeout).
 
@@ -356,6 +373,7 @@ City logistics concierge with Phase A/B architecture.
 - Cache reuse path seeds legacy list reconstruction from prior-turn `constraints_applied`/`content_added` so repeated turns keep stable high-signal Travel Intel density while avoiding duplicate entries.
 - `_append_constraint()` applies fuzzy token-overlap dedupe (>70% overlap) before appending, reducing near-duplicate principles/notes from mixed cache + LLM reuse paths.
 - `local_expert.txt` explicitly requests travel advisory reasoning (`advisory_level` + `advisory_reason`) so advisory context can be surfaced in plan summaries.
+- The generic travel-info floor (`_GENERIC_FALLBACK_CONSTRAINTS` in `get_local_intel.py`; mirrored on the legacy `local_expert` node) is tagged `generic_fallback: True`. These render in the plan panel only — `build_turn_context` filters them out of the model's per-turn context so the assistant doesn't re-list the checklist every turn.
 
 ### LogisticsNode (`logistics_node.py`)
 
@@ -413,6 +431,7 @@ Build-path usage -- reached via the `build_itinerary` tool, the driver's determi
 │  1.    Day Skeleton - DayCard[] from dates                      │
 │  2.    Extract Specialist Content - Activities + constraints    │
 │  2.5   Enrich Activities from Tiles - Provider tile data merge  │
+│  2.55  Drop Unbookable Specialists - No-affiliate Tier-1 drop   │
 │  2a.   Constraint Merge - Priority resolution (BLOCKING>STRONG) │
 │  2b.   Early Conflict Detection - Irreconcilable check         │
 │  3.    Anchor Placement - Arrival/departure from flights       │
@@ -436,6 +455,8 @@ Build-path usage -- reached via the `build_itinerary` tool, the driver's determi
 │              /api/expand-itinerary                               │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+> Block chronological ordering is governed by module-level SSoT constants `_TIME_SLOT_ORDER` (includes `night`) and `_BUFFER_SORT_PRIORITY`, shared by both the Phase 5/6.75 dataclass sort and the dict-based buffer anchoring (`_anchor_day_buffers`) — keep the two consumers in sync. Complementarity *scoring* uses a separate `_SCORING_SLOT_ORDER` (no `night`).
 
 **Early Conflict Detection (Pre-Phase Validation)**
 
@@ -490,14 +511,23 @@ blocks that were actually placed in the itinerary and lack a `google_place_id`, 
 signed photo URL) are written back directly to the day_card blocks. Enrichment concurrency and retry are configurable via `settings.google_places_enrichment_max_parallel` (default 4), `settings.google_places_enrichment_retry_attempts` (default 2), and `settings.google_places_enrichment_retry_base_ms` (default 250ms).
 If a block already carries partner deeplink/image data (Viator or GYG), Google Places enrichment is limited to coordinate/place-id style backfill and does not overwrite the affiliate booking surface.
 
+**Phase 2.55: Drop Unbookable Specialists** (`_drop_unbookable_specialist_activities`) runs after Phase 2.5 enrichment and drops AI-suggested Tier-1 specialist activities left with no bookable affiliate product. Gated by an affiliate-evidence check: it only fires when at least one in-scope Tier-1 specialist activity already carries an affiliate booking (proving enrichment ran on this pool), so a first-build pass with placeholder Google-Maps deeplinks is never nuked.
+
+**Unbookable-Specialist Policy** — the no-bookable-specialist drop applies in three shape-specific layers, all sharing the predicates in `partner_enrichment.py` (`is_tier1_specialist_activity`, `has_affiliate_booking`, `is_unbookable_specialist_activity`) and the same affiliate-evidence gate:
+- **Builder blocks** — Phase 2.55 above (`itinerary_builder.py`).
+- **Day-card blocks** — `agent_runner._drop_unbookable_specialist_blocks` (post-enrichment, authoritative on the agent path).
+- **Tile pool + ghost sections** — `partner_enrichment.prune_unbookable_specialist_artifacts` reconciles the browse pool / map pins and removes a specialist's `strategy_sections` entry only when it has zero bookable tiles AND zero remaining day-card blocks. Called on the agent path (`agent_runner`) and on the expand path (`/api/expand-itinerary` in `streaming.py`, which then sets `tiles_replaced`/`replace_tiles=True` so the shrunk pool is emitted and persisted, not merged back).
+
+Scope: only AI-suggested specialist content; `has_affiliate_booking` treats a bare Google-Maps `maps/search`/`maps/place` deeplink as NOT a booking, and user-browse-added tiles (`meta.source` ∈ `browse_add`/`user_browse_added`) are excluded.
+
 **Partner browse/enrichment path**
 
 - `activity_browser.py` uses a partner-first strategy: tries Viator first, then GYG if Viator returned 0. If any partner tiles exist, they are returned immediately (capped to `max_results`) and GP is never called. GP is only used as a fallback when all partner providers fail or return 0 results. Placeholder category selection is two-phase: user-selected browse category wins first, then shared `PLACE_TYPE_CATEGORY_TOKENS` from `google_places_provider.py` maps Google `primaryType` tokens to the same fallback image categories used elsewhere.
 - `viator_provider.py` and `gyg_provider.py` own the live affiliate integrations: each keeps a shared async `httpx` client, an in-memory browse/match cache, and a 5-failure/120-second circuit breaker. `gyg_provider.py` also normalizes GYG `long` coordinates to `{lat, lng}` and filters out multi-day tours (>8h). Both providers import shared category conflict rules from `activity_category_conflicts.py` (extracted to avoid duplication).
 - Viator title matching now normalizes specialist titles more aggressively before search: it strips short location prefixes, removes parenthetical/session suffixes, builds up to three ordered freetext query variants, and scores candidate products with fuzzy title similarity plus non-generic anchor-token overlap. `_NO_MATCH` is only negative-cached when destination lookup and all freetext queries were definitive, so transient taxonomy/search failures do not poison later retries.
-- Viator matching now includes an inferred category mismatch gate: `_infer_category_from_title()` classifies both source and product titles, and cross-domain false positives (e.g. culinary activity matched to cycling tour) are rejected or fall back to compatible candidates. A specific-to-generic tour stem overlap check also rejects generic tour matches for specific source categories (e.g. cooking, nightlife, climbing) unless the activity stem appears in the product title.
+- Viator matching now includes an inferred category mismatch gate: `_infer_category_from_title()` classifies both source and product titles, and cross-domain false positives (e.g. culinary activity matched to cycling tour) are rejected or fall back to compatible candidates. A specific-to-generic tour stem overlap check also rejects generic tour matches for specific source categories (e.g. cooking, nightlife, climbing) unless the activity stem appears in the product title. The source side anchors on the trusted caller `category` (the specialist topic) when it is on-taxonomy via `_resolve_source_category()` — so a diving activity titled "Coral Gardens" is bucketed `diving`, not `nature`. The title taxonomy also splits `snorkeling` out of `diving` (diving is matched first, so a combined scuba+snorkel product stays `diving`).
 - `activity_category_conflicts.py` `CATEGORY_CONFLICTS` map is extended with food/cooking, yoga/spa, nightlife, and shopping conflict sets against outdoor sport keywords, reducing false-positive partner matches across unrelated domains.
-- `partner_enrichment.py` replaces the old Viator-only pre-build pass. It queries enabled partners in parallel, picks the best match per tile by rating, then lower price, with Viator as the final tiebreaker, and mutates the activity tile in place with provider/deeplink/image/price metadata. When both tiles expose coordinates, matches farther than 120km from the source tile are rejected before merge.
+- `partner_enrichment.py` replaces the old Viator-only pre-build pass. It queries enabled partners in parallel, picks the best match per tile by rating, then lower price, with Viator as the final tiebreaker, and mutates the activity tile in place with provider/deeplink/image/price metadata. Geo-mismatch rejection (`_partner_match_is_geo_compatible`) uses a 120km bound from the source-tile coords; when the source has no coords (every LLM-generated specialist tile), it falls back to the destination centroid (`_geocode_destination_async`) with a looser 400km bound so wrong-country products (Bali dive → Cancun) are still rejected.
 - `lifespan.py` closes the Viator, GYG, and Aviasales async clients on shutdown alongside the Google Places clients.
 
 **Key Insight:** The no-fly buffer is enforced in two layers. `ItineraryBuilder` may auto-truncate the number of diving activities to the available pre-departure dive slots, and later placement logic blocks diving too close to departure. It does not, however, consume total trip capacity for unrelated specialists: later trip days can still host hiking or other non-diving activities even when diving is no longer placeable.
@@ -611,7 +641,7 @@ Each specialist type has its own constraint generator:
 - `activities_placed`: alias used in coordinator `builder_result` payload for placed count
 - `activities_dropped`: dropped-count in coordinator `builder_result` (`total_activities_input - activities_placed`)
 - Drop ratio (`1 - activities_placed/total_activities_input`) is captured in `turn_meta['builder_result']` (via `success`, `activities_placed`, and `activities_dropped`) for guard suppression and suggestion-chip telemetry
-- When `activities_placed == 0` but day cards still exist, coordinator appends a warning to `builder_result["warnings"]`; conversationalist receives a matching do-not-hallucinate guard and should suggest extending the trip or adjusting preferences instead of inventing activities.
+- When `activities_placed == 0` but day cards still exist, coordinator appends a warning to `builder_result["warnings"]`; the orchestrator's terminal reply is grounded by the system prompt's anti-hallucination rules + `build_turn_context` (it should suggest extending the trip or adjusting preferences instead of inventing activities).
 
 **Preference Weighting:**
 
@@ -749,6 +779,8 @@ Pydantic structured output is used for LLM calls that need **guaranteed schema e
 3. **`parsed is None` guard** -- Every call site checks `if parsed is None: raise ValueError(...)`. No silent fallback to empty data.
 4. **`extract_token_usage()`** -- Centralized in `llm_factory.py`. Handles `include_raw=True` dict unwrapping, LangChain 0.2+ `usage_metadata`, and `response_metadata["token_usage"]` fallback.
 5. **Gemini schema pipeline** -- Use `gemini_safe_schema(strip_unsupported_schema_keys(resolve_schema_refs(schema)))` for Gemini function-calling compatibility. `resolve_schema_refs(schema)` alone is not sufficient.
+6. **Gemini reasoning control (`llm_factory.py`)** -- Family-dependent: Gemini 3.x uses `thinking_level` (`minimal`/`low`/`medium`/`high`; `thinking_budget` is deprecated there and defaults to `high`, so the level must be set explicitly to stay cheap/fast), Gemini 2.5 uses `thinking_budget=0` to disable. Never set both on one request (Gemini returns 400). `include_thoughts=False` keeps reasoning out of the response.
+7. **Implicit-cache visibility** -- `extract_token_usage()` now surfaces Gemini's `cached_content_token_count` (remapped by `langchain-google-genai` into `input_token_details.cache_read`), so implicit-cache hits are measurable.
 ---
 
 ## State Models
@@ -1016,12 +1048,12 @@ All caches share a common `MemoryCache` primitive from `backend/app/services/cac
 | Tile | `tile_cache.py` | 256 | 24h | 72h (env: GOOGLE_PLACES_CACHE_TTL_HOURS) | `tile::v2::{provider}::{type}::{dest}::{start_date}::{end_date}[::{variant}]` | Provider API data |
 | Browse | `activity_browser.py` | 256 | 6h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `browse::v2::{dest}::{sorted_cats}::{month}::{center_bucket}` | On-demand Browse Activities tiles |
 | Places Enrichment | `google_places_provider.py` | 2048 | 24h | 720h (env: GOOGLE_PLACES_ENRICHMENT_CACHE_TTL_HOURS) | `places::enrich::v3::{dest}::{title}::q{sig}` | Google Places enrich-by-title lookups. Title normalized via `_normalize_title_for_cache` (strips specialist qualifiers for higher hit rate). Admin cache reset now also drains the in-memory `_enrich_inflight` dedupe map so stale futures cannot survive a manual clear. |
-| Geocode | `google_places_provider.py` | 1000 (TTLCache) | 24h (`settings.geocode_cache_ttl_hours`) | none (L1-only) | `_geocode_cache` keyed by normalized destination | Geocoding API lat/lng results, stored in an in-process `TTLCache` (plus a separate `_country_code_cache`, max 512). <!-- REVIEW: prior doc claimed an L2 entry (8760h, key `geocode::v1::...`, `cache_type='geocode'`). No `cache_type="geocode"` L2 write exists in app/ — the only `l2_upsert()` call in google_places_provider.py uses `cache_type="tiles"`. Treating geocode as L1-only; confirm an L2 path wasn't removed. --> |
+| Geocode | `google_places_provider.py` | 1000 (TTLCache) | 24h (`settings.geocode_cache_ttl_hours`) | none (L1-only) | `_geocode_cache` keyed by normalized destination | Geocoding API lat/lng results, stored in an in-process `TTLCache` (plus a separate `_country_code_cache`, max 512). No L2 row — the only `l2_upsert()` call in this provider uses `cache_type="tiles"`. |
 | IATA | `iata_resolver.py` | 512 | 24h | `settings.iata_cache_ttl_hours` (default 720h) | `iata::v2::{normalized_city}::{normalized_qualifier}` | Airport-code resolution after router extraction. |
 | Photo Proxy | `main.py` | 500 | 24h | N/A | `photo::{photo_name}::{width}x{height}` | Server-side photo bytes cache. Skips upstream fetch + spend guard on hit. |
 | Router | `router_cache.py` | 500 | 1h | N/A | `router::v3::SHA256({normalized_text}:{today_date}:{context_fingerprint})[:32]` | NL extraction |
 
-**Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'experience'`, `'experience_single'`, `'tiles'`, `'iata'`). Browse and Places enrichment L2 entries use `cache_type='tiles'`. <!-- REVIEW: `'geocode'` removed from this list — no `cache_type="geocode"` write found in app/ (see Geocode row above). -->
+**Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'experience'`, `'experience_single'`, `'tiles'`, `'iata'`). Browse and Places enrichment L2 entries use `cache_type='tiles'`.
 
 **Experience cache recovery (incremental regen):** `experience_generator.py` now supports category-by-category reuse to avoid recomputing unchanged Tier 2 categories:
 
@@ -1210,11 +1242,7 @@ backend/app/prompts/
 | `specialists/generic_activity.txt` | `vertical_specialist.py` | Fallback prompt for open-ended Tier 2 categories |
 | `specialists/local_expert.txt` | `local_expert.py` | Local expert enrichment and travel-intel prompt |
 
-The assistant reply is produced by the **orchestrator's terminal (no-tool-call) model turn**, governed by the `# Voice` and `# Truthfulness` sections of `PLANNER_SYSTEM_PROMPT` (`prompts/planner.py`) plus the per-turn `build_turn_context` grounding (CURRENT CONTEXT + entities returned by tools). There is no separate response-generation step.
-
-> **Legacy:** `conversationalist.py` (`build_response_context`, `_VOICE_*` voice blocks / sentence limits, `_RESPONSE_MAX_TOKENS`) is no longer imported by the agent path — it belonged to the removed coordinator DAG's `GENERATE_RESPONSE` step. Anti-hallucination grounding now lives in the system prompt + trailing context message rather than a context-assembly pipeline.
-
-> **Legacy:** `_rehydrate_trimmed_booked_tiles` (backfills `image_url`/`geo` onto session-trimmed `booked_tile` dicts) is defined in `coordinator.py` but has no caller in the agent path — it was invoked at turn start by the removed `execute_turn`.
+The assistant reply is produced by the **orchestrator's terminal (no-tool-call) model turn**, governed by the `# Voice` and `# Truthfulness` sections of `PLANNER_SYSTEM_PROMPT` (`prompts/planner.py`) plus the per-turn `build_turn_context` grounding (CURRENT CONTEXT + entities returned by tools). There is no separate response-generation step; anti-hallucination grounding lives in the system prompt + trailing context message rather than a context-assembly pipeline.
 
 ---
 
@@ -1381,15 +1409,15 @@ INITIATED -> PENDING_PAYMENT -> HOLD -> CONFIRMED
 
 | Module | Exports |
 | --- | --- |
-| `planner` | `GraphState`, `build_trip_state_summary` (lazy), `restore_graph_state`, `state_to_session_state`, `trip_plan_to_trip_inputs`, hashing helpers (`execute_turn` export removed) |
+| `planner` | `GraphState`, `build_trip_state_summary` (lazy), `restore_graph_state`, `state_to_session_state`, `trip_plan_to_trip_inputs`, hashing helpers |
 | `planner.agent` | `create_planner_agent` |
-| `planner.services.agent_runner` | `run_agent_turn_streaming`, `run_agent_turn`, `SESSION_MAX_TURNS` |
+| `planner.services.agent_runner` | `run_agent_turn_streaming`, `SESSION_MAX_TURNS` |
 | `planner.tools` | `extract_trip_fields`, `get_specialist_advice`, `search_tiles`, `get_local_intel`, `validate_plan`, `build_itinerary` |
 | `planner.state` | `GraphState`, `TripPlan`, `TripSegment`, `ItineraryBlock`, `SpecialistConstraint`, `SpecialistStateOutput` |
 | `planner.state.agent_state` | `NomadicAgentState` |
 | `planner.hashing` | `stable_hash`, `stable_hash_short`, `canonicalize_destinations`, `make_cache_key`, `field_hash` |
-| `planner.coordinator` | `_build_envelope`, `_compute_coordinator_s3_state`, `_merge_doc_settings`, `build_trip_state_summary` (DAG functions removed) |
-| `planner.schemas.coordinator_schemas` | `ChangeType`, `ChangeClassification`, `ClassifierOutput`, `TripBrief`, `SpecialistDayPlan`, `SpecialistTransit`, `SpecialistConstraintOutput`, `SpecialistPlan`, `ReplanRequest` (`StepType`/`ExecutionStep`/`ExecutionPlan` removed) |
+| `planner.coordinator` | `_build_envelope`, `_compute_coordinator_s3_state`, `_merge_doc_settings`, `build_trip_state_summary` |
+| `planner.schemas.coordinator_schemas` | `ChangeType`, `ChangeClassification`, `ClassifierOutput`, `SpecialistConstraintOutput` |
 
 ---
 

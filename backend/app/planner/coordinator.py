@@ -1292,9 +1292,18 @@ async def _post_build_enrich_placed_activities(
 
                 booked_tile = block.get("booked_tile")
                 title_candidates: list[str] = []
+                # Prefer the specialist's clean place name (e.g. "Kuta Beach, Bali")
+                # over the lesson-phrased title/summary ("Intro Surf Lesson at Kuta
+                # Beach"). Activity-phrased strings fail to geocode to a single POI;
+                # the structured ``location`` resolves cleanly. Only used when the
+                # specialist supplied it — coord-less generic tours have no location,
+                # so they still fall through to the no-centroid-stamp guardrail below.
+                block_location = str(block.get("location") or "").strip()
+                if block_location:
+                    title_candidates.append(block_location)
                 if isinstance(booked_tile, dict):
                     booked_title = str(booked_tile.get("title") or "").strip()
-                    if booked_title:
+                    if booked_title and booked_title not in title_candidates:
                         title_candidates.append(booked_title)
                 if summary and summary not in title_candidates:
                     title_candidates.append(summary)
@@ -1724,8 +1733,19 @@ def _build_envelope(
     turn_meta: Dict[str, Any] = state.get("turn_meta", {})
     coordinator_reset = bool(state.get("_coordinator_reset", False))
 
-    # Generate suggestion chips
-    suggestion_chips = _generate_chips_from_state(_normalize_state_for_chips(state))
+    # Generate suggestion chips. Prefer the LLM-generated, conversation+state-aware
+    # chips produced concurrently in agent_runner (under _llm_suggestion_chips) when
+    # they are a non-empty list of valid chip dicts; otherwise fall back to the
+    # deterministic template generator. The _reset_pending override below still wins.
+    llm_chips = state.get("_llm_suggestion_chips")
+    if (
+        isinstance(llm_chips, list)
+        and llm_chips
+        and all(isinstance(c, dict) and c.get("message") for c in llm_chips)
+    ):
+        suggestion_chips = llm_chips
+    else:
+        suggestion_chips = _generate_chips_from_state(_normalize_state_for_chips(state))
     if suggestion_chips:
         persistent_meta = dict(persistent_meta)
         persistent_meta["suggestion_chips"] = suggestion_chips

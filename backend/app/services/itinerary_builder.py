@@ -39,6 +39,33 @@ from app.planner.state import ConstraintSeverity
 logger = logging.getLogger(__name__)
 
 # =============================================================================
+# Block Chronological Ordering (single source of truth)
+# =============================================================================
+# Used by BOTH the dataclass sort (_sort_blocks_chronologically / Phase 5 sort,
+# operating on DayBlockOutput dataclasses) and the dict-based arrangement
+# anchoring (_anchor_day_buffers, operating on DayBlock.model_dump() dicts).
+# Keep these two consumers in sync — they must not drift.
+
+# Time-of-day ordering for non-buffer (activity) blocks.
+_TIME_SLOT_ORDER: dict[str, int] = {"morning": 0, "afternoon": 1, "evening": 2, "night": 3}
+
+# Buffer types that pin to specific positions within a day.
+# (bracket, sub_priority): bracket 0=arrival/check-in, 1=activities, 2=departure.
+_BUFFER_SORT_PRIORITY: dict[str, tuple[int, int]] = {
+    "arrival": (0, 0),  # First thing, before morning
+    "check_in": (0, 1),  # Right after arrival
+    "check-in": (0, 1),  # Alternative spelling
+    "acclimatization": (1, 0),  # Activity-level, morning slot
+    "surface_interval": (1, 1),  # Activity-level, between dives
+    "no_fly_buffer": (1, 3),  # Activity-level, evening (end of day)
+    "no_fly": (1, 3),  # Alternative spelling
+    "departure": (2, 0),  # Last thing
+    "check_out": (2, 0),  # Same as departure
+    "check-out": (2, 0),  # Alternative spelling
+}
+
+
+# =============================================================================
 # Constraint Rule Normalization
 # =============================================================================
 # LLM may output constraint rules with various naming conventions.
@@ -217,6 +244,7 @@ class DayBlockOutput(BaseModel):
     price_level: Optional[int] = None  # Google Places price level (0-4)
     price_estimate: Optional[float] = None  # USD estimate from tile
     coordinates: Optional[Dict[str, float]] = None  # {lat, lng}
+    location: Optional[str] = None  # Clean geocodable place name (specialist activities)
     google_place_id: Optional[str] = None  # Google Places ID
     deeplink: Optional[str] = None  # Google Maps URL
 
@@ -384,6 +412,7 @@ class ActivityBlock:
     intensity: Optional[str] = None
     image_url: Optional[str] = None
     coordinates: Optional[List[float]] = None  # [lng, lat]
+    location: Optional[str] = None  # Clean geocodable place name (e.g. "Kuta Beach")
     is_buffer: bool = False
     buffer_type: Optional[str] = None
     buffer_reason: Optional[str] = None
@@ -491,8 +520,9 @@ DEFAULT_EXPERIENCE_HOURS = 1.5
 # Max same-category experience tiles per day (prevents 3x yoga on one day)
 MAX_SAME_CATEGORY_PER_DAY = 2
 
-# Time-of-day slot order for complementarity scoring
-_TIME_SLOT_ORDER = {"morning": 0, "afternoon": 1, "evening": 2}
+# Time-of-day slot order for complementarity scoring (no "night" — scoring-only;
+# block ORDERING uses the module-level _TIME_SLOT_ORDER (line ~50, includes "night")).
+_SCORING_SLOT_ORDER = {"morning": 0, "afternoon": 1, "evening": 2}
 
 # Canonical map-pin taxonomy shared with frontend pin config.
 _CANONICAL_POI_TYPES: set[str] = set(_TIER1_SPECIALIST_NAMES) | {
@@ -712,6 +742,14 @@ class ItineraryBuilder:
 
             # Phase 2.5: Enrich specialist activities with Google Places tile data
             activities = self._enrich_activities_from_tiles(activities, input_data.tiles)
+
+            # Phase 2.55: Drop AI-suggested Tier-1 specialist activities that have no
+            # bookable affiliate product (Viator/GYG) after enrichment. Conservative:
+            # only fires when at least one specialist activity in this set carries
+            # affiliate evidence (proves enrichment has run on this tile pool), so a
+            # first-build graph pass — where specialist tiles are still placeholder —
+            # is never nuked. Freed day slots are backfilled by Phases 5.5/5.6.
+            activities = self._drop_unbookable_specialist_activities(activities)
 
             # Phase 2a: Merge constraints with priority
             merged_constraints = self._merge_constraints(constraints)
@@ -1076,6 +1114,7 @@ class ItineraryBuilder:
                     intensity=content.get("intensity"),
                     image_url=content.get("image_url"),
                     coordinates=content.get("coordinates"),
+                    location=content.get("location"),
                     tile_id=content.get("tile_id"),
                     rating=content.get("rating"),
                     user_ratings_count=content.get("user_ratings_count"),
@@ -1248,6 +1287,79 @@ class ItineraryBuilder:
             )
 
         return activities_by_specialist
+
+    def _drop_unbookable_specialist_activities(
+        self,
+        activities_by_specialist: Dict[str, List[ActivityBlock]],
+    ) -> Dict[str, List[ActivityBlock]]:
+        """Phase 2.55: Remove AI-suggested Tier-1 specialist activities with no
+        bookable affiliate product (after Phase 2.5 enrichment).
+
+        Conservative timing guard: every block in ``activities_by_specialist``
+        comes from specialist ``content_added`` (always AI-suggested), so the
+        provenance leg of the predicate is structurally satisfied here. We only
+        apply the drop when there is POSITIVE evidence that affiliate enrichment
+        has run on this tile pool — i.e. at least one Tier-1 specialist activity
+        already carries an affiliate booking. On a first-build graph pass the
+        specialist tiles are still placeholder (Google-Maps deeplink only), so no
+        evidence exists and nothing is dropped.
+        """
+        from app.services.partner_enrichment import (
+            has_affiliate_booking,
+            is_tier1_specialist_activity,
+            is_unbookable_specialist_activity,
+        )
+
+        def _matched_tile(activity: ActivityBlock) -> Optional[Dict[str, Any]]:
+            tile = getattr(activity, "_matched_tile", None)
+            return tile if isinstance(tile, dict) else None
+
+        # Evidence gate: only Tier-1 specialist activities count (general/Google-Places
+        # tiles are enriched pre-build and would otherwise fire the gate on first build).
+        has_affiliate_evidence = False
+        for specialist, activities in activities_by_specialist.items():
+            for activity in activities:
+                if not is_tier1_specialist_activity(
+                    specialist_type=specialist,
+                    activity_domain=None,
+                    source_agent="vertical_specialist",
+                    provenance="ai_suggested",
+                ):
+                    continue
+                if has_affiliate_booking(_matched_tile(activity), activity.deeplink):
+                    has_affiliate_evidence = True
+                    break
+            if has_affiliate_evidence:
+                break
+
+        if not has_affiliate_evidence:
+            return activities_by_specialist
+
+        dropped: List[str] = []
+        filtered: Dict[str, List[ActivityBlock]] = {}
+        for specialist, activities in activities_by_specialist.items():
+            kept: List[ActivityBlock] = []
+            for activity in activities:
+                if is_unbookable_specialist_activity(
+                    specialist_type=specialist,
+                    activity_domain=None,
+                    source_agent="vertical_specialist",
+                    provenance="ai_suggested",
+                    matched_tile=_matched_tile(activity),
+                    deeplink=activity.deeplink,
+                ):
+                    dropped.append(activity.title)
+                    continue
+                kept.append(activity)
+            if kept:
+                filtered[specialist] = kept
+
+        if dropped:
+            _debug_itinerary(
+                f"🚫 Phase 2.55: Dropped {len(dropped)} unbookable specialist "
+                f"activities (no affiliate product): {dropped}"
+            )
+        return filtered
 
     def _merge_constraints(self, constraints: List[Dict[str, Any]]) -> List[MergedConstraint]:
         """Merge constraints from all specialists with priority."""
@@ -1544,7 +1656,7 @@ class ItineraryBuilder:
                 unschedulable_block = DayBlockOutput(
                     id=f"unschedulable_{specialist}_{activity.title[:15].replace(' ', '_')}",
                     period="afternoon",
-                    activity_type=specialist,
+                    activity_type=activity.title,
                     summary=activity.title,
                     specialist_type=specialist,
                     is_buffer=False,
@@ -1955,7 +2067,7 @@ class ItineraryBuilder:
                     block = DayBlockOutput(
                         id=activity.tile_id or f"act_{spec}_{day_idx}_{len(day.blocks)}",
                         period=periods[period_ptr % len(periods)],
-                        activity_type=spec,
+                        activity_type=activity.title,
                         intensity=activity.intensity,
                         summary=activity.title,
                         specialist_type=spec,
@@ -1973,6 +2085,7 @@ class ItineraryBuilder:
                         requires_booking=bool(matched_tile),
                         booking_category="activity" if matched_tile else None,
                     )
+                    block.location = activity.location
                     if activity.coordinates:
                         block.coordinates = {
                             "lat": activity.coordinates[1],
@@ -2030,7 +2143,7 @@ class ItineraryBuilder:
                     block = DayBlockOutput(
                         id=activity.tile_id or f"act_{spec}_{day_idx}_{len(day.blocks)}",
                         period=periods[period_ptr % len(periods)],
-                        activity_type=spec,
+                        activity_type=activity.title,
                         intensity=activity.intensity,
                         summary=activity.title,
                         specialist_type=spec,
@@ -2048,6 +2161,7 @@ class ItineraryBuilder:
                         requires_booking=bool(matched_tile),
                         booking_category="activity" if matched_tile else None,
                     )
+                    block.location = activity.location
                     if activity.coordinates:
                         block.coordinates = {
                             "lat": activity.coordinates[1],
@@ -2149,7 +2263,7 @@ class ItineraryBuilder:
                         block = DayBlockOutput(
                             id=activity.tile_id or f"act_{spec}_{best_day_idx}_{len(day.blocks)}",
                             period=_candidate_period,
-                            activity_type=spec,
+                            activity_type=activity.title,
                             intensity=activity.intensity,
                             summary=activity.title,
                             specialist_type=spec,
@@ -2167,6 +2281,7 @@ class ItineraryBuilder:
                             requires_booking=bool(matched_tile),
                             booking_category="activity" if matched_tile else None,
                         )
+                        block.location = activity.location
                         if activity.coordinates:
                             block.coordinates = {
                                 "lat": activity.coordinates[1],
@@ -2330,7 +2445,7 @@ class ItineraryBuilder:
                     id=activity.tile_id
                     or f"act_{current_specialist}_{day_idx}_{len(current_day.blocks)}",
                     period=periods[period_ptr % len(periods)],
-                    activity_type=current_specialist,
+                    activity_type=activity.title,
                     intensity=activity.intensity,
                     summary=activity.title,
                     specialist_type=current_specialist,
@@ -2350,6 +2465,7 @@ class ItineraryBuilder:
                     booking_category="activity" if matched_tile else None,
                 )
 
+                block.location = activity.location
                 if activity.coordinates:
                     block.coordinates = {
                         "lat": activity.coordinates[1],
@@ -2403,7 +2519,7 @@ class ItineraryBuilder:
                         block = DayBlockOutput(
                             id=activity.tile_id or f"act_{spec}_{res_idx}_{len(res_day.blocks)}",
                             period=chosen_period,
-                            activity_type=spec,
+                            activity_type=activity.title,
                             intensity=activity.intensity,
                             summary=activity.title,
                             specialist_type=spec,
@@ -2423,6 +2539,7 @@ class ItineraryBuilder:
                             requires_booking=bool(matched_tile),
                             booking_category="activity" if matched_tile else None,
                         )
+                        block.location = activity.location
                         if activity.coordinates:
                             block.coordinates = {
                                 "lat": activity.coordinates[1],
@@ -2457,33 +2574,18 @@ class ItineraryBuilder:
         # GAP 6 FIX: Sort blocks within each day by time-of-day
         # Ensures MORNING appears before AFTERNOON before EVENING
         # Also handles buffer types (arrival, departure, no_fly, etc.)
+        # Uses module-level _BUFFER_SORT_PRIORITY / _TIME_SLOT_ORDER (SSoT).
         # =================================================================
-        TIME_SLOT_ORDER = {"morning": 0, "afternoon": 1, "evening": 2, "night": 3}
-
-        # Buffer types that pin to specific positions
-        BUFFER_SORT_PRIORITY = {
-            "arrival": (0, 0),  # First thing, before morning
-            "check_in": (0, 1),  # Right after arrival
-            "check-in": (0, 1),  # Alternative spelling
-            "acclimatization": (1, 0),  # Activity-level, morning slot
-            "surface_interval": (1, 1),  # Activity-level, between dives
-            "no_fly_buffer": (1, 3),  # Activity-level, evening (end of day)
-            "no_fly": (1, 3),  # Alternative spelling
-            "departure": (2, 0),  # Last thing
-            "check_out": (2, 0),  # Same as departure
-            "check-out": (2, 0),  # Alternative spelling
-        }
-
         for day in days:
             day.blocks.sort(
                 key=lambda b: (
                     # Layer 1: Logistics bracket (0=arrival, 1=activities, 2=departure)
-                    BUFFER_SORT_PRIORITY.get(getattr(b, "buffer_type", None), (1, 1))[0],
+                    _BUFFER_SORT_PRIORITY.get(getattr(b, "buffer_type", None), (1, 1))[0],
                     # Layer 2: Buffer sub-priority OR time slot
                     (
-                        BUFFER_SORT_PRIORITY.get(getattr(b, "buffer_type", None), (1, 1))[1]
-                        if getattr(b, "buffer_type", None) in BUFFER_SORT_PRIORITY
-                        else TIME_SLOT_ORDER.get(
+                        _BUFFER_SORT_PRIORITY.get(getattr(b, "buffer_type", None), (1, 1))[1]
+                        if getattr(b, "buffer_type", None) in _BUFFER_SORT_PRIORITY
+                        else _TIME_SLOT_ORDER.get(
                             (getattr(b, "period", None) or "afternoon").lower(), 1
                         )
                     ),
@@ -2730,12 +2832,12 @@ class ItineraryBuilder:
         0.5 = adjacent slot (afternoon tile on morning day)
         0.1 = same slot (morning tile on morning day)
         """
-        tile_slot = _TIME_SLOT_ORDER.get(tile_time_of_day, 1)
+        tile_slot = _SCORING_SLOT_ORDER.get(tile_time_of_day, 1)
         occupied = set()
         for b in day.blocks:
             p = (b.period or "").lower()
-            if p in _TIME_SLOT_ORDER:
-                occupied.add(_TIME_SLOT_ORDER[p])
+            if p in _SCORING_SLOT_ORDER:
+                occupied.add(_SCORING_SLOT_ORDER[p])
         if not occupied:
             return 1.0
         if tile_slot in occupied:
@@ -2926,7 +3028,7 @@ class ItineraryBuilder:
 
         # Sort by time_of_day: morning first, then afternoon, then evening
         experience_tiles.sort(
-            key=lambda t: _TIME_SLOT_ORDER.get(
+            key=lambda t: _SCORING_SLOT_ORDER.get(
                 (t.get("meta") or {}).get("time_of_day", "afternoon"), 1
             )
         )
@@ -3959,33 +4061,20 @@ class ItineraryBuilder:
         Sort key:
         1. Logistics bracket: arrival(0) → activities(1) → departure(2)
         2. Time slot OR buffer sub-priority: morning < afternoon < evening < night
+
+        Uses module-level _BUFFER_SORT_PRIORITY / _TIME_SLOT_ORDER (SSoT); the
+        dict-based arrangement path mirrors this via _anchor_day_buffers.
         """
-        TIME_SLOT_ORDER = {"morning": 0, "afternoon": 1, "evening": 2, "night": 3}
-
-        # Buffer types that pin to specific positions
-        BUFFER_SORT_PRIORITY = {
-            "arrival": (0, 0),  # First thing, before morning
-            "check_in": (0, 1),  # Right after arrival
-            "check-in": (0, 1),  # Alternative spelling
-            "acclimatization": (1, 0),  # Activity-level, morning slot
-            "surface_interval": (1, 1),  # Activity-level, between dives
-            "no_fly_buffer": (1, 3),  # Activity-level, evening (end of day)
-            "no_fly": (1, 3),  # Alternative spelling
-            "departure": (2, 0),  # Last thing
-            "check_out": (2, 0),  # Same as departure
-            "check-out": (2, 0),  # Alternative spelling
-        }
-
         for day in days:
             day.blocks.sort(
                 key=lambda b: (
                     # Layer 1: Logistics bracket (0=arrival, 1=activities, 2=departure)
-                    BUFFER_SORT_PRIORITY.get(getattr(b, "buffer_type", None), (1, 1))[0],
+                    _BUFFER_SORT_PRIORITY.get(getattr(b, "buffer_type", None), (1, 1))[0],
                     # Layer 2: Buffer sub-priority OR time slot
                     (
-                        BUFFER_SORT_PRIORITY.get(getattr(b, "buffer_type", None), (1, 1))[1]
-                        if getattr(b, "buffer_type", None) in BUFFER_SORT_PRIORITY
-                        else TIME_SLOT_ORDER.get(
+                        _BUFFER_SORT_PRIORITY.get(getattr(b, "buffer_type", None), (1, 1))[1]
+                        if getattr(b, "buffer_type", None) in _BUFFER_SORT_PRIORITY
+                        else _TIME_SLOT_ORDER.get(
                             (getattr(b, "period", None) or "afternoon").lower(), 1
                         )
                     ),
@@ -4319,6 +4408,40 @@ class ItineraryBuilder:
 _POSITION_DEPENDENT_TAGS = frozenset({"no_fly_buffer"})
 
 
+def _anchor_day_buffers(day_cards: list[dict]) -> list[dict]:
+    """Re-pin logistics buffers to their fixed positions within each day.
+
+    Mirrors ItineraryBuilder._sort_blocks_chronologically but operates on the
+    dict-shaped blocks produced by DayBlock.model_dump() on the arrangement
+    path. A user drag can drop an activity above the arrival buffer (or below a
+    departure/no-fly buffer); this re-anchors arrival/check-in to the top and
+    departure/check-out to the bottom while leaving the user's relative ordering
+    of activity blocks intact (Python's list.sort is stable).
+
+    Reads _BUFFER_SORT_PRIORITY / _TIME_SLOT_ORDER (module-level SSoT, shared
+    with the dataclass sort) so the two paths cannot drift.
+
+    Mutates each day's ``blocks`` in place and returns ``day_cards``.
+    """
+    for dc in day_cards:
+        blocks = dc.get("blocks")
+        if not blocks:
+            continue
+        blocks.sort(
+            key=lambda b: (
+                # Layer 1: Logistics bracket (0=arrival, 1=activities, 2=departure)
+                _BUFFER_SORT_PRIORITY.get(b.get("buffer_type"), (1, 1))[0],
+                # Layer 2: Buffer sub-priority OR time slot
+                (
+                    _BUFFER_SORT_PRIORITY.get(b.get("buffer_type"), (1, 1))[1]
+                    if b.get("buffer_type") in _BUFFER_SORT_PRIORITY
+                    else _TIME_SLOT_ORDER.get((b.get("period") or "afternoon").lower(), 1)
+                ),
+            )
+        )
+    return day_cards
+
+
 def _recompute_nofly_tags(day_cards: list[dict]) -> list[dict]:
     """Strip and reapply no_fly_buffer tags based on new block positions.
 
@@ -4618,5 +4741,10 @@ def recompute_constraints_after_arrangement(
 
     # Pass 2: Detect stale/missing buffer blocks
     day_cards, buffer_violations = _detect_stale_buffers(day_cards)
+
+    # Pass 3: Re-anchor logistics buffers so a dragged block can never sit
+    # above arrival/check-in or below departure/check-out/no-fly. Runs last so
+    # the returned cards are guaranteed buffer-anchored regardless of move order.
+    day_cards = _anchor_day_buffers(day_cards)
 
     return day_cards, buffer_violations

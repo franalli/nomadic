@@ -47,6 +47,7 @@ Use your world knowledge to identify real crags, routes, and climbing areas.
 Do NOT limit yourself to a predefined list.
 
 For each activity, include approximate `lat` (latitude) and `lng` (longitude) coordinates.
+For each activity, also set `location` to the REAL crag or climbing-area name as a geocodable place (a named cliff, crag, or park a map can resolve), NOT the activity phrasing — the `title` may describe the climb, but `location` must be a named place a map can resolve. Always provide `location` even if you omit lat/lng.
 
 Include topic-specific fields:
 - elevation_meters: Base/summit altitude

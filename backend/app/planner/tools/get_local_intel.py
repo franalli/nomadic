@@ -36,42 +36,53 @@ def _utc_now_iso() -> str:
 # removed (real constraints now come from LLM enrichment), so the skeleton
 # seeds these generic fallbacks until Phase B enrichment overwrites them.
 _MIN_CONSTRAINT_FLOOR = 6
+# ``generic_fallback: True`` marks these as boilerplate travel-info floor (visa,
+# insurance, etc.) so the planner prompt can filter them OUT of the model's
+# per-turn context (build_trip_state_summary) — otherwise the model re-lists this
+# generic checklist in chat every turn. They still flow into the plan data / UI
+# (strategy_sections), which renders them independently of the model context.
 _GENERIC_FALLBACK_CONSTRAINTS: List[Dict[str, Any]] = [
     {
         "rule": "Check visa requirements before travel",
         "type": "visa",
         "severity": "warning",
         "reason": "Check visa requirements before travel",
+        "generic_fallback": True,
     },
     {
         "rule": "Travel insurance recommended for international trips",
         "type": "safety",
         "severity": "info",
         "reason": "Travel insurance recommended for international trips",
+        "generic_fallback": True,
     },
     {
         "rule": "Carry photocopies of passport and important documents",
         "type": "safety",
         "severity": "info",
         "reason": "Carry photocopies of passport and important documents",
+        "generic_fallback": True,
     },
     {
         "rule": "Register with your embassy for safety alerts",
         "type": "safety",
         "severity": "info",
         "reason": "Register with your embassy for safety alerts",
+        "generic_fallback": True,
     },
     {
         "rule": "Confirm hotel bookings and transfers before departure",
         "type": "booking_window",
         "severity": "info",
         "reason": "Confirm hotel bookings and transfers before departure",
+        "generic_fallback": True,
     },
     {
         "rule": "Check local currency and exchange options",
         "type": "money",
         "severity": "info",
         "reason": "Check local currency and exchange options",
+        "generic_fallback": True,
     },
 ]
 
@@ -190,8 +201,9 @@ async def get_local_intel(
     # Seed content_added so the synchronous skeleton already carries some
     # density (Phase B enrichment adds the rich neighborhood/transfer detail
     # later). An empty content_added reads as "feasible but empty" to the
-    # section-content validator, and its titles also feed the grounding
-    # allowlist the orchestrator may reference.
+    # section-content validator. These tips render in the plan panel only -- they
+    # do NOT reach the model's per-turn context or the grounding allowlist
+    # (local_expert sections are excluded from tile injection in coordinator.py).
     content_added: List[Dict[str, Any]] = [
         {
             "type": "overview",

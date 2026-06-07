@@ -26,6 +26,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 from app.crud_document import (  # noqa: E402
     add_tiles_to_branch,
+    apply_planner_update,
     apply_planner_update_sync,
     apply_user_patch_sync,
     get_document_data,
@@ -772,3 +773,117 @@ class TestAddTilesToBranch:
         data = asyncio.run(_run())
         # No tiles should be added since branch was not found
         assert "h1" not in data.tiles
+
+
+# ---------------------------------------------------------------------------
+# Tests: async apply_planner_update tile persistence (expand-path regression)
+# ---------------------------------------------------------------------------
+
+
+class TestApplyPlannerUpdateTilePersistence:
+    """Documents the helper contract the expand-path fix depends on.
+
+    These tests exercise apply_planner_update (the helper) directly, NOT the
+    streaming.generate_ndjson call site -- the call-site regression itself is
+    guarded end-to-end by
+    test_expand_itinerary_persist_replaces_pool_after_unbookable_prune in
+    tests/db/test_plan_document_api.py.
+
+    Contract: the expand path pops dropped unbookable-specialist tile ids from the
+    complete tiles pool, then persists. If the persist does NOT pass
+    replace_tiles=True, merge_tiles only adds/updates keys and never removes, so a
+    dropped id -- merely ABSENT from the payload -- survives in the saved doc and
+    resurfaces on reload (orphan map pins / browse ghosts). These tests show
+    replace_tiles=True evicts the absent id while a merge (replace_tiles=False)
+    does NOT.
+    """
+
+    def _setup_doc_with_full_pool(self) -> tuple[SessionModel, int]:
+        """Seed a complete activity+hotel+flight pool, return (session, doc_id)."""
+        sess_row = _make_session_row()
+
+        async def _create() -> int:
+            async with TestingAsyncSessionLocal() as db:
+                doc = await get_or_create_document(db, session=sess_row)
+                data = PlanDocumentData(
+                    trip_inputs=DocumentTripInputs(destination="Bali"),
+                    tiles={
+                        "spec_drop": _make_tile("spec_drop", "activity"),
+                        "spec_keep": _make_tile("spec_keep", "activity"),
+                        "hotel_1": _make_tile("hotel_1", "hotel"),
+                        "flight_1": _make_tile("flight_1", "flight"),
+                    },
+                )
+                await save_document_data(db, doc=doc, data=data, updated_by="planner")
+                await db.commit()
+                return doc.id
+
+        doc_id = asyncio.run(_create())
+        return sess_row, doc_id
+
+    def test_replace_tiles_true_evicts_dropped_id_keeps_full_pool(self) -> None:
+        """replace_tiles=True with a complete pool MINUS a dropped id removes it."""
+        sess_row, doc_id = self._setup_doc_with_full_pool()
+
+        # Mirror the expand persist: build the complete pool, pop the dropped id,
+        # persist with replace_tiles=True (tiles_refreshed analog).
+        full_pool_minus_dropped = {
+            "spec_keep": _make_tile("spec_keep", "activity"),
+            "hotel_1": _make_tile("hotel_1", "hotel"),
+            "flight_1": _make_tile("flight_1", "flight"),
+        }
+
+        async def _run() -> PlanDocumentData:
+            async with TestingAsyncSessionLocal() as db:
+                doc = await get_or_create_document(db, session=sess_row)
+                await apply_planner_update(
+                    db,
+                    doc=doc,
+                    trip_context_id=1,
+                    trip_inputs=None,
+                    tiles=full_pool_minus_dropped,
+                    replace_tiles=True,
+                )
+                await db.commit()
+            # Reload from a fresh session to assert persisted state.
+            async with TestingAsyncSessionLocal() as db:
+                doc = await get_or_create_document(db, session=sess_row)
+                return get_document_data(doc)
+
+        data = asyncio.run(_run())
+        assert "spec_drop" not in data.tiles  # dropped id is gone on reload
+        assert "spec_keep" in data.tiles
+        assert "hotel_1" in data.tiles  # non-activity tiles survive the replace
+        assert "flight_1" in data.tiles
+        assert set(data.tiles.keys()) == {"spec_keep", "hotel_1", "flight_1"}
+
+    def test_merge_only_leaves_dropped_id_proving_gate_matters(self) -> None:
+        """Without replace_tiles (merge), the dropped id LINGERS -- the bug."""
+        sess_row, doc_id = self._setup_doc_with_full_pool()
+
+        full_pool_minus_dropped = {
+            "spec_keep": _make_tile("spec_keep", "activity"),
+            "hotel_1": _make_tile("hotel_1", "hotel"),
+            "flight_1": _make_tile("flight_1", "flight"),
+        }
+
+        async def _run() -> PlanDocumentData:
+            async with TestingAsyncSessionLocal() as db:
+                doc = await get_or_create_document(db, session=sess_row)
+                await apply_planner_update(
+                    db,
+                    doc=doc,
+                    trip_context_id=1,
+                    trip_inputs=None,
+                    tiles=full_pool_minus_dropped,
+                    replace_tiles=False,  # the pre-fix behavior
+                )
+                await db.commit()
+            async with TestingAsyncSessionLocal() as db:
+                doc = await get_or_create_document(db, session=sess_row)
+                return get_document_data(doc)
+
+        data = asyncio.run(_run())
+        # The merge keeps the dropped id around -- this is the helper behavior the
+        # expand persist site avoids by passing replace_tiles=tiles_refreshed.
+        assert "spec_drop" in data.tiles

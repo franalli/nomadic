@@ -2,12 +2,12 @@
 
 import type { Dispatch, SetStateAction } from 'react';
 
-import { PLAN_ACTIVE_STATES } from '@/components/plan/planStateHelpers';
+import { guardedGeneratePlan, PLAN_ACTIVE_STATES } from '@/components/plan/planStateHelpers';
 import { ActivitiesSheet } from '@/components/plan/sheets/ActivitiesSheet';
 import { FlightsSheet } from '@/components/plan/sheets/FlightsSheet';
 import { StaysSheet } from '@/components/plan/sheets/StaysSheet';
 import { TripSettingsSheet } from '@/components/plan/sheets/TripSettingsSheet';
-import { GENERATE_PLAN_TRIGGER } from '@/state/chatStore';
+import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
@@ -104,7 +104,21 @@ export function LandingPreferenceSheets({
             addToast('Activity preferences saved', 'confirmation');
             const currentPVS = useDocumentStore.getState().document?.plan_view_state;
             if (PLAN_ACTIVE_STATES.has(currentPVS ?? '')) {
-              onSendMessage(GENERATE_PLAN_TRIGGER);
+              // Gate the BUILD on dates — when missing, open the Dates sheet
+              // and nudge instead of building a dateless plan (principle B).
+              // willRebuild (S3) implies dates already exist, so deferral here
+              // only occurs at S2 where willRebuild is false.
+              guardedGeneratePlan({
+                tripInputs: useDocumentStore.getState().document?.trip_inputs,
+                sendBuild: () => onSendMessage(GENERATE_PLAN_TRIGGER),
+                openDates: () => openSheet('dates'),
+                addNudge: (text) =>
+                  useChatStore.getState().addMessage({
+                    id: `a_ui_${Date.now()}`,
+                    role: 'assistant',
+                    content: text,
+                  }),
+              });
             } else if (willRebuild) {
               useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
             }

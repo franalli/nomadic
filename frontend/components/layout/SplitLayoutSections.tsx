@@ -82,7 +82,10 @@ export function DesktopSplitLayout({
           isLanding
             ? 'mx-auto w-[640px]'
             : [
-                'mx-0 w-[480px] shrink-0 border-r',
+                // Responsive width: holds 480px on laptops (≤~1500px), scales with
+                // the viewport on large displays (e.g. 27"), capped so it never
+                // crowds out the plan/map canvas. Trades against the map's flex-1.
+                'mx-0 w-[clamp(480px,32vw,760px)] shrink-0 border-r',
                 `border-zinc-200 bg-white ${DS.shadow.panelEdge}`,
                 `dark:border-white/5 dark:bg-black/40 dark:backdrop-blur-xl dark:${DS.shadow.panelEdgeDark}`,
               ]

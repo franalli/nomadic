@@ -45,6 +45,7 @@ Use your world knowledge to identify real harbors, anchorages, and sailing route
 Do NOT limit yourself to a predefined list.
 
 For each activity, include approximate `lat` (latitude) and `lng` (longitude) coordinates.
+For each activity, also set `location` to the REAL harbor, marina, or bay name as a geocodable place (a named port, marina, or bay a map can resolve), NOT the activity phrasing — the `title` may describe the sail, but `location` must be a named place a map can resolve. Always provide `location` even if you omit lat/lng.
 
 Include topic-specific fields:
 - distance_km: Sailing distance (nautical miles converted to km)

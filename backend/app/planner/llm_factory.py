@@ -17,6 +17,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from app.services.spend_guard import reserve_llm_spend_or_raise
 
+logger = logging.getLogger(__name__)
+
 # Suppress known-benign Gemini schema warnings from LangChain's internal
 # schema reprocessing. Our gemini_safe_schema() pipeline already strips
 # unsupported keys, but LangChain re-derives them internally.
@@ -31,8 +33,14 @@ def get_llm_by_model(
     streaming: bool = False,
     timeout: float | None = None,
     max_retries: int | None = None,
+    thinking_level: str | None = None,
 ) -> BaseChatModel:
-    """Return a LangChain chat model for *model*, auto-detecting the provider."""
+    """Return a LangChain chat model for *model*, auto-detecting the provider.
+
+    ``thinking_level`` ("minimal"|"low"|"medium"|"high") tunes reasoning on
+    Gemini 3 models only; it is ignored for Gemini 2.5 (which uses thinking_budget)
+    and OpenAI. Defaults to "minimal" on Gemini 3 to keep latency/cost low.
+    """
     # Reserve estimated cost before constructing/using a paid provider client.
     reserve_llm_spend_or_raise(model=model, max_tokens=max_tokens, source="get_llm_by_model")
 
@@ -42,9 +50,17 @@ def get_llm_by_model(
         kwargs: dict = dict(
             model=model,
             temperature=temperature,
-            thinking_budget=0,  # Disable thinking tokens
-            include_thoughts=False,  # Don't return reasoning in response
+            include_thoughts=False,  # Don't return reasoning in the response
         )
+        # Reasoning control differs by family. Gemini 3.x uses thinking_level
+        # (minimal|low|medium|high); thinking_budget is DEPRECATED there and the
+        # model's default is "high", so the level must be set explicitly to stay
+        # cheap/fast. Gemini 2.5 uses thinking_budget=0 to disable. Never set both
+        # on one request -- the Gemini API returns 400.
+        if model.startswith("gemini-3"):
+            kwargs["thinking_level"] = thinking_level or "minimal"
+        else:
+            kwargs["thinking_budget"] = 0
         if max_tokens is not None:
             # 30% headroom for tokenizer differences between Gemini and OpenAI
             kwargs["max_output_tokens"] = int(max_tokens * 1.3)
@@ -110,10 +126,23 @@ def extract_token_usage(raw_response: object, *, model: str | None = None) -> di
             prompt = _to_int(usage_metadata.get("input_tokens"))
             completion = _to_int(usage_metadata.get("output_tokens"))
             total = _to_int(usage_metadata.get("total_tokens"))
+            details = usage_metadata.get("input_token_details")
         else:
             prompt = _to_int(getattr(usage_metadata, "input_tokens", None))
             completion = _to_int(getattr(usage_metadata, "output_tokens", None))
             total = _to_int(getattr(usage_metadata, "total_tokens", None))
+            details = getattr(usage_metadata, "input_token_details", None)
+
+        # Implicit-cache visibility: langchain-google-genai remaps Gemini's
+        # cached_content_token_count into input_token_details.cache_read. Surface it
+        # so implicit-cache hits are observable (it was previously dropped, leaving
+        # cache effectiveness unmeasured).
+        if isinstance(details, Mapping):
+            cached = _to_int(details.get("cache_read"))
+        elif details is not None:
+            cached = _to_int(getattr(details, "cache_read", None))
+        else:
+            cached = None
 
         if prompt is not None or completion is not None or total is not None:
             prompt_tokens = prompt or 0
@@ -122,7 +151,15 @@ def extract_token_usage(raw_response: object, *, model: str | None = None) -> di
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": total if total is not None else (prompt_tokens + completion_tokens),
+                "cached_tokens": cached or 0,
             }
+            if cached:
+                logger.debug(
+                    "[llm_factory] implicit-cache hit: %d/%d input tokens cached (model=%s)",
+                    cached,
+                    prompt_tokens,
+                    model or "?",
+                )
 
     # Path 2: OpenAI response_metadata fallback (older LangChain versions).
     if not token_usage:

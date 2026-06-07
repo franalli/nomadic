@@ -97,6 +97,9 @@ export function ChatModuleSheets({
     sheetOpenTimeoutRef.current = setTimeout(() => onOpenSheet?.(sheet), 150);
   };
 
+  // Open the Dates sheet when a plan BUILD is deferred for missing dates.
+  const openDates = () => onOpenSheet?.('dates');
+
   return (
     <>
       <ErrorBoundary label="Flights">
@@ -108,7 +111,7 @@ export function ChatModuleSheets({
           hasOrigin={!!origin}
           hasDestination={hasDestination}
           hasDates={hasDates}
-          onToggle={(enabled) => handleFlightsToggle(enabled, onUpdateBookingTypes, sendMessageCore)}
+          onToggle={(enabled) => handleFlightsToggle(enabled, onUpdateBookingTypes, sendMessageCore, openDates)}
           onSaveSettings={(settings) => handleFlightsSave(settings, onUpdateFlightSettings, toast)}
           onOpenOrigin={() => openSheetDelayed('origin')}
           onOpenDestination={() => openSheetDelayed('destination')}
@@ -125,7 +128,7 @@ export function ChatModuleSheets({
           hasDestination={hasDestination}
           hasDates={hasDates}
           onToggle={(enabled) => handleStaysToggle(enabled, onUpdateBookingTypes, toast)}
-          onSaveSettings={(settings) => handleStaysSave(settings, onUpdateHotelSettings, toast, sendMessageCore)}
+          onSaveSettings={(settings) => handleStaysSave(settings, onUpdateHotelSettings, toast, sendMessageCore, openDates)}
           onOpenDestination={() => openSheetDelayed('destination')}
           onOpenDates={() => openSheetDelayed('dates')}
         />
@@ -149,6 +152,7 @@ export function ChatModuleSheets({
               commitTripInputs,
               sendMessageCore,
               toast,
+              openDates,
             )
           }
           onOpenDestination={() => openSheetDelayed('destination')}

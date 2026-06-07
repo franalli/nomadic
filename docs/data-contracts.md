@@ -209,13 +209,13 @@ Notable non-secret settings (beyond standard DB/API keys):
 | `google_maps_api_key`            | --                   | `GOOGLE_MAPS_API_KEY`          | Google Places API key                                       |
 | `google_maps_api_secret`         | --                   | `GOOGLE_MAPS_API_SECRET`       | Google Places API secret                                    |
 | `media_proxy_signing_key`        | `""`                 | `MEDIA_PROXY_SIGNING_KEY`      | Preferred override secret for signed Google Places media URLs |
-| `router_model`                   | `gemini-2.5-flash`   | `ROUTER_MODEL`                 | LLM for router extraction + coordinator `classify_change()` |
-| `local_expert_model`             | `gemini-2.5-flash`   | `LOCAL_EXPERT_MODEL`           | LLM for get_local_expert tool (function calling, phased response parsing and enrichment cleanup hooks) |
+| `router_model`                   | `gemini-2.5-flash`   | `ROUTER_MODEL`                 | LLM for `router_extraction` field extraction + `classify_change()` change typing (invoked via the `extract_trip_fields` tool) |
+| `local_expert_model`             | `gemini-2.5-flash`   | `LOCAL_EXPERT_MODEL`           | LLM for the `local_expert` node (function calling, phased response parsing and enrichment cleanup hooks), invoked via the `get_local_intel` tool |
 | `local_expert_use_llm`           | true                 | `LOCAL_EXPERT_USE_LLM`         | Feature flag -- set false to disable LLM in LocalExpert     |
 | `specialist_model`               | `gpt-4o`             | `SPECIALIST_MODEL`             | LLM for get_specialist_advice tool domain reasoning (keep gpt-4o) |
 | `specialist_fallback_model`      | --                   | `SPECIALIST_FALLBACK_MODEL`    | Optional fallback model when specialist_model fails         |
 | `guard_model`                    | `gemini-2.5-flash`   | `GUARD_MODEL`                  | LLM for route/place validation fallback in constraint checks |
-| `synthesizer_planning_model`     | `gemini-2.5-flash`   | `SYNTHESIZER_PLANNING_MODEL`   | LLM for coordinator conversational response generation       |
+| `synthesizer_planning_model`     | `gemini-2.5-flash`   | `SYNTHESIZER_PLANNING_MODEL`   | Upgraded planning model selected by `ModelSelectionMiddleware` for complex agent turns (bootstrap first response or high tool-call density) |
 | `experience_model`               | `gemini-2.5-flash`   | `EXPERIENCE_MODEL`             | LLM for Tier 2 activity tile generation (experience_generator)|
 | `iata_resolver_model`            | `gemini-2.5-flash`   | `IATA_RESOLVER_MODEL`          | LLM for airport IATA code resolution                        |
 | `use_google_places_provider`     | false                | `USE_GOOGLE_PLACES_PROVIDER`   | Feature flag: enable Google Places for hotels and activities |
@@ -281,7 +281,7 @@ Legacy 7-node graph state -- still exists as import target for shared types (`Tr
 
 ### Coordinator Protocol Schemas (`backend/app/planner/schemas/coordinator_schemas.py`)
 
-`StepType`, `ExecutionStep`, and `ExecutionPlan` were removed with the coordinator DAG (turns now run through the `create_agent` loop). Kept and still used by `vertical_specialist`: `ChangeType`, `ChangeClassification`, `ClassifierOutput`, `TripBrief`, `SpecialistDayPlan`, `SpecialistConstraintOutput`, `SpecialistPlan`, `ReplanRequest`.
+`StepType`, `ExecutionStep`, and `ExecutionPlan` were removed with the coordinator DAG (turns now run through the `create_agent` loop). The classes still defined in this file are `ChangeType`, `ChangeClassification`, `ClassifierOutput` (used by `router_extraction` for change typing, invoked via the `extract_trip_fields` tool) and `SpecialistConstraintOutput` (used by `vertical_specialist`, invoked via the `get_specialist_advice` tool).
 
 ### Session / User / Shared Trip Persistence (`backend/app/db_models.py`)
 
@@ -349,6 +349,7 @@ PlanDocumentData
   |     |   NOTE: subtitle exists in the frontend type but not the backend Pydantic model (frontend-only field)
   |     '-- blocks: DayBlock[]
   |           |-- id?, period (morning|afternoon|evening), activity_type, summary
+  |           |   NOTE: activity_type carries the activity TITLE for specialist activities (e.g. "Reef Dive at Tulamben"), not the specialist topic; buffer/logistics blocks use their buffer/logistics type (see _REMOVE_ALL_KEEP_TYPES)
   |           |-- intensity? (light|moderate|challenging)
   |           |-- is_buffer, buffer_type?, buffer_reason?
   |           |-- specialist_type?, constraints[]
@@ -357,6 +358,7 @@ PlanDocumentData
   |           |-- activity_provenance?: 'ai_suggested'|'user_browse_added'
   |           |-- map_type?: string (canonical map pin category e.g. "food", "cycling")
   |           |-- image_url?, duration?, coordinates: {lat, lng}?
+  |           |-- location?: string (clean geocodable place name for specialist activities, e.g. "Kuta Beach" — used for map-pin geocoding, distinct from activity-phrased title)
   |           |-- scheduled_time?, logistics_details?, hotel_name?
   |           |-- booked_tile?, requires_booking, booking_category?
   |           |-- rating?: number (provider-supplied traveler rating; often Viator or GYG for live activity tiles)
@@ -462,7 +464,9 @@ Note: S2_BLOCKED and S1_FRAMING are defined in the Literal type but never emitte
 Frontend VIEW_STATE_ORDER handles both P and S families.
 
 Hydration guards:
-  Downgrade protection (setFromPlanResponse, mergeEnvelope): S3->S2 blocked when day_cards exist
+  Downgrade protection (setFromPlanResponse, mergeEnvelope): S3->S2 blocked when day_cards exist;
+    shouldBlockViewStateDowngrade() also blocks any ->bootstrap downgrade once plan content exists
+    (sections or locked destination), except S0_EMPTY reset
   Backend-authoritative hydration: fetch path persists backend `plan_view_state` as-is (no frontend promotion)
 ```
 
@@ -581,11 +585,11 @@ Module-level `_userDirtySettings: Set<string>` (not Zustand state -- avoids re-r
 ### State Guards
 
 - **Destination lock:** Once set, destination can't change unless S0_EMPTY reset
-- **View state downgrade protection:** Never downgrade plan_view_state when itinerary exists
+- **View state downgrade protection:** Exported `shouldBlockViewStateDowngrade(prevViewState, nextViewState, hasDayCards, hasStrategyContent=false, hasDestination=false)` (in `documentStore.ts`) blocks any transition to a landing/bootstrap view state once the doc has real plan content — `hasDayCards` OR `hasStrategyContent` OR `hasDestination`, not just `day_cards` — so a dateless/empty response can't collapse the surface back to landing. Scoped strictly to bootstrap targets (`isBootstrapViewState`), so lateral/forward transitions still pass; `S0_EMPTY` (genuine RESET) is always accepted. Used by `setFromPlanResponse` and `mergeEnvelope`.
 - **Lateral Stage 3 transitions allowed:** `S3_ITINERARY_READY` <-> `S3_EDITING` <-> `S3_PARTIAL_CONFLICT` are valid and not blocked by downgrade guards
 - **Destination/date change detection:** Triggers chat reset + tile/section clearing; destination changes, date window changes, or `date_flex=true` clear stale `day_cards` unless new cards are returned in the same payload
 - **Fill-day version sync:** `fillDay()` in api.ts syncs `version` from response to store after success, preventing 409 cascade on subsequent calls
-- **Graph-built itinerary skip:** `setFromPlanResponse` maps `itinerary_day_cards` -> `day_cards` if present. ChatPanel's expand gate checks `graphBuiltItinerary` flag -- skips expand-itinerary when graph already built day_cards
+- **Graph-built itinerary skip:** `setFromPlanResponse` maps `itinerary_day_cards` -> `day_cards` if present. The `useChatSse` expand gate sets `graphBuiltItinerary` only when day_cards contain ≥1 *real activity* block (`isRealActivityBlock` — `NON_ACTIVITY_BLOCK_TYPES` excludes free_day/buffer and arrival/departure/check-in/check-out anchors); skips expand-itinerary then. A degenerate response whose day_cards are all placeholders is flagged `graphDegenerateDayCards` and eligible for a corrective rebuild instead of locking in an empty plan.
 - **Mutation gate:** ChatPanel subscribes to `_pendingMutations` and waits up to 5s for `hasPendingMutations()` to clear before sending graph requests. If the timeout is hit, the draft message is restored to the input and send is blocked with a retry toast, preventing version conflicts from concurrent fill-day/drag-drop mutations
 - **Trip-input PATCH dedupe:** frontend filters unchanged `trip_inputs` fields before PATCH; backend enforces a matching no-op guard for pure `trip_inputs` writes
 - **Pre-graph settings flush dedupe:** `ensureSettingsFlushed()` computes a stable payload hash and skips duplicate flushes for the same send cycle (`sendCycleId`)

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -64,6 +64,14 @@ class Settings(BaseSettings):
             return None
         return v
 
+    @model_validator(mode="after")
+    def _default_suggestions_model(self) -> "Settings":
+        # Default suggestions_model to router_model when SUGGESTIONS_MODEL is unset,
+        # so it tracks ROUTER_MODEL overrides while keeping a plain str type.
+        if not (self.suggestions_model or "").strip():
+            self.suggestions_model = self.router_model
+        return self
+
     # constraint_guard place validation
     guard_model: str = "gemini-2.5-flash"
     # synthesizer planning responses
@@ -72,6 +80,11 @@ class Settings(BaseSettings):
     experience_model: str = "gemini-2.5-flash"
     # airport code extraction (iata_resolver.py)
     iata_resolver_model: str = "gemini-2.5-flash"
+    # LLM-generated, conversation+state-aware suggestion chips (suggestion_generator.py).
+    # Empty -> defaults to router_model via _default_suggestions_model (tracks ROUTER_MODEL).
+    suggestions_model: str = ""
+    # Bound on the suggestion-chip LLM call (run concurrently with the terminal reply).
+    suggestions_timeout_s: float = 4.0
 
     # Debug flags
     debug_plan_messages: bool = False  # Enable verbose debug logging for planning

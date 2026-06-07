@@ -331,6 +331,25 @@ class TestTilesPresent:
         categories = {c["category"] for c in chips}
         assert "preference" in categories
 
+    def test_tiles_present_but_no_dates_still_prompts_dates(self) -> None:
+        """Regression: a date-less trip that already fetched stays/activities AND
+        has a strategy section (the real screenshot scenario) must still surface the
+        date-prompt chips, NOT bury them under 'Browse activities'. The 'has tiles'
+        branch must not pre-empt the missing-dates branch."""
+        state = _make_state(
+            trip_plan={"destination": "Bali"},  # no start_date
+            strategy_sections=[{"specialist_type": "local_expert", "must_dos": []}],
+            tiles={
+                "hotels": [{"id": "h1"}],
+                "activities": [{"id": "a1"}],
+            },
+        )
+        chips = _generate_chips_from_state(state)
+        categories = {c["category"] for c in chips}
+        assert "date_prompt" in categories
+        # And it must offer an actionable "Set dates" pill opener.
+        assert any(c.get("action_target") == "dates" for c in chips)
+
 
 # =============================================================================
 # Departure city personalization

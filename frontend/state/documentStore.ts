@@ -199,12 +199,33 @@ const isS3ViewState = (state: string | null | undefined): boolean => Boolean(sta
 const isBootstrapViewState = (state: string | null | undefined): boolean =>
   !state || state === 'S0_BOOTSTRAP' || state === 'P0_MINIMAL';
 
-function shouldBlockViewStateDowngrade(
+export function shouldBlockViewStateDowngrade(
   prevViewState: string | null | undefined,
   nextViewState: string | null | undefined,
-  hasDayCards: boolean
+  hasDayCards: boolean,
+  // Plan content that, once present, must never collapse back to the landing
+  // bootstrap (principle A: never revert to landing once content exists).
+  // Derived from the SAME doc whose view-state is being preserved.
+  hasStrategyContent: boolean = false,
+  hasDestination: boolean = false
 ): boolean {
-  if (!hasDayCards || !nextViewState || nextViewState === 'S0_EMPTY') {
+  // S0_EMPTY = genuine RESET intent — always accept (clears destination/sections).
+  if (!nextViewState || nextViewState === 'S0_EMPTY') {
+    return false;
+  }
+
+  // Never drop to the landing bootstrap once the user has real plan content,
+  // even before day_cards exist (e.g. a dateless/empty response slipping in).
+  // Scoped strictly to bootstrap targets so legitimate lateral/forward
+  // transitions (e.g. S2_STRATEGY_READY -> S2_BLOCKED) stay allowed.
+  if (
+    isBootstrapViewState(nextViewState) &&
+    (hasDayCards || hasStrategyContent || hasDestination)
+  ) {
+    return true;
+  }
+
+  if (!hasDayCards) {
     return false;
   }
 
@@ -1358,7 +1379,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           // S3 state when itinerary day_cards already exist.
           plan_view_state: (() => {
             const hasDayCards = Array.isArray(currentDoc?.day_cards) && (currentDoc?.day_cards?.length ?? 0) > 0;
-            const wouldDowngrade = shouldBlockViewStateDowngrade(currentDoc?.plan_view_state, response.document.plan_view_state, hasDayCards);
+            const wouldDowngrade = shouldBlockViewStateDowngrade(
+              currentDoc?.plan_view_state,
+              response.document.plan_view_state,
+              hasDayCards,
+              (currentDoc?.strategy_sections?.length ?? 0) > 0,
+              Boolean(currentDoc?.trip_inputs?.destination)
+            );
             return wouldDowngrade ? currentDoc?.plan_view_state : (response.document.plan_view_state ?? currentDoc?.plan_view_state);
           })(),
           // Also preserve tiles which may come from graph
@@ -1440,7 +1467,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
               // S3 state when itinerary day_cards already exist.
               plan_view_state: (() => {
                 const hasDayCards = Array.isArray(currentDocRetry?.day_cards) && (currentDocRetry?.day_cards?.length ?? 0) > 0;
-                const wouldDowngrade = shouldBlockViewStateDowngrade(currentDocRetry?.plan_view_state, retryResponse.document.plan_view_state, hasDayCards);
+                const wouldDowngrade = shouldBlockViewStateDowngrade(
+                  currentDocRetry?.plan_view_state,
+                  retryResponse.document.plan_view_state,
+                  hasDayCards,
+                  (currentDocRetry?.strategy_sections?.length ?? 0) > 0,
+                  Boolean(currentDocRetry?.trip_inputs?.destination)
+                );
                 return wouldDowngrade ? currentDocRetry?.plan_view_state : (retryResponse.document.plan_view_state ?? currentDocRetry?.plan_view_state);
               })(),
               tiles: currentDocRetry?.tiles && Object.keys(currentDocRetry.tiles).length > 0
@@ -1757,7 +1790,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         // Never let a PATCH downgrade from S3 → S0/S2 (see commitTripInputs).
         plan_view_state: (() => {
           const hasDayCards = Array.isArray(currentDoc?.day_cards) && (currentDoc?.day_cards?.length ?? 0) > 0;
-          const wouldDowngrade = shouldBlockViewStateDowngrade(currentDoc?.plan_view_state, response.document.plan_view_state, hasDayCards);
+          const wouldDowngrade = shouldBlockViewStateDowngrade(
+            currentDoc?.plan_view_state,
+            response.document.plan_view_state,
+            hasDayCards,
+            (currentDoc?.strategy_sections?.length ?? 0) > 0,
+            Boolean(currentDoc?.trip_inputs?.destination)
+          );
           return wouldDowngrade ? currentDoc?.plan_view_state : (response.document.plan_view_state ?? currentDoc?.plan_view_state);
         })(),
         strategy_sections: currentDoc?.strategy_sections ?? response.document.strategy_sections,
@@ -1950,9 +1989,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // When backend explicitly cleared cards, don't count stale cards for downgrade protection
     const hasDayCards = backendClearedCards ? false : currentDayCards.length > 0;
 
-    // GUARD: Never downgrade view state when itinerary exists
-    // EXCEPTION: S0_EMPTY = genuine RESET intent (user said "start over"), always accept
-    const wouldDowngrade = shouldBlockViewStateDowngrade(prevViewState, newViewState, hasDayCards);
+    // GUARD: Never downgrade view state when itinerary OR plan content exists.
+    // EXCEPTION: S0_EMPTY = genuine RESET intent (user said "start over"), always accept.
+    // hasStrategyContent/hasDestination derived from the response doc whose
+    // newViewState we are evaluating (destination is locked once set, so this
+    // reflects protected content; a true reset carries neither).
+    const hasStrategyContent =
+      (response.document.strategy_sections?.length ?? currentDoc?.strategy_sections?.length ?? 0) > 0;
+    const hasDestination = Boolean(response.document.trip_inputs?.destination);
+    const wouldDowngrade = shouldBlockViewStateDowngrade(
+      prevViewState,
+      newViewState,
+      hasDayCards,
+      hasStrategyContent,
+      hasDestination
+    );
 
     const finalViewState = wouldDowngrade ? prevViewState : newViewState;
 
@@ -2471,9 +2522,22 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const currentDayCards = currentDoc.day_cards ?? [];
     const hasDayCards = currentDayCards.length > 0;
 
-    // GUARD: Never downgrade view state when itinerary exists
-    // EXCEPTION: S0_EMPTY = genuine RESET intent (user said "start over"), always accept
-    const wouldDowngrade = shouldBlockViewStateDowngrade(prevViewState, newViewState, hasDayCards);
+    // GUARD: Never downgrade view state when itinerary OR plan content exists.
+    // EXCEPTION: S0_EMPTY = genuine RESET intent (user said "start over"), always accept.
+    // Envelope is a partial merged INTO currentDoc, so fall back to currentDoc
+    // for content the envelope did not re-send.
+    const hasStrategyContent =
+      (envelope.strategy_sections?.length ?? currentDoc.strategy_sections?.length ?? 0) > 0;
+    const hasDestination = Boolean(
+      envelope.trip_inputs?.destination ?? currentDoc.trip_inputs?.destination
+    );
+    const wouldDowngrade = shouldBlockViewStateDowngrade(
+      prevViewState,
+      newViewState,
+      hasDayCards,
+      hasStrategyContent,
+      hasDestination
+    );
 
     const finalViewState = wouldDowngrade ? prevViewState : (newViewState ?? prevViewState);
 

@@ -20,6 +20,7 @@ ACTIVITY GENERATION:
 - Generate 2-4 cycling routes for the user's SPECIFIC destination
 - Use your world knowledge to identify real routes. Do NOT limit yourself to a predefined list.
 - For each activity, include approximate `lat` (latitude) and `lng` (longitude) coordinates
+- For each activity, also set `location` to the REAL route landmark or start point as a geocodable place (a named town, terrace, or landmark a map can resolve), NOT the activity phrasing — the `title` may describe the ride, but `location` must be a named place a map can resolve. Always provide `location` even if you omit lat/lng.
 - Include distance_km and elevation_meters for each ride
 - Add surface type (road, gravel, MTB)
 - Consider traffic levels and road quality

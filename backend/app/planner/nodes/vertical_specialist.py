@@ -627,7 +627,12 @@ async def generate_specialist_output_llm(
 
         attempt_start = time.time()
         try:
-            llm = get_llm_by_model(model_name, temperature=0.2, max_tokens=1000)
+            # Specialist domain reasoning (e.g. diving 24h no-fly, multi-day route
+            # logic) benefits from a small amount of thinking. thinking_level="low"
+            # applies on Gemini 3 only; ignored on Gemini 2.5 / OpenAI.
+            llm = get_llm_by_model(
+                model_name, temperature=0.2, max_tokens=1000, thinking_level="low"
+            )
 
             # Use flattened schema for function calling — $defs inlined so Gemini accepts it.
             # Passing a raw dict (not the Pydantic class) prevents LangChain from regenerating
@@ -1958,6 +1963,10 @@ async def _merge_specialist_into_state(
             "day": block.day,
             "image_url": image_url,
             "coordinates": block.coordinates,
+            # Clean LLM-generated place name (e.g. "Kuta Beach, Bali"). Activity
+            # titles are lesson-phrased ("Surf Lesson at Kuta Beach"), so this is
+            # the geocodable string the POST_BUILD enrichment should query.
+            "location": block.location,
             "intensity": intensity,
             "duration_hours": block.duration_hours,
             "price_estimate": block.price_estimate if block.price_estimate else _default_price,

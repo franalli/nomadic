@@ -83,12 +83,11 @@ backend/
 │   │
 │   ├── planner/                # create_agent tool-calling planner package
 │   │   ├── __init__.py
-│   │   ├── agent.py            # create_planner_agent() factory (create_agent + 6 tools + middleware + NomadicAgentState)
-│   │   ├── agent_constants.py  # Agent model config (AGENT_MAX_TOKENS/TEMPERATURE/TIMEOUT)
-│   │   ├── middleware.py       # 4 create_agent middleware (ModelCallLimit, ToolCallLimit, ModelSelection, DynamicPrompt, TurnLifecycle) + stdlib retry
-│   │   ├── chip_generator.py   # Suggestion chip generator extracted from legacy middleware
-│   │   ├── conversationalist.py # Single-LLM response generator for coordinator path
-│   │   ├── coordinator.py      # Envelope builder + helpers library (DAG removed; _build_envelope reused by the agent path)
+│   │   ├── agent.py            # create_planner_agent() factory (create_agent over NomadicAgentState + 6 tools + middleware)
+│   │   ├── agent_constants.py  # Agent orchestrator model config (AGENT_MAX_TOKENS/TEMPERATURE/TIMEOUT)
+│   │   ├── middleware.py       # Defines ModelSelection, DynamicPrompt, TurnLifecycle middleware (ModelCallLimit/ToolCallLimit/ModelRetry come from langchain)
+│   │   ├── chip_generator.py   # Suggestion chip generator (template-based, plain-dict state) extracted from middleware.py
+│   │   ├── coordinator.py      # Envelope builder (_build_envelope) + state/tile/enrichment helpers reused by the agent path
 │   │   ├── hashing.py          # Hash utilities
 │   │   ├── llm_factory.py      # Provider-agnostic LLM factory (OpenAI/Gemini auto-routing)
 │   │   ├── specialist_registry.py # Specialist config SSoT (keywords, constraints, flags)
@@ -125,7 +124,7 @@ backend/
 │   │   ├── services/
 │   │   │   ├── __init__.py
 │   │   │   ├── admin_utils.py       # Admin utility functions
-│   │   │   ├── agent_runner.py      # run_agent_turn_streaming() — SSE streaming driver for the agent (drop-in for execute_turn)
+│   │   │   ├── agent_runner.py      # run_agent_turn_streaming() — turn entry point; drives the create_agent loop and yields SSE events
 │   │   │   ├── feasibility_service.py # LLM-backed geographic feasibility checks
 │   │   │   ├── iata_resolver.py     # IATA airport code resolver (LLM-backed)
 │   │   │   ├── itinerary_adapter.py # Thin bridge: GraphState → ItineraryBuilder
@@ -231,17 +230,19 @@ backend/
 │   ├── curl_flow_validators.py           # Curl flow response validators
 │   ├── test_curl_flow_validators.py      # Curl flow validator tests
 │   ├── analyze_flow_logs.py               # Flow log analysis and regression checks
+│   ├── spike_agent_parallel.py            # Dev probe (not a unit test): checks live Gemini parallel tool-calling / interleaving for the agent loop
 │   ├── test_activity_browser.py          # Browse activities backend contract tests
 │   ├── test_activity_category_conflicts.py  # Shared partner-category conflict rule tests
 │   ├── test_activity_image_placeholder_mapping.py  # Activity image placeholder mapping tests
 │   ├── test_analyze_flow_logs.py         # Flow-log analyzer regression tests
 │   ├── test_aviasales_provider.py           # Aviasales provider flight search and tile conversion tests
 │   ├── test_agent_multiturn.py           # Agent multi-turn conversation tests
+│   ├── test_agent_tools_smoke.py         # Smoke tests for create_agent planner tools (ainvoke-testable, return plain dicts)
+│   ├── test_middleware_turn_meta.py      # create_agent middleware turn_meta reducer/delta contract tests
 │   ├── test_chip_generator.py            # Chip output and deterministic variant generation tests
 │   ├── test_conflict_resolution.py       # Conflict resolution & constraint alias tests
 │   ├── test_contracts.py                 # Backend/frontend schema parity contract tests
-│   ├── test_conversationalist.py         # Conversationalist streaming + response tests
-│   ├── test_coordinator.py              # Coordinator turn flow + step execution tests
+│   ├── test_coordinator.py              # Tests for coordinator.py helpers (_build_envelope, S3-state, conflict→violation mapping, post-build enrichment, specialist-content→tiles)
 │   ├── test_cross_domain_constraints.py  # Cross-domain constraint tests
 │   ├── test_expert_constraints.py        # Expert-constraint schema/model alignment
 │   ├── test_demo_dataset.py              # Demo data tests
@@ -318,6 +319,12 @@ backend/
 │   ├── test_unsplash_queries.py       # Unsplash query helper tests
 │   ├── test_validation_cache.py       # Validation cache behavior tests
 │   ├── test_viator_provider.py        # Viator provider tile conversion, matching, and circuit-breaker tests
+│   ├── test_autovalidate_gate.py      # Post-loop autovalidate backstop gate tests (_should_autovalidate)
+│   ├── test_build_itinerary_state_sections.py  # build_itinerary authoritative-state sections + tile-merge tests
+│   ├── test_middleware_merge_tiles.py # _merge_tiles specialist-tile preservation tests
+│   ├── test_planner_turn_context.py   # build_turn_context grounding/generic_fallback filtering tests
+│   ├── test_remove_all_activities.py  # remove-all-activities post-loop guarantee tests
+│   ├── test_unbookable_specialist_filter.py  # Unbookable-specialist drop predicate/policy tests
 │   └── db/
 │       ├── test_expand_itinerary_api.py
 │       ├── test_plan_document_api.py
@@ -770,7 +777,10 @@ frontend/
 │   ├── useChatSse.test.tsx               # SSE connection manager tests
 │   ├── useTripInputsWithFallback.test.tsx  # Trip-input fallback subscription behavior tests
 │   ├── userStore.test.ts               # Auth/recent-trips store tests
-│   └── travel-intel.test.ts
+│   ├── travel-intel.test.ts
+│   ├── landing-dates-sheet-build-gate.test.tsx  # Dates-sheet save → dates-gated build trigger tests
+│   ├── plan-build-dates-gate.test.ts   # hasTripDates build-gate helper tests
+│   └── useSessionHydration.test.tsx    # Session hydration (backend-decided validity, no client expiry) tests
 │
 ├── .prettierignore             # Prettier ignore patterns
 ├── .prettierrc.cjs             # Prettier configuration
@@ -833,7 +843,7 @@ docs/
 ## Key Architectural Notes
 
 1. **PlanDocumentData is SSoT** - All trip state flows through `PlanDocumentData` schema
-2. **Agent Architecture** - Turns flow through `create_agent` via `agent_runner.run_agent_turn_streaming()`. The agent tool-calling loop (6 `@tool` wrappers + middleware) replaced the deterministic coordinator DAG; `coordinator.py` is now an envelope/helpers library (`_build_envelope` reused over agent state). See `plan_graph_analysis.md`.
+2. **Agent Architecture** - Turns flow through `create_agent` via `agent_runner.run_agent_turn_streaming()`. The model-driven tool-calling loop (6 `@tool` wrappers + middleware) decides which tools to call each turn; `coordinator.py` is an envelope/helpers library (`_build_envelope` runs over the final agent state). See `plan_graph_analysis.md`.
 3. **Design Tokens** - Frontend uses tokens from `design-system.md`
 4. **StrategyStageRenderer** - Single renderer adapts to data density (see `ux_unified_architecture.md`)
 5. **DnD via `blockWrapper` render prop** - `TimelineThread` is DnD-agnostic; `ItineraryDndWrapper` + `DraggableBlock` + `DroppableDay` inject drag via `blockWrapper` prop. Dependency: `@dnd-kit/core`.

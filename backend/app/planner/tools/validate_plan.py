@@ -20,7 +20,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from langchain_core.tools import tool
+from langchain_core.tools import InjectedToolArg, tool
 from langgraph.prebuilt import InjectedState
 from typing_extensions import Annotated
 
@@ -229,6 +229,11 @@ async def validate_plan(
     # tiles, and constraints from agent state so the LLM does not need
     # to pass large JSON payloads.
     state: Annotated[Optional[dict], InjectedState] = None,
+    # InjectedToolArg -- hidden from the LLM schema, set programmatically. The
+    # deterministic post-loop backstop passes skip_route_check=True so it runs
+    # only the fast pure-Python checks (no LLM place/route call on every turn);
+    # a model-invoked validate_plan still runs the full check (default False).
+    skip_route_check: Annotated[bool, InjectedToolArg] = False,
 ) -> dict:
     """Check a trip plan for constraint violations (budget overruns, date
     conflicts, safety buffers). Call after making plan changes or adding tiles."""
@@ -290,6 +295,15 @@ async def validate_plan(
     tiles = parse_tiles_json(tiles_json)
     constraint_dicts = parse_constraints_json(constraints_json)
 
+    # Drop local-expert generic-fallback travel-intel (visa/booking_window/money
+    # with severity warning/info). It is UI scaffolding for strategy_sections and
+    # can never validate against the safety-oriented SpecialistConstraint schema,
+    # so it only spammed "[validate_plan] Skipping invalid constraint" every turn.
+    # Filtering this fresh JSON list does not mutate state["constraints"].
+    constraint_dicts = [
+        cd for cd in constraint_dicts if not (isinstance(cd, dict) and cd.get("generic_fallback"))
+    ]
+
     # Hydrate specialist constraints onto the plan for guard evaluation
     for cd in constraint_dicts:
         try:
@@ -325,17 +339,22 @@ async def validate_plan(
     except Exception as exc:
         logger.warning("[validate_plan] Constraint guard failed: %s", exc)
 
-    # 5. Route validation (same-city + place existence -- LLM-backed, cached)
-    try:
-        route_violations = await check_route_constraint(plan)
-        for v in route_violations:
-            entry = v.to_dict()
-            if v.severity == "blocking":
-                violations.append(entry)
-            else:
-                warnings.append(entry)
-    except Exception as exc:
-        logger.warning("[validate_plan] Route validation failed: %s", exc)
+    # 5. Route validation (same-city + place existence -- LLM-backed, cached).
+    # Skipped when invoked as the deterministic backstop (skip_route_check=True):
+    # the LLM place-existence call is left to the model-invoked path / extraction
+    # time, so the per-turn backstop stays fast and cannot deterministically flip
+    # an already-streamed plan to "rejected" on a false negative.
+    if not skip_route_check:
+        try:
+            route_violations = await check_route_constraint(plan)
+            for v in route_violations:
+                entry = v.to_dict()
+                if v.severity == "blocking":
+                    violations.append(entry)
+                else:
+                    warnings.append(entry)
+        except Exception as exc:
+            logger.warning("[validate_plan] Route validation failed: %s", exc)
 
     # 6. Build result
     all_issues = violations + warnings

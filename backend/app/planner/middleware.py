@@ -185,6 +185,39 @@ def _extract_tool_result(tool_message: ToolMessage) -> dict[str, Any] | None:
         return None
 
 
+def _summarize_local_intel_for_model(parsed: dict[str, Any] | None) -> str:
+    """Concise, MODEL-FACING summary of a get_local_intel result.
+
+    The tool returns a verbose Phase-A skeleton whose only chat-relevant content is
+    the generic travel-info floor (visa / insurance / passport copies / embassy /
+    currency) -- the real neighborhood/transfer detail is enriched ASYNCHRONOUSLY
+    (Phase B) into the plan panel and never reaches the model in-turn. Handing the
+    raw skeleton to the model made it re-list that robotic checklist in chat. The
+    full result is already merged into state for the plan panel by the caller, so we
+    replace only what the MODEL reads with a short note that names no boilerplate.
+    Any genuine (non-``generic_fallback``) constraint is preserved so it is not lost.
+    """
+    parsed = parsed or {}
+    payload: dict[str, Any] = {
+        "destination": parsed.get("destination") or "",
+        "status": "local intel ready",
+        "note": (
+            "Local tips, neighborhoods, transfers and timing are saved to the plan panel for "
+            "the traveler. Do not reproduce a travel-tips checklist in your chat reply."
+        ),
+    }
+    real_constraints = [
+        label
+        for c in (parsed.get("constraints") or [])
+        if isinstance(c, dict)
+        and not c.get("generic_fallback")
+        and (label := (c.get("label") or c.get("rule")))
+    ]
+    if real_constraints:
+        payload["safety_constraints"] = real_constraints
+    return json.dumps(payload)
+
+
 def _normalize_trip_settings(raw_settings: dict[str, Any]) -> dict[str, Any]:
     """Normalize legacy flat trip_settings keys into nested settings dicts."""
     trip_settings = dict(raw_settings)
@@ -317,12 +350,36 @@ def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[st
     # consumers (logistics, builder, curl checks) have a concrete end.
     _start = trip_plan.get("start_date")
     _dur = trip_plan.get("duration_days")
+    _end_derived = False
     if _start and _dur and not trip_plan.get("end_date"):
         try:
             from datetime import datetime, timedelta
 
             _start_dt = datetime.strptime(str(_start), "%Y-%m-%d")
             trip_plan["end_date"] = (_start_dt + timedelta(days=int(_dur))).strftime("%Y-%m-%d")
+            _end_derived = True
+        except (ValueError, TypeError):
+            pass
+
+    # Reconcile trip_duration from an EXPLICIT date range so a stale duration from
+    # an earlier turn ("10 days") can't outlive a later explicit range ("Jul 1-7")
+    # and feed a wrong flight return-date (logistics uses trip_duration-1) or a
+    # wrong "N days" trip summary. Guards:
+    #  - skip when end_date was just DERIVED from duration this turn (else the
+    #    inclusive recompute would fight the duration the traveler actually gave);
+    #  - skip flexible / date-window trips, where start/end can encode a search
+    #    WINDOW wider than the nominal trip length.
+    _ts_in = state.get("trip_settings", {}) or {}
+    _is_flex = bool(_ts_in.get("date_flex")) or bool(_ts_in.get("date_window_start"))
+    _end_final = trip_plan.get("end_date")
+    if _start and _end_final and not _end_derived and not _is_flex:
+        try:
+            from datetime import datetime
+
+            _s = datetime.strptime(str(_start)[:10], "%Y-%m-%d")
+            _e = datetime.strptime(str(_end_final)[:10], "%Y-%m-%d")
+            if _e >= _s:
+                trip_plan["trip_duration"] = (_e - _s).days + 1
         except (ValueError, TypeError):
             pass
 
@@ -444,6 +501,25 @@ def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[st
             booking_types["flights"] = "suggested"
         trip_settings["booking_types"] = booking_types
 
+    # Un-stick activities: a prior "remove all activities" turn set
+    # booking_types.activities="off" (and that is sticky). When the traveler now
+    # asks for ANY activity again -- a new category/specialist hint -- re-enable
+    # activities so the next fetch/backfill runs and the envelope stops hiding
+    # them. Gated on the activity interest set being non-empty AND this turn
+    # actually adding interest (a remove-all turn never reaches here: it carries
+    # no activity_categories/specialist_hints, so those keys aren't in `changed`).
+    if ("activity_categories" in changed or "specialist_hints" in changed) and (
+        trip_plan.get("activity_categories") or trip_plan.get("specialist_hints")
+    ):
+        booking_types = dict(trip_settings.get("booking_types") or {})
+        if booking_types.get("activities") == "off":
+            booking_types["activities"] = "suggested"
+            trip_settings["booking_types"] = booking_types
+            logger.info(
+                "[_merge_trip_fields] Re-enabled activities (was off) -- traveler "
+                "requested activity interest again"
+            )
+
     updates: dict[str, Any] = {"trip_plan": trip_plan, "trip_settings": trip_settings}
 
     # Field producers consumed by the envelope builder (applied_updates / ack
@@ -456,6 +532,12 @@ def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[st
         # branch), so the filtered-list delta below is inert -- _prune_stale_sections consumes this
         # post-graph and drops the section by direct mutation on final_state.
         "removal_targets": sorted(removal_targets),
+        # Global "remove ALL activities" intent. The in-loop model may re-plan
+        # (re-run a specialist), so this clear is ENFORCED post-loop in
+        # agent_runner._apply_remove_all_activities (turn_meta scalar keys are
+        # right-wins, so this flag survives to final_state). Also read by
+        # DynamicPromptMiddleware to shape the terminal reply.
+        "remove_all_activities": bool(result.get("remove_all_activities")),
     }
 
     # When destination changed, clear stale data from the previous destination.
@@ -505,6 +587,73 @@ def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[st
     return updates
 
 
+def _active_specialist_topics(state: dict[str, Any]) -> set[str]:
+    """Topics (lowercased) with a live section in ``state["strategy_sections"]``.
+
+    Used to scope specialist-tile preservation: only a topic that still owns a
+    strategy section is "active", so a removed specialist's tiles are not carried
+    forward (tile-state tracks section-state).
+    """
+    sections = state.get("strategy_sections") or []
+    topics: set[str] = set()
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        topic = str(section.get("specialist_type", "")).strip().lower()
+        if topic:
+            topics.add(topic)
+    return topics
+
+
+def _tile_specialist_topic(tile: dict[str, Any]) -> str:
+    """Topic stamp for an activity tile (``meta.specialist_type`` -> ``meta.category``)."""
+    meta = tile.get("meta")
+    if not isinstance(meta, dict):
+        return ""
+    topic = meta.get("specialist_type") or meta.get("category") or ""
+    return str(topic).strip().lower()
+
+
+def _preserve_active_specialist_tiles(
+    state: dict[str, Any],
+    old_activities: list[Any],
+    new_tiles: list[Any],
+) -> list[Any]:
+    """Union-forward dropped specialist tiles whose topic is still active.
+
+    Appends any existing ``source_agent == "vertical_specialist"`` tile to
+    ``new_tiles`` when (a) its id is absent from the fresh results (right-wins by
+    id) AND (b) its topic still has a live strategy section. Returns the
+    (possibly extended) ``new_tiles`` list; never resurrects a removed topic's
+    tiles.
+    """
+    active_topics = _active_specialist_topics(state)
+    if not active_topics:
+        return new_tiles
+
+    fresh_ids = {t.get("id") for t in new_tiles if isinstance(t, dict) and t.get("id") is not None}
+    preserved = 0
+    for tile in old_activities:
+        if not isinstance(tile, dict):
+            continue
+        if tile.get("source_agent") != "vertical_specialist":
+            continue
+        tile_id = tile.get("id")
+        if tile_id is None or tile_id in fresh_ids:
+            continue
+        if _tile_specialist_topic(tile) not in active_topics:
+            continue
+        new_tiles.append(tile)
+        preserved += 1
+
+    if preserved:
+        logger.info(
+            "[_merge_tiles] Preserved %d specialist activity tile(s) dropped by search_tiles",
+            preserved,
+        )
+    return new_tiles
+
+
 def _merge_tiles(state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
     """Merge search_tiles result into the tiles dict.
 
@@ -531,6 +680,21 @@ def _merge_tiles(state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any
                         _carry_forward_partner_enrichment(new_tiles, old_activities)
                     except Exception as exc:  # pragma: no cover - defensive
                         logger.warning("[_merge_tiles] partner carry-forward failed: %s", exc)
+
+                    # Union-forward specialist activity tiles (source_agent ==
+                    # "vertical_specialist") that the fresh search results drop.
+                    # These tiles are the ONLY carrier of Viator image+deeplink for
+                    # Tier-1 activities (injected in-place by
+                    # _inject_specialist_tiles_into_state); search_tiles emits none,
+                    # so a wholesale replace would silently strip them and the
+                    # subsequent expand-itinerary rebuild loses the partner stamp.
+                    #
+                    # Scope preservation to topics still present in
+                    # strategy_sections so a REMOVED specialist (whose section is
+                    # gone) is NOT resurrected -- keeping tile-state consistent with
+                    # section-state. Right-wins by id: only carry a specialist tile
+                    # forward when its id is absent from the fresh results.
+                    new_tiles = _preserve_active_specialist_tiles(state, old_activities, new_tiles)
             tiles[category] = new_tiles
             replaced.append(category)
 
@@ -853,6 +1017,25 @@ class TurnLifecycleMiddleware(AgentMiddleware):
             tool_errored,
             list(state_updates.keys()),
         )
+
+        # get_local_intel's full skeleton is already merged into state for the plan panel
+        # above. Shrink the MODEL-FACING ToolMessage to a concise summary so the model
+        # acknowledges local intel without re-listing the generic travel-info checklist it
+        # otherwise parrots into chat every time the tool runs. Scoped to this one tool; all
+        # other tool results reach the model verbatim. (The merge above mutates `parsed` in
+        # place -- adds constraint_id -- but the summary reads only generic_fallback/label/rule,
+        # which it never touches, so ordering is safe.)
+        if (
+            tool_name == "get_local_intel"
+            and not tool_errored
+            and parsed is not None
+            and isinstance(result, ToolMessage)
+        ):
+            result = ToolMessage(
+                content=_summarize_local_intel_for_model(parsed),
+                tool_call_id=result.tool_call_id,
+                name=result.name,
+            )
 
         # If the handler already returned a Command (e.g. with goto routing),
         # merge our state_updates into its existing update dict and preserve

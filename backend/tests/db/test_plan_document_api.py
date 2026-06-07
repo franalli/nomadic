@@ -1357,3 +1357,138 @@ def test_expand_itinerary_conflict_error_includes_persisted_plan_view_state():
             db.query(models.PlanDocument).filter(models.PlanDocument.session_id == session.id).one()
         )
         assert doc.document["plan_view_state"] == "S3_PARTIAL_CONFLICT"
+
+
+def test_expand_itinerary_persist_replaces_pool_after_unbookable_prune():
+    """Dropped unbookable-specialist tiles must be ABSENT from the persisted pool.
+
+    Regression guard for the expand-path persist bug: generate_ndjson pops the
+    dropped unbookable-specialist tile ids from the complete pool and persists via
+    apply_planner_update. Without replace_tiles=tiles_refreshed the merge-only path
+    leaves the popped id in the saved doc and it resurfaces on reload (orphan map
+    pins / browse ghosts). This drives the real endpoint end-to-end and asserts the
+    dropped id is gone from doc.document["tiles"] while the bookable specialist tile
+    and the hotel survive. Reverting the replace_tiles gate makes this FAIL.
+    """
+    from app.config import settings
+    from app.services.itinerary_builder import DayBlockOutput
+
+    _VIATOR_DEEPLINK = "https://www.viator.com/tours/Nice/Sample/d22-12345?pid=P00012345"
+    _MAPS_DEEPLINK = "https://www.google.com/maps/search/Hidden%20Cove%20Dive"
+
+    def _viator_dive_tile() -> dict:
+        return {
+            "id": "spec_viator",
+            "type": "activity",
+            "title": "Cap Ferrat Boat Dive",
+            "provider": "viator",
+            "partner": "viator",
+            "partner_product_id": "P00012345",
+            "deeplink": _VIATOR_DEEPLINK,
+            "is_estimate_only": False,
+            "live_price": 89.0,
+            "meta": {"specialist_type": "diving", "category": "diving"},
+            "source_agent": "vertical_specialist",
+        }
+
+    def _placeholder_dive_tile() -> dict:
+        return {
+            "id": "spec_maps",
+            "type": "activity",
+            "title": "Hidden Cove Dive",
+            "partner": "vertical_specialist",
+            "partner_product_id": "spec_maps",
+            "deeplink": _MAPS_DEEPLINK,
+            "is_estimate_only": True,
+            "meta": {"specialist_type": "diving", "category": "diving"},
+            "source_agent": "vertical_specialist",
+        }
+
+    session_token = f"session-expand-prune-{time.time_ns()}"
+    seed_session_with_document(session_token=session_token)
+
+    # Replace the seeded pool with a complete pool: bookable dive + unbookable dive
+    # + the hotel. Both diving tiles present => affiliate-evidence gate fires.
+    with TestingSessionLocal() as db:
+        session = (
+            db.query(models.Session).filter(models.Session.session_token == session_token).one()
+        )
+        doc = (
+            db.query(models.PlanDocument).filter(models.PlanDocument.session_id == session.id).one()
+        )
+        document = dict(doc.document)
+        document["tiles"] = {
+            "spec_viator": _viator_dive_tile(),
+            "spec_maps": _placeholder_dive_tile(),
+            "tile_1": document["tiles"]["tile_1"],  # the seeded hotel
+        }
+        doc.document = document
+        from sqlalchemy.orm.attributes import flag_modified
+
+        flag_modified(doc, "document")
+        db.commit()
+
+    # Successful build with a diving block so the diving section is kept (the prune
+    # still drops only the unbookable TILE, not the section).
+    success_result = ItineraryResult(
+        success=True,
+        day_cards=[
+            DayCardOutput(
+                day_number=1,
+                label="Diving Day",
+                blocks=[
+                    DayBlockOutput(
+                        period="morning",
+                        activity_type="activity",
+                        summary="Cap Ferrat Boat Dive",
+                        specialist_type="diving",
+                        activity_domain="tier1",
+                        activity_provenance="ai_suggested",
+                    )
+                ],
+            )
+        ],
+    )
+
+    headers = get_csrf_headers()
+    idempotency_key = f"prune-key-{time.time_ns()}"
+    with (
+        patch.object(settings, "viator_enabled", True),
+        patch.object(settings, "viator_api_key", "viator-key"),
+        patch("app.streaming._get_async_session_factory", return_value=TestingAsyncSessionLocal),
+        patch(
+            "app.services.itinerary_builder.ItineraryBuilder.build",
+            return_value=success_result,
+        ),
+    ):
+        response = request_with_session(
+            client,
+            "POST",
+            "/api/expand-itinerary",
+            session_token,
+            headers=headers,
+            json={
+                "idempotency_key": idempotency_key,
+                "force_full_rebuild": True,  # use DB tiles (the seeded complete pool)
+                "strategy_sections": [
+                    {"id": "diving-plan", "title": "Diving Plan", "specialist_type": "diving"}
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    events = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+    assert events[-1]["type"] == "done"
+
+    # The reloaded persisted pool must NOT contain the dropped unbookable dive.
+    with TestingSessionLocal() as db:
+        session = (
+            db.query(models.Session).filter(models.Session.session_token == session_token).one()
+        )
+        doc = (
+            db.query(models.PlanDocument).filter(models.PlanDocument.session_id == session.id).one()
+        )
+        persisted_tiles = doc.document["tiles"]
+        assert "spec_maps" not in persisted_tiles  # dropped unbookable dive is gone
+        assert "spec_viator" in persisted_tiles  # bookable dive survives
+        assert "tile_1" in persisted_tiles  # hotel survives the replace

@@ -1165,11 +1165,13 @@ describe('useChatSse', () => {
   //
   // A removal turn ("no diving") returns day_cards: [] on the complete
   // envelope and relies on the frontend auto-expand gate to REBUILD the
-  // itinerary from the surviving (pruned) tiles. These two tests are
-  // byte-identical except for `doc.day_cards` ([] vs [card]) — that is the
-  // discrimination: case 1 must fire the expand, case 2 must skip it
-  // (graphBuiltItinerary path). If the gate failed to fire on day_cards=[],
-  // case 1 would behave like case 2 and fail.
+  // itinerary from the surviving (pruned) tiles. These two tests discriminate
+  // on `doc.day_cards`: case 1 has `[]` (must fire the expand), case 2 has a
+  // day card carrying a REAL activity block (must skip — graphBuiltItinerary
+  // path). The skip path is content-aware: a day_cards set counts as "built"
+  // only when it contains at least one real activity block, so case 2's card
+  // must include one. If the gate failed to fire on day_cards=[], case 1 would
+  // behave like case 2 and fail.
   // ─────────────────────────────────────────────────────────────────────────
 
   type CompleteEnvelopeOverrides = {
@@ -1290,7 +1292,19 @@ describe('useChatSse', () => {
 
     const { result, callbacks, refs, params } = renderUseChatSse();
 
-    const graphDayCards = [makeDayCard(1, { label: 'Graph-built day 1' })];
+    // Card carries a REAL activity block — content-aware skip requires it.
+    const graphDayCards = [
+      makeDayCard(1, {
+        label: 'Graph-built day 1',
+        blocks: [
+          {
+            period: 'morning',
+            activity_type: 'snorkeling',
+            summary: 'Reef snorkel at Blue Lagoon',
+          },
+        ],
+      }),
+    ];
     (callbacks.onPlanResult as ReturnType<typeof vi.fn>).mockImplementation(() => {
       useDocumentStore.setState((state) => ({
         document: state.document
@@ -1318,6 +1332,356 @@ describe('useChatSse', () => {
         makeCompleteEnvelope({
           dayCards: graphDayCards,
           strategySections: [survivingSection],
+          planViewState: 'S3_ITINERARY_READY',
+        })
+      );
+    });
+
+    await expect(streamResult).resolves.toBe('complete');
+
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(callbacks.onAutoExpandItinerary).not.toHaveBeenCalled();
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Fix 2 (defense-in-depth): a graph response whose day_cards are ALL
+  // Free-Day / buffer placeholders is degenerate — it is NOT a finished build,
+  // so the gate must fall through to a corrective expand (DEGENERATE_REBUILD)
+  // when activities are enabled AND at least one activity tile exists to place.
+  // The companion test above ("skip auto-expand when the graph response already
+  // includes day_cards") proves the inverse: a card with a real activity block
+  // does NOT trigger the corrective expand.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  it('falls through to a corrective expand when graph day_cards are all Free-Day/buffer placeholders', async () => {
+    const survivingSection = makeSection('local-intel', {
+      title: 'Local Intel',
+      specialist_type: 'local_expert',
+    });
+    const activityTile = makeTile('exp_bali_outdoor_0', { type: 'activity' });
+    // Degenerate day_cards: only Free-Day + buffer blocks, no real activity.
+    const degenerateDayCards = [
+      makeDayCard(1, {
+        label: 'Free day',
+        blocks: [{ period: 'morning', activity_type: 'free_day', summary: 'Open day' }],
+      }),
+      makeDayCard(2, {
+        label: 'No-fly buffer',
+        blocks: [
+          {
+            period: 'morning',
+            activity_type: 'buffer',
+            summary: '24h surface interval',
+            is_buffer: true,
+            buffer_type: 'no_fly',
+          },
+        ],
+      }),
+    ];
+
+    seedDocument({
+      strategySections: [survivingSection],
+      dayCards: degenerateDayCards,
+      tiles: { [activityTile.id]: activityTile },
+      planViewState: 'S3_ITINERARY_READY',
+    });
+    // Explicit activities-on so the regression-b guard (activities !== 'off')
+    // is satisfied deterministically rather than via DEFAULT_TRIP_INPUTS.
+    useDocumentStore.setState((state) => ({
+      document: state.document
+        ? {
+            ...state.document,
+            trip_inputs: {
+              ...state.document.trip_inputs,
+              booking_types: {
+                ...state.document.trip_inputs.booking_types!,
+                activities: 'on',
+              },
+            },
+          }
+        : state.document,
+    }));
+
+    const { result, callbacks, refs, params } = renderUseChatSse();
+
+    (callbacks.onPlanResult as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      useDocumentStore.setState((state) => ({
+        document: state.document
+          ? {
+              ...state.document,
+              day_cards: degenerateDayCards,
+              strategy_sections: [survivingSection],
+            }
+          : state.document,
+      }));
+    });
+
+    // Neutralize STRUCTURAL: activity tile category is already "seen", so the
+    // degenerate reason is the ONLY possible trigger.
+    refs.prevSpecialistTypesRef.current = new Set(['local_expert']);
+    refs.prevTileTypesRef.current = new Set(['activity']);
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    await act(async () => {
+      streamCallbacks.onComplete(
+        makeCompleteEnvelope({
+          dayCards: degenerateDayCards,
+          strategySections: [survivingSection],
+          tiles: { [activityTile.id]: activityTile },
+          planViewState: 'S3_ITINERARY_READY',
+        })
+      );
+    });
+
+    await expect(streamResult).resolves.toBe('complete');
+
+    expect(callbacks.onAutoExpandItinerary).not.toHaveBeenCalled();
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(callbacks.onAutoExpandItinerary).toHaveBeenCalledTimes(1);
+    expect(callbacks.onAutoExpandItinerary).toHaveBeenCalledWith({
+      forceFullRebuild: true,
+    });
+  });
+
+  it('treats logistics-anchor-only day_cards (arrival/free_day, no activity) as degenerate and rebuilds', async () => {
+    // Anchors (arrival/departure/check-in/check-out) arrive as activity_type,
+    // not as buffers — a plan that is ONLY anchors + free days is degenerate
+    // and must still trigger the corrective expand.
+    const survivingSection = makeSection('local-intel', {
+      title: 'Local Intel',
+      specialist_type: 'local_expert',
+    });
+    const activityTile = makeTile('exp_bali_outdoor_0', { type: 'activity' });
+    const degenerateDayCards = [
+      makeDayCard(1, {
+        label: 'Arrival',
+        blocks: [{ period: 'morning', activity_type: 'arrival', summary: 'Land at DPS' }],
+      }),
+      makeDayCard(2, {
+        label: 'Free day',
+        blocks: [{ period: 'morning', activity_type: 'free_day', summary: 'Open day' }],
+      }),
+    ];
+
+    seedDocument({
+      strategySections: [survivingSection],
+      dayCards: degenerateDayCards,
+      tiles: { [activityTile.id]: activityTile },
+      planViewState: 'S3_ITINERARY_READY',
+    });
+    useDocumentStore.setState((state) => ({
+      document: state.document
+        ? {
+            ...state.document,
+            trip_inputs: {
+              ...state.document.trip_inputs,
+              booking_types: {
+                ...state.document.trip_inputs.booking_types!,
+                activities: 'on',
+              },
+            },
+          }
+        : state.document,
+    }));
+
+    const { result, callbacks, refs, params } = renderUseChatSse();
+
+    (callbacks.onPlanResult as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      useDocumentStore.setState((state) => ({
+        document: state.document
+          ? {
+              ...state.document,
+              day_cards: degenerateDayCards,
+              strategy_sections: [survivingSection],
+            }
+          : state.document,
+      }));
+    });
+
+    refs.prevSpecialistTypesRef.current = new Set(['local_expert']);
+    refs.prevTileTypesRef.current = new Set(['activity']);
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    await act(async () => {
+      streamCallbacks.onComplete(
+        makeCompleteEnvelope({
+          dayCards: degenerateDayCards,
+          strategySections: [survivingSection],
+          tiles: { [activityTile.id]: activityTile },
+          planViewState: 'S3_ITINERARY_READY',
+        })
+      );
+    });
+
+    await expect(streamResult).resolves.toBe('complete');
+
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(callbacks.onAutoExpandItinerary).toHaveBeenCalledTimes(1);
+    expect(callbacks.onAutoExpandItinerary).toHaveBeenCalledWith({
+      forceFullRebuild: true,
+    });
+  });
+
+  it('does NOT correct degenerate day_cards when there is no activity tile to place', async () => {
+    const survivingSection = makeSection('local-intel', {
+      title: 'Local Intel',
+      specialist_type: 'local_expert',
+    });
+    const stayTile = makeTile('stay-1', { type: 'stay' });
+    const degenerateDayCards = [
+      makeDayCard(1, {
+        label: 'Free day',
+        blocks: [{ period: 'morning', activity_type: 'free_day', summary: 'Open day' }],
+      }),
+    ];
+
+    seedDocument({
+      strategySections: [survivingSection],
+      dayCards: degenerateDayCards,
+      tiles: { [stayTile.id]: stayTile },
+      planViewState: 'S3_ITINERARY_READY',
+    });
+
+    const { result, callbacks, refs, params } = renderUseChatSse();
+
+    (callbacks.onPlanResult as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      useDocumentStore.setState((state) => ({
+        document: state.document
+          ? {
+              ...state.document,
+              day_cards: degenerateDayCards,
+              strategy_sections: [survivingSection],
+            }
+          : state.document,
+      }));
+    });
+
+    // No new specialist/tile categories → STRUCTURAL is neutralized too, so the
+    // only candidate would be DEGENERATE — which must be blocked by the missing
+    // activity tile.
+    refs.prevSpecialistTypesRef.current = new Set(['local_expert']);
+    refs.prevTileTypesRef.current = new Set(['stay']);
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    await act(async () => {
+      streamCallbacks.onComplete(
+        makeCompleteEnvelope({
+          dayCards: degenerateDayCards,
+          strategySections: [survivingSection],
+          tiles: { [stayTile.id]: stayTile },
+          planViewState: 'S3_ITINERARY_READY',
+        })
+      );
+    });
+
+    await expect(streamResult).resolves.toBe('complete');
+
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(callbacks.onAutoExpandItinerary).not.toHaveBeenCalled();
+  });
+
+  it('does NOT correct degenerate day_cards for a legitimately activity-free trip (activities off)', async () => {
+    // Regression-(b) guard: a trip with booking_types.activities === 'off' is
+    // INTENTIONALLY activity-free. An all-Free-Day plan is correct there and must
+    // NOT trigger a corrective expand — even though an activity tile exists (which
+    // distinguishes this from the missing-tile case above; here only the
+    // activities-off guard blocks the rebuild).
+    const survivingSection = makeSection('local-intel', {
+      title: 'Local Intel',
+      specialist_type: 'local_expert',
+    });
+    const activityTile = makeTile('exp_bali_outdoor_0', { type: 'activity' });
+    const degenerateDayCards = [
+      makeDayCard(1, {
+        label: 'Free day',
+        blocks: [{ period: 'morning', activity_type: 'free_day', summary: 'Open day' }],
+      }),
+    ];
+
+    seedDocument({
+      strategySections: [survivingSection],
+      dayCards: degenerateDayCards,
+      tiles: { [activityTile.id]: activityTile },
+      planViewState: 'S3_ITINERARY_READY',
+    });
+    // Activities explicitly OFF — the only thing that should block the rebuild.
+    useDocumentStore.setState((state) => ({
+      document: state.document
+        ? {
+            ...state.document,
+            trip_inputs: {
+              ...state.document.trip_inputs,
+              booking_types: {
+                ...state.document.trip_inputs.booking_types!,
+                activities: 'off',
+              },
+            },
+          }
+        : state.document,
+    }));
+
+    const { result, callbacks, refs, params } = renderUseChatSse();
+
+    (callbacks.onPlanResult as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      useDocumentStore.setState((state) => ({
+        document: state.document
+          ? {
+              ...state.document,
+              day_cards: degenerateDayCards,
+              strategy_sections: [survivingSection],
+            }
+          : state.document,
+      }));
+    });
+
+    // Neutralize STRUCTURAL so DEGENERATE would be the only candidate — and prove
+    // the activities-off guard is what blocks it.
+    refs.prevSpecialistTypesRef.current = new Set(['local_expert']);
+    refs.prevTileTypesRef.current = new Set(['activity']);
+
+    let streamResult!: Promise<'complete' | 'error' | 'stale'>;
+    await act(async () => {
+      streamResult = result.current.executeStream(params);
+    });
+
+    const streamCallbacks = mockState.streamGraphPlan.mock.calls[0][1];
+
+    await act(async () => {
+      streamCallbacks.onComplete(
+        makeCompleteEnvelope({
+          dayCards: degenerateDayCards,
+          strategySections: [survivingSection],
+          tiles: { [activityTile.id]: activityTile },
           planViewState: 'S3_ITINERARY_READY',
         })
       );

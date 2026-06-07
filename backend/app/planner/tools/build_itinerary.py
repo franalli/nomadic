@@ -118,6 +118,43 @@ def _parse_id_list(ids_str: str) -> List[str]:
     return [s.strip() for s in ids_str.split(",") if s.strip()]
 
 
+def _merge_tiles_by_category(
+    state_tiles: Dict[str, Any],
+    llm_tiles: Dict[str, List[Dict[str, Any]]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Merge state/specialist tiles with LLM-supplied tiles, deduped by id.
+
+    Both inputs are category-keyed (``{"activities": [...], "hotels": [...]}``).
+    State tiles -- which include the specialist tiles just injected by
+    ``_inject_specialist_tiles_into_state`` -- take precedence: when the same
+    tile id appears in both, the state/specialist copy wins. Genuinely-fresh
+    LLM search results (ids not already present) are still included so a real
+    post-category-change refresh is not dropped.
+    """
+    merged: Dict[str, List[Dict[str, Any]]] = {}
+    categories = set(state_tiles.keys()) | set(llm_tiles.keys())
+    for category in categories:
+        state_list = state_tiles.get(category)
+        llm_list = llm_tiles.get(category)
+        state_list = state_list if isinstance(state_list, list) else []
+        llm_list = llm_list if isinstance(llm_list, list) else []
+
+        out: List[Dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        # State/specialist tiles first so they win on id collisions.
+        for tile in list(state_list) + list(llm_list):
+            if not isinstance(tile, dict):
+                continue
+            tile_id = tile.get("id")
+            if tile_id:
+                if tile_id in seen_ids:
+                    continue
+                seen_ids.add(tile_id)
+            out.append(tile)
+        merged[category] = out
+    return merged
+
+
 # ---------------------------------------------------------------------------
 # Tool
 # ---------------------------------------------------------------------------
@@ -168,12 +205,6 @@ async def build_itinerary(
         end_date = end_date or trip_plan.get("end_date", "")
         origin = origin or trip_plan.get("origin", "")
 
-        # Pull tiles and constraints from state when not passed explicitly
-        if tiles_json == "{}" and state.get("tiles"):
-            try:
-                tiles_json = json.dumps(state["tiles"])
-            except (TypeError, ValueError):
-                pass
         if constraints_json == "[]" and state.get("constraints"):
             try:
                 constraints_json = json.dumps(state["constraints"])
@@ -198,14 +229,36 @@ async def build_itinerary(
         }
 
     # Parse JSON inputs
-    tiles_by_category = parse_tiles_json(tiles_json)
+    llm_tiles_by_category = parse_tiles_json(tiles_json)
     constraints = parse_constraints_json(constraints_json)
+
+    # Leg 2: state tiles (including the specialist tiles just injected by
+    # _inject_specialist_tiles_into_state) are authoritative and must ALWAYS be
+    # included, even when the LLM supplied a non-default tiles_json refresh.
+    # Merge category-keyed dicts, deduping by id with state/specialist tiles
+    # winning, so the diving tiles survive while genuinely-fresh search results
+    # are still included.
+    if state is not None and isinstance(state.get("tiles"), dict):
+        tiles_by_category = _merge_tiles_by_category(state["tiles"], llm_tiles_by_category)
+    else:
+        tiles_by_category = llm_tiles_by_category
 
     # Build tile ID map for the builder
     tile_id_map = flatten_tiles_to_id_map(tiles_by_category)
 
-    # Build strategy sections from tiles
-    strategy_sections = _build_strategy_sections(tiles_by_category, constraints)
+    # Leg 1: use the authoritative strategy_sections from agent state when
+    # available -- they carry the specialist content_added with POI coordinates
+    # that _build_strategy_sections (a lossy synthesis fallback) drops. Only
+    # synthesize sections when state has none (standalone / architect-not-run).
+    # NOTE: this passes the LIVE state list (not a copy); the builder mutates
+    # constraints_applied[].source in place. Verified benign -- the write is
+    # additive/idempotent (no extra="forbid" on StrategySection) and matches the
+    # existing _build_envelope / _inject_specialist_tiles_into_state precedent.
+    state_sections = state.get("strategy_sections") if state is not None else None
+    if isinstance(state_sections, list) and state_sections:
+        strategy_sections = state_sections
+    else:
+        strategy_sections = _build_strategy_sections(tiles_by_category, constraints)
 
     # Build preferences if any IDs provided
     hotel_ids = _parse_id_list(preferred_hotel_ids)

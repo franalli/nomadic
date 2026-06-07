@@ -1049,42 +1049,52 @@ async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
     _MIN_CONSTRAINT_FLOOR = 6
     if len(constraints_applied) < _MIN_CONSTRAINT_FLOOR:
         _existing_rules = {c["rule"] for c in constraints_applied}
+        # ``generic_fallback: True`` mirrors get_local_intel._GENERIC_FALLBACK_CONSTRAINTS so
+        # the planner prompt filters this boilerplate out of the model's per-turn context. This
+        # legacy node is off the active agent-loop path (turns flow through the get_local_intel
+        # TOOL), but the tag keeps it from re-leaking the checklist into chat if ever reactivated.
         _generic_fallbacks = [
             {
                 "rule": "Check visa requirements before travel",
                 "type": "visa",
                 "severity": "warning",
                 "reason": "Check visa requirements before travel",
+                "generic_fallback": True,
             },
             {
                 "rule": "Travel insurance recommended for international trips",
                 "type": "safety",
                 "severity": "info",
                 "reason": "Travel insurance recommended for international trips",
+                "generic_fallback": True,
             },
             {
                 "rule": "Carry photocopies of passport and important documents",
                 "type": "safety",
                 "severity": "info",
                 "reason": "Carry photocopies of passport and important documents",
+                "generic_fallback": True,
             },
             {
                 "rule": "Register with your embassy for safety alerts",
                 "type": "safety",
                 "severity": "info",
                 "reason": "Register with your embassy for safety alerts",
+                "generic_fallback": True,
             },
             {
                 "rule": "Confirm hotel bookings and transfers before departure",
                 "type": "booking_window",
                 "severity": "info",
                 "reason": "Confirm hotel bookings and transfers before departure",
+                "generic_fallback": True,
             },
             {
                 "rule": "Check local currency and exchange options",
                 "type": "money",
                 "severity": "info",
                 "reason": "Check local currency and exchange options",
+                "generic_fallback": True,
             },
         ]
         for fb in _generic_fallbacks:

@@ -33,10 +33,26 @@ import { useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
 import { useMobileNavStore } from '@/state/mobileNavStore';
 import type { GraphPlanResponse, PlanDocumentData } from '@/types/document';
-import type { DayCard, StrategySection } from '@/types/plan-envelope';
+import type { DayBlock, DayCard, StrategySection } from '@/types/plan-envelope';
 
 // Re-exported helpers kept colocated with their consumer
 const READY_MESSAGE_ID_PREFIX = 'ready_';
+
+/**
+ * Block `activity_type` values that do NOT count as a real, scheduled activity
+ * when deciding whether a graph response actually built an itinerary. Mirrors
+ * the anchor/placeholder handling in lib/dayIntensity.ts — arrival, departure,
+ * check-in and check-out are logistics anchors that arrive as `activity_type`
+ * (not `buffer_type`), and free_day/placeholder are empty-day markers.
+ */
+const NON_ACTIVITY_BLOCK_TYPES = new Set([
+  'free_day',
+  'placeholder',
+  'arrival',
+  'departure',
+  'check-in',
+  'check-out',
+]);
 
 function getErrorMessage(error: Error): string {
   const message = error.message?.toLowerCase() ?? '';
@@ -916,10 +932,30 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             const freshState = useDocumentStore.getState();
             const hasItinerary = (freshState.document?.day_cards?.length ?? 0) > 0;
 
-            const graphBuiltItinerary = (doc.day_cards?.length ?? 0) > 0;
+            // A graph response counts as a *finished* build only if it actually
+            // placed at least one real activity. A degenerate response whose
+            // day_cards are all Free-Day / buffer / logistics-anchor
+            // placeholders is NOT a build — accepting it would lock in an empty
+            // plan. Mirrors lib/dayIntensity.ts, which treats arrival/departure/
+            // check-in/check-out as anchors (they arrive as `activity_type`, not
+            // `buffer_type`) and excludes free_day/buffers from real activities.
+            const isRealActivityBlock = (block: DayBlock): boolean =>
+              !block.is_buffer &&
+              !block.buffer_type &&
+              !NON_ACTIVITY_BLOCK_TYPES.has(block.activity_type);
+            const graphDayCards = doc.day_cards ?? [];
+            const graphHasRealActivity = graphDayCards.some((card) =>
+              (card.blocks ?? []).some(isRealActivityBlock)
+            );
+            const graphBuiltItinerary = graphDayCards.length > 0 && graphHasRealActivity;
+            const graphDegenerateDayCards = graphDayCards.length > 0 && !graphHasRealActivity;
             if (graphBuiltItinerary) {
               debugLog(
-                `[EXPAND] SKIPPED — graph response included ${doc.day_cards!.length} day_cards`
+                `[EXPAND] SKIPPED — graph response included ${graphDayCards.length} day_cards with real activities`
+              );
+            } else if (graphDegenerateDayCards) {
+              debugLog(
+                `[EXPAND] graph response had ${graphDayCards.length} day_cards but no real activity blocks (all Free-Day/buffer) — eligible for corrective rebuild`
               );
             }
 
@@ -995,6 +1031,28 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
               !isSilentPlanGeneration &&
               !isBootstrap(doc.plan_view_state);
 
+            // Belt-and-suspenders: a graph response whose day_cards are ALL
+            // Free-Day/buffer placeholders is degenerate (the root cause is
+            // fixed in the backend builder; this only catches a regression).
+            // Only correct it when an expand could actually place something —
+            // activities are not turned off AND at least one activity tile
+            // exists to schedule. This is gated tightly to avoid (a) re-firing
+            // (single onComplete per turn + expandInProgress mutex) and (b)
+            // mis-classifying a legitimately activity-free trip.
+            const activitiesBookingState =
+              freshInputs?.booking_types?.activities ?? 'on';
+            const activitiesEnabled = activitiesBookingState !== 'off';
+            const hasActivityTile = Object.values(doc.tiles ?? {}).some(
+              (t) => t.type === 'activity'
+            );
+            const shouldExpandDegenerate =
+              graphDegenerateDayCards &&
+              activitiesEnabled &&
+              hasActivityTile &&
+              freshHasDates &&
+              !isSilentPlanGeneration &&
+              !isBootstrap(doc.plan_view_state);
+
             debugLog(
               `[EXPAND] gate check: strategy=${newSpecialistTypes.length} tiles=${tileCount} ` +
                 `viewState=${viewState} hasItinerary=${hasItinerary} freshHasDates=${freshHasDates} silent=${isSilentPlanGeneration} graphBuilt=${graphBuiltItinerary} ` +
@@ -1015,13 +1073,16 @@ export function useChatSse(refs: ChatSseRefs, callbacks: ChatSseCallbacks) {
             }
 
             let expandReason:
+              | 'DEGENERATE_REBUILD'
               | 'STRUCTURAL'
               | 'DATE_CHANGE'
               | 'TRIP_INPUTS'
               | 'CATCH_ALL'
               | null = null;
             if (!graphBuiltItinerary && blockingViolations.length === 0) {
-              if (shouldExpandStructural) {
+              if (shouldExpandDegenerate) {
+                expandReason = 'DEGENERATE_REBUILD';
+              } else if (shouldExpandStructural) {
                 expandReason = 'STRUCTURAL';
               } else if (shouldExpandDates) {
                 expandReason = 'DATE_CHANGE';

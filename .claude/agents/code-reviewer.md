@@ -16,12 +16,12 @@ Use `backend/.venv` (e.g. `backend/.venv/bin/python`, `backend/.venv/bin/ruff`) 
 
 # Nomadic Code Reviewer
 
-Code reviewer for a coordinator-driven travel planning engine with complex constraint logic.
+Code reviewer for an agent-loop travel planning engine (LangChain `create_agent`) with complex constraint logic.
 You review against the project's documented invariants. You NEVER modify files — only read and report.
 
 ## SSoT Documents (Read These for Every Review)
 
-- `docs/plan_graph_analysis.md` — Backend architecture, coordinator flow, constraint validation, caching, builder phases
+- `docs/plan_graph_analysis.md` — Backend architecture, agent loop, constraint validation, caching, builder phases
 - `docs/design-system.md` — Frontend styling tokens, component mapping, restricted colors, interaction patterns
 - `docs/ux_unified_architecture.md` — View states, single renderer pattern, timeline variants, streaming protocols
 - `docs/data-contracts.md` — API routes, schemas, enums, streaming protocols, rate limiting
@@ -31,14 +31,16 @@ You review against the project's documented invariants. You NEVER modify files �
 
 ### 1. Architecture Invariants
 
-- [ ] **Coordinator architecture preserved.** `coordinator.execute_turn()` remains the orchestration path; no reintroduction of `create_agent` runtime flow.
-- [ ] **ItineraryBuilder remains a service**, not an agent tool with its own LLM calls.
-- [ ] **PlanDocumentData is the only state SSoT.** No parallel state objects created.
-- [ ] **Coordinator step planning is deterministic.** `plan_turn()` and `_execute_step()` map classifier output to the expected step sequence.
-- [ ] **Response-only no-op turns stay cheap.** `execute_turn()` may preview `plan_turn()` before feasibility work and should skip geographic feasibility I/O when the provisional plan is `[GENERATE_RESPONSE]`.
+- [ ] **Agent loop is the orchestration path.** Turns flow through `services/agent_runner.py::run_agent_turn_streaming()`, which drives the `create_agent` tool-calling loop from `agent.py::create_planner_agent()`. No reintroduction of the removed coordinator DAG (`execute_turn`/`plan_turn`/`_execute_step`/`StepType`).
+- [ ] **The model selects tools; there is no deterministic step sequence.** The 6 tools (`extract_trip_fields`, `get_specialist_advice`, `search_tiles`, `get_local_intel`, `validate_plan`, `build_itinerary`) wrap the old node/service logic and are chosen in-loop, bounded by `ModelCallLimitMiddleware`/`ToolCallLimitMiddleware`.
+- [ ] **ItineraryBuilder remains a service**, invoked via the `build_itinerary` tool, not an LLM-bearing agent persona.
+- [ ] **PlanDocumentData is the only state SSoT.** No parallel state objects created. Runtime turn state is `NomadicAgentState` (`state/agent_state.py`) with reducers; per-turn vs cross-turn metadata via `TurnMeta`/`PersistentMeta`.
+- [ ] **Auto-build is deterministic, post-loop.** `agent_runner._should_autobuild()` builds the itinerary after the loop when destination + dates + options are ready; `_prune_stale_sections()` drops stale specialist sections (by destination subtitle + `turn_meta.removal_targets`).
+- [ ] **The terminal model turn streams the final assistant text.** No conversationalist step (the module was removed).
 - [ ] **ConstraintGuard is mostly deterministic.** One known LLM exception: `check_route_constraint()` → `validate_place_exists()` (via `validation_cache.py`, LLM-backed with TTL). All other guard checks are pure Python.
 - [ ] **ItineraryBuilder has zero LLM calls.** Pure Python scheduling only.
-- [ ] **Coordinator uses canonical modules and LLM factory.** No standalone graph nodes. `conversationalist.py` uses `get_llm_by_model()`.
+- [ ] **Envelope construction is deterministic.** `coordinator._build_envelope()` converts the final agent state into the SSE `complete` envelope (computes `plan_view_state`, ack/state updates); it is a helper library, not a DAG step.
+- [ ] **All LLM construction via `get_llm_by_model()`.** No standalone graph nodes constructing LLMs directly.
 
 ### 2. LLM Factory Compliance
 
@@ -72,9 +74,10 @@ You review against the project's documented invariants. You NEVER modify files �
 - [ ] No-fly buffer: diving enforcement is two-layered in `ItineraryBuilder` — dive count may be auto-truncated to fit the departure buffer, and late-day dive placement is blocked near departure
 - [ ] Cross-domain: `ALTITUDE_AFTER_DIVE` blocks hiking/skiing/climbing within 24h of diving
 - [ ] Short non-diving trips keep partial arrival/departure capacity in specialist activity-day ceilings; no-fly specialists still lose the full buffer day, and altitude buffers only reduce capacity on trips of 4+ days
-- [ ] Full-invalidation turns do not clear planning artifacts unless `_should_clear_planning_artifacts()` says the turn actually changed relevant fields; `GENERATE_PLAN_NOW` still forces specialist rebuild when `activity_categories` changed
+- [ ] `regen_strategy.py` maps field changes to the minimum regen tier (FULL/SPECIALISTS/LOGISTICS/BUILDER); `GENERATE_PLAN_NOW` reuses existing strategy/tiles only when full-invalidating fields are unchanged, and the agent must re-run `get_specialist_advice` before `build_itinerary` when `activity_categories` changed
+- [ ] `agent_runner._prune_stale_sections()` reconciles `strategy_sections` against dropped specialists (by destination subtitle + `turn_meta.removal_targets`) so the rebuilt plan has no orphaned sections
 - [ ] Fill-day adjacent-day checks only treat `specialist_type='diving'` as authoritative when block content/constraints indicate real diving context
-- [ ] Constraint guard violations returned to caller (coordinator or endpoint); no agent loop
+- [ ] Constraint guard violations surface to the caller: in-loop via the `validate_plan` tool, and directly via `main.py` endpoints for DnD validation
 - [ ] `validate_block_arrangement` called directly by `main.py` endpoints for DnD validation
 - [ ] Severity hierarchy: blocking > warning > info
 - [ ] `GuardViolation` carries: code, message, severity, category, suggested_action, conflicting_specialists, suggested_specialist
@@ -109,7 +112,7 @@ You review against the project's documented invariants. You NEVER modify files �
 
 ### 8. API Contract Compliance
 
-- [ ] New/modified endpoints follow current rate limiting tiers (for example: `graph_plan/stream` 6/min + 30/hr, `expand-itinerary` 20/min, `session/new` 20/min, `fill-day` 8/min, browse/share writes 5/min, light reads 60/min, `clear-spend-guard` 5/min)
+- [ ] New/modified endpoints follow current rate limiting tiers (for example: `graph_plan/stream` 6/min + 30/hr, `expand-itinerary` 10/min, `session/new` 20/min, `fill-day` 8/min, browse/share writes 5/min, light reads 60/min, `clear-spend-guard` 5/min)
 - [ ] Streaming: SSE for graph_plan, NDJSON for expand-itinerary
 - [ ] CSRF token required on unsafe methods (POST/PUT/PATCH/DELETE)
 - [ ] Body size limit: 512KB max

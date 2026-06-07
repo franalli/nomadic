@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Focus:** `create_agent` agentic-loop migration (coordinator DAG → `create_agent` tool loop)
 - **Secondary:** none
-- **Active work:** agent loop live behind the `streaming.py` seam; curl-suite parity ~26/31 (remaining failures are Gemini Flash tool-adherence variance on multi-turn / add-activity flows)
+- **Active work:** agent loop live behind the `streaming.py` seam; current working set is a batch of post-migration correctness fixes (unbookable-specialist drop policy, remove-all-activities post-loop guarantee, dates→build gate, session-hydration validity, partner geo-centroid + Viator category resolution). Curl-suite parity ~26/31 (remaining failures are Gemini Flash tool-adherence variance on multi-turn / add-activity flows)
 - **Known broken:** a few curl flows (F14 grounding, F20/F28 add-specialist) flake on LLM tool-calling adherence
-- **DO NOT touch this sprint:** [frozen files/features]
+- **DO NOT touch this sprint:** none
 
 ---
 
@@ -79,6 +79,8 @@ If a task requires touching BOTH zones, stop and confirm scope before proceeding
 ## 🛡️ Governance — Single Sources of Truth
 
 These four docs override your assumptions. Read before generating code.
+
+<!-- REVIEW: plan_graph_analysis.md "Governs" cell still says "coordinator + nodes/services"; the coordinator DAG was removed (planner is now a create_agent tool loop). Left as-is because that sibling doc still uses coordinator framing (see the note under Agent Tools); reconcile once plan_graph_analysis.md is updated. -->
 
 | SSoT Doc                           | Governs                                | Rule                                                                  |
 | ---------------------------------- | -------------------------------------- | --------------------------------------------------------------------- |
@@ -295,7 +297,7 @@ backend/.env → DATABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY, ROUTER_MODEL, SPE
 
 ## Performance Notes
 
-Coordinator routing and response generation rely on `settings.*_model` env vars (`router_model`, `specialist_model`, `synthesizer_planning_model`, etc.) via `llm_factory.py`. Do not bypass `get_llm_by_model()` or alter coordinator step sequencing/status mapping without measuring quality and UX impact.
+The agent loop's tools and terminal response rely on `settings.*_model` env vars (`router_model`, `specialist_model`, `synthesizer_planning_model`, etc.) resolved per step via `get_llm_by_model()` in `llm_factory.py`; `ModelSelectionMiddleware` may additionally upgrade the loop model on complex turns. Do not bypass `get_llm_by_model()` or alter the tool set / middleware ordering / SSE status mapping without measuring quality and UX impact.
 
 Spend guard counters are **DB-backed** (stored in the `runtime_state` table) so they work across multiple workers and survive restarts within the same day.
 

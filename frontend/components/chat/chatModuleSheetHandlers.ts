@@ -5,9 +5,9 @@
  * Each factory reads fresh store state at invocation time (not stale props).
  */
 
-import { PLAN_ACTIVE_STATES } from '@/components/plan/planStateHelpers';
+import { guardedGeneratePlan, PLAN_ACTIVE_STATES } from '@/components/plan/planStateHelpers';
 import { triggerRegeneration } from '@/hooks/usePreferenceAutoRegen';
-import { GENERATE_PLAN_TRIGGER } from '@/state/chatStore';
+import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
 import type {
   ActivitySettings,
@@ -35,6 +35,28 @@ function isS2(pvs: string | undefined): boolean {
   return pvs === 'S2_STRATEGY_READY';
 }
 
+/**
+ * Gate a plan BUILD on dates: build when present, otherwise open the Dates
+ * sheet + nudge chat instead of building a dateless plan (principle B).
+ * Reads fresh trip_inputs from the store at invocation.
+ */
+function guardedBuild(
+  sendMessageCore: (msg: string) => Promise<void>,
+  openDates: () => void,
+): void {
+  guardedGeneratePlan({
+    tripInputs: useDocumentStore.getState().document?.trip_inputs,
+    sendBuild: () => void sendMessageCore(GENERATE_PLAN_TRIGGER),
+    openDates,
+    addNudge: (text) =>
+      useChatStore.getState().addMessage({
+        id: `a_ui_${Date.now()}`,
+        role: 'assistant',
+        content: text,
+      }),
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Flights
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,6 +65,7 @@ export function handleFlightsToggle(
   enabled: boolean,
   onUpdateBookingTypes: ((u: Partial<BookingTypes>) => void) | undefined,
   sendMessageCore: (msg: string) => Promise<void>,
+  openDates: () => void,
 ) {
   if (onUpdateBookingTypes) {
     onUpdateBookingTypes({ flights: enabled ? 'on' : 'off' });
@@ -50,7 +73,7 @@ export function handleFlightsToggle(
   if (enabled) {
     const currentPVS = getCurrentPVS();
     if (PLAN_ACTIVE_STATES.has(currentPVS ?? '')) {
-      void sendMessageCore(GENERATE_PLAN_TRIGGER);
+      guardedBuild(sendMessageCore, openDates);
     }
   }
 }
@@ -86,6 +109,7 @@ export function handleStaysSave(
   onUpdateHotelSettings: ((u: Partial<HotelSettings>) => void) | undefined,
   toast: (msg: string) => void,
   sendMessageCore: (msg: string) => Promise<void>,
+  openDates: () => void,
 ) {
   if (onUpdateHotelSettings) {
     onUpdateHotelSettings(settings);
@@ -95,7 +119,7 @@ export function handleStaysSave(
   if (isS3(currentPVS)) {
     triggerRegeneration(true);
   } else if (isS2(currentPVS)) {
-    sendMessageCore(GENERATE_PLAN_TRIGGER);
+    guardedBuild(sendMessageCore, openDates);
   }
 }
 
@@ -122,6 +146,7 @@ export async function handleActivitiesSave(
   commitTripInputs: (inputs: DocumentTripInputsPatch) => Promise<boolean>,
   sendMessageCore: (msg: string) => Promise<void>,
   toast: (msg: string) => void,
+  openDates: () => void,
 ) {
   setActivityUserSaved(true);
 
@@ -190,7 +215,7 @@ export async function handleActivitiesSave(
       useDocumentStore.getState().setRegenerationState({ isRegenerating: false });
     }
     if (isS2(currentPVS)) {
-      sendMessageCore(GENERATE_PLAN_TRIGGER);
+      guardedBuild(sendMessageCore, openDates);
     }
   }
 }

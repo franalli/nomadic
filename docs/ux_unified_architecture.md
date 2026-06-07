@@ -500,8 +500,8 @@ User edits date chip → GENERATE_PLAN_TRIGGER sent → Full regeneration
 
 **Flow:**
 1. User sends chat message (e.g., "from rome", "add hiking")
-2. Backend coordinator runs (classify_change → specialist/tile steps → response)
-3. Graph completes → SSE `onComplete` handler checks:
+2. Backend agent loop runs (the model calls `extract_trip_fields`, then specialist/tile tools as needed, then streams the terminal response)
+3. Turn completes → SSE `onComplete` handler checks:
    - `hasItinerary = (day_cards?.length ?? 0) > 0`
    - `structureChanged = strategy_sections topics differ (not just tiles added)`
 4. If both true → auto-call `proceedWithItineraryGeneration()` after 100ms
@@ -526,7 +526,7 @@ if (hasItinerary && structureChanged && !isSilentPlanGeneration) {
 
 > **Note:** `isSilentPlanGeneration` is a local variable inside `ChatPanel.tsx` (derived from `isGenerateTrigger`), not a store field.
 
-**Graph-Built Itinerary Skip:** When the graph response includes `day_cards` (builder ran inside `format_result` during graph execution), the SSE `onComplete` handler skips `expand-itinerary` entirely (`expandPath = 'GRAPH_BUILT'`). The itinerary is already up-to-date — a redundant expand would waste a round-trip. `structuralRebuildTriggered` is still set to `true` so downstream logic (e.g., scroll-to-itinerary) fires correctly.
+**Agent-Built Itinerary Skip:** When the turn response includes `day_cards` (the itinerary was built inside the agent turn — either via the model's `build_itinerary` tool call or `agent_runner`'s deterministic auto-build, see `_should_autobuild`), the SSE `onComplete` handler skips `expand-itinerary` entirely (`expandPath = 'GRAPH_BUILT'`). The itinerary is already up-to-date — a redundant expand would waste a round-trip. `structuralRebuildTriggered` is still set to `true` so downstream logic (e.g., scroll-to-itinerary) fires correctly.
 
 **Example flows:**
 - "from rome" with existing plan → Flights added (tiles only) → **No auto-expand** → Itinerary preserved
@@ -1038,26 +1038,33 @@ When the builder fails (trip too short or route/constraint issues), coordinator 
 
 ## III.A Local Expert Trip-DNA Anchor
 
-**CRITICAL INVARIANT:** When local intel is emitted, the `local_expert` section is inserted at index `0` in `strategy_sections`.
+The Local Expert "Trip Overview" card is the right-panel anchor card carrying destination context (vibe, local tips) and trip framing (destination, dates, travelers).
 
 ### Rationale
 
-The Local Expert "Trip Overview" card is the right-panel anchor:
+The Local Expert "Trip Overview" card serves as the right-panel anchor:
 1. Destination context (vibe, local tips)
 2. Trip framing (destination, dates, travelers)
-3. Stable first-card scan order before niche specialist detail
+3. Stable scan order before niche specialist detail
 
-### Coordinator behavior
+### Agent behavior
 
-- `plan_turn()` schedules `LOCAL_INTEL` for initial plans, destination/date changes, and Tier 1 add/remove activity turns.
-- `_execute_step(StepType.LOCAL_INTEL)` upserts the section and inserts it first.
-- Specialist sections can be added/updated in the same turn, but `local_expert` remains the top card when present.
+- The model calls the `get_local_intel` tool (wrapping the `local_expert` node) to produce the `local_expert` section.
+- `middleware._merge_local_intel()` emits that section as a single-element `strategy_sections` delta.
+- The `_merge_strategy_sections` reducer (`state/agent_state.py`) upserts by `specialist_type` (right wins) and preserves existing list order — so `local_expert` is not re-sorted to the front.
+
+<!-- REVIEW: The legacy "local_expert is inserted at index 0 / remains the first
+     strategy card" invariant is no longer enforced. The agent-loop reducer
+     (_merge_strategy_sections) dedups by specialist_type but preserves
+     insertion order; section order therefore depends on tool-call order, which
+     the model decides. No frontend reordering exists either
+     (useStrategyStageOrchestration / PlanFullDensityView do not unshift/sort
+     local_expert to first). Team confirm whether the first-card ordering is
+     still an intended guarantee — if so, enforcement needs to be re-added. -->
 
 ### Invariants
 
-1. Local Expert card remains the first strategy card when emitted.
-2. Strategy updates never duplicate `local_expert` sections (upsert by `specialist_type`).
-3. Trip-DNA context remains available without client-side section reordering.
+1. Strategy updates never duplicate `local_expert` sections (upsert by `specialist_type`).
 
 ---
 
@@ -1364,7 +1371,7 @@ Exploration mode exits when user provides actionable parameters:
 
 ### Implementation Reference
 
-**Backend:** Coordinator generates responses via `conversationalist.py`; `router_extraction.classify_change()` handles intent + change parsing.
+**Backend:** The assistant response is the terminal (no-tool-call) model turn of the `create_agent` loop — there is no separate `conversationalist` step. `router_extraction.classify_change()` (invoked via the `extract_trip_fields` tool) handles intent + change parsing.
 **State tracking:** `turn_meta["short_circuit_type"]` is derived from routing context before envelope assembly.
 
 ### UI Components for Exploration → Planning Transition
@@ -1469,12 +1476,13 @@ const canViewPlan = hasDates || isGenerating;
 const canViewBook = isPlanFinalized && (hasTiles || inBookableState);
 ```
 
-**Backend (coordinator steps):**
+**Backend (agent tool loop):**
 ```python
-# Coordinator plan_turn() builds deterministic step order from classifier output.
-# With destination + dates present, SEARCH_TILES and BUILD_ITINERARY steps
-# are scheduled as needed; DISPATCH_SPECIALISTS is added for Tier 1 topics.
-# Conversational response is streamed in GENERATE_RESPONSE.
+# The create_agent loop has no deterministic step schedule — the model selects
+# tools each round. With destination + dates present it calls search_tiles
+# (and get_specialist_advice for Tier 1 topics); agent_runner._should_autobuild
+# then builds the itinerary after the loop when destination+dates+options are
+# ready. The conversational response is the terminal (no-tool-call) model turn.
 ```
 
 ### Critical Invariants
@@ -1662,8 +1670,10 @@ Page Load
     ▼
 useSessionHydration() runs
     │
-    ├── Check session expiration (24hr max)
-    │   └── If expired → Clear state, start fresh
+    ├── (no client-side expiry) Always proceed to fetchDocument()
+    │   └── Backend cookie (Max-Age 14d) + persisted doc are the sole
+    │       validity source; a stale localStorage timestamp must never
+    │       blank out a still-valid backend document (the 200/204 decides)
     │
     ├── Fire-and-forget `useUserStore.fetchUser()`
     │   └── Auth chrome can render current user/recent trips without waiting for document hydration
@@ -1683,7 +1693,7 @@ useSessionHydration() runs
         └── Renders: Specialists → Tiles → Timeline
 ```
 
-**`itinerary_day_cards` mapping:** The backend `format_result()` returns `itinerary_day_cards` when the graph-built itinerary runs during `format_result`. `setFromPlanResponse()` maps this to `day_cards` for frontend consumption (`rawDoc.itinerary_day_cards` -> `rawDoc.day_cards`).
+**`itinerary_day_cards` mapping:** The backend `_build_envelope()` returns `itinerary_day_cards` when the itinerary was built inside the agent turn (model `build_itinerary` tool call or `agent_runner` auto-build). `setFromPlanResponse()` maps this to `day_cards` for frontend consumption (`rawDoc.itinerary_day_cards` -> `rawDoc.day_cards`).
 
 ### Backend Persistence Points
 
@@ -1718,8 +1728,8 @@ useSessionHydration() runs
 4. Page Refresh
    └── GET /api/document → Full document from DB → Hydrate UI
 
-5. 24hr Expiration
-   └── useSessionHydration detects age → Clear + tryAutoResume (authenticated users resume most recent saved trip) → fresh start fallback
+5. Session Validity (backend-decided)
+   └── Hydration never expires a session client-side; `GET /api/document` returns 204/null when the backend session/doc is gone → tryAutoResume (authenticated users resume most recent saved trip) → fresh start fallback
 
 6. No Document (authenticated)
    └── GET /api/document returns null → tryAutoResume fetches trips, resumes most recent → fresh start fallback
@@ -2115,6 +2125,8 @@ useEffect(() => {
   }
 }, [planViewState, executedTopics, hasDates, ...]);
 ```
+
+**Frontend dates-build gate (`planStateHelpers.ts`):** `hasTripDates(...)` is the single source of truth for "can we BUILD a plan yet?" so every `GENERATE_PLAN_TRIGGER` fire site stays consistent — a plan must never be built without dates (a dateless build produces a phantom itinerary against unpersisted default dates). The gate helper, on missing dates, opens the Dates sheet (`openDates`) and shows `MISSING_DATES_NUDGE` in chat instead of silently firing `sendBuild` — used by the Dates-sheet save path so a dateless build is deferred, not dropped.
 
 **Backend Gates (`/api/expand-itinerary`):**
 The endpoint rejects early if prerequisites aren't met (prevents wasted ItineraryBuilder calls during S0_BOOTSTRAP):
@@ -2581,6 +2593,13 @@ When niche specialists run alongside Local Expert (see Section III.A), the UI re
 ### 8. Anchor Card Safety Net
 
 **Problem:** If LocalExpert fails or returns empty, the UI loses its context anchor (Destination/Dates/Travelers).
+
+<!-- REVIEW: `_format_result()` was removed with the coordinator DAG, and the
+     `strategy_general_anchor` Trip-Overview safety-net synthesis below has no
+     equivalent in the current agent-path backend (coordinator.py / middleware /
+     build_itinerary tool). build_itinerary only adds a placeholder local_expert
+     section when no activity tiles exist — a different mechanism. Team confirm
+     whether an anchor-card safety net still exists and where, or delete this. -->
 
 **Solution:** In `_format_result()`, guarantee a Trip Overview section exists:
 

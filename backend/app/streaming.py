@@ -2153,6 +2153,63 @@ async def generate_ndjson(
                     yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
                     return
 
+            # Reconcile the browse pool + Advice sections with the builder's
+            # Phase 2.55 specialist-block drop: the builder drops unbookable
+            # specialist BLOCKS but leaves their tiles in tiles_data and their
+            # sections in strategy_sections_data, so a fully-unbookable specialist
+            # would ghost (orphan map pins + an Advice card with no plan blocks)
+            # and its tile would still inflate the Browse "Activities" pool. The
+            # endpoint owns this because expand never re-emits tiles/sections from
+            # the builder. Same global affiliate-evidence gate (inside the helper)
+            # so a partner-disabled / placeholder turn prunes nothing.
+            sections_pruned_on_expand = False
+            try:
+                from app.services.partner_enrichment import (
+                    prune_unbookable_specialist_artifacts,
+                )
+
+                expand_day_cards = [dc.model_dump() for dc in itinerary_result.day_cards]
+                _activity_ids = [
+                    tid
+                    for tid, t in tiles_data.items()
+                    if isinstance(t, dict) and t.get("type", "activity") == "activity"
+                ]
+                _activity_tiles = [tiles_data[tid] for tid in _activity_ids]
+                (
+                    _kept_activity_tiles,
+                    _kept_sections,
+                    _dropped_tile_ids,
+                    _dropped_topics,
+                ) = prune_unbookable_specialist_artifacts(
+                    _activity_tiles, strategy_sections_data, expand_day_cards
+                )
+                if _dropped_tile_ids:
+                    for _tid in _dropped_tile_ids:
+                        tiles_data.pop(_tid, None)
+                    # Flip tiles_refreshed so the shrunk pool is both emitted
+                    # (tiles_replaced=True) and persisted via replace_tiles=True
+                    # at the apply_planner_update site below. Without the replace,
+                    # the merge-only persist path keeps the popped ids in the saved
+                    # doc and they resurface on reload.
+                    tiles_refreshed = True
+                if _dropped_topics:
+                    strategy_sections_data = _kept_sections
+                    sections_pruned_on_expand = True
+                if _dropped_tile_ids or _dropped_topics:
+                    logger.info(
+                        "[expand-itinerary] pruned %d unbookable specialist tile(s) "
+                        "and %d ghost section(s): tile_ids=%s topics=%s",
+                        len(_dropped_tile_ids),
+                        len(_dropped_topics),
+                        sorted(_dropped_tile_ids),
+                        sorted(_dropped_topics),
+                    )
+            except Exception as _prune_exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "[expand-itinerary] unbookable-specialist artifact prune skipped: %s",
+                    _prune_exc,
+                )
+
             # Emit progress: finalizing
             event = ExpandItineraryStreamEvent(
                 type="progress",
@@ -2211,6 +2268,13 @@ async def generate_ndjson(
                 plan_envelope["tiles"] = tiles_data
                 plan_envelope["tiles_replaced"] = True
 
+            # When the unbookable artifact prune dropped a ghost section, emit the
+            # pruned section list so the Advice panel drops the orphaned card this
+            # turn (matches the graph envelope's existing strategy_sections field;
+            # purely additive to the free-form plan_envelope dict).
+            if sections_pruned_on_expand:
+                plan_envelope["strategy_sections"] = strategy_sections_data
+
             # Emit envelope update
             _debug(
                 f"📤 [expand-itinerary] Emitting envelope: "
@@ -2257,14 +2321,35 @@ async def generate_ndjson(
                         for tid, t in tiles_data.items()
                     }
 
+                # Persist the pruned strategy_sections only when the unbookable
+                # artifact prune actually dropped a ghost section -- otherwise the
+                # doc's existing sections (set by the prior graph run) are left
+                # untouched, matching the endpoint's normal "don't re-emit sections"
+                # behavior.
+                sections_for_db = None
+                if sections_pruned_on_expand:
+                    sections_for_db = [
+                        StrategySection(**s) if isinstance(s, dict) else s
+                        for s in strategy_sections_data
+                    ]
+
                 await apply_planner_update(
                     db,
                     doc=doc,
                     trip_context_id=trip_context_id,
                     trip_inputs=trip_inputs_obj,
                     tiles=tiles_for_db,
+                    # When tiles were refreshed (category-refresh rebuild or the
+                    # unbookable-specialist prune), tiles_for_db is the COMPLETE
+                    # pool (activities + hotels + flights), so replace it wholesale.
+                    # merge_tiles only adds/updates keys and never removes, so a
+                    # merge would leave dropped/stale tile ids in the saved doc and
+                    # they would resurface on reload (orphan map pins / browse
+                    # ghosts). Mirrors the graph path's replace_tiles gate.
+                    replace_tiles=tiles_refreshed,
                     # ViewModel fields for session restoration — always persist state
                     plan_view_state=new_plan_view_state,
+                    strategy_sections=sections_for_db,
                     day_cards=day_card_objs,
                     can_expand_to_itinerary=day_card_objs is not None,
                 )

@@ -845,6 +845,7 @@ class DayBlock(BaseModel):
         None  # Google Places price level (0=free, 1=$, 2=$$, 3=$$$, 4=$$$$)
     )
     coordinates: Optional[Dict[str, float]] = None  # {lat, lng}
+    location: Optional[str] = None  # Clean geocodable place name (specialist activities)
     google_place_id: Optional[str] = None  # Google Places ID
     deeplink: Optional[str] = None  # Google Maps URL
 

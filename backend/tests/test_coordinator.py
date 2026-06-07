@@ -460,6 +460,60 @@ class TestBuildEnvelopeViewState:
         assert state["turn_meta"]["tiles_replaced"] is True
         assert state["turn_meta"]["removal_pruned"] is True
 
+    def test_removal_when_agent_already_replaced_tiles_still_clears_and_flags(self) -> None:
+        """Re-fetch removal: on 'no diving' the agent (Gemini variance) sometimes RE-FETCHES,
+        replacing the diving activity tiles with general ones and leaving no diving
+        specialist_plan -- so the tile/plan prune loops find nothing. The diving SECTION is
+        still dropped, and that drop alone MUST trigger the cleanup (tiles_replaced +
+        removal_pruned + day_cards=[]). Otherwise tiles_replaced stays unset and the
+        frontend's tiles_replaced-gated additive merge resurrects the dropped diving section
+        and its map POIs -- the "'No diving' doesn't remove the day cards / map POIs" bug."""
+        from app.planner.services.agent_runner import _prune_stale_sections
+
+        # Agent re-fetched: NO diving tiles remain (replaced by general activities),
+        # NO diving specialist_plan -- only the section drop signals the removal.
+        general_tiles = [
+            {
+                "id": f"gen_{i}",
+                "type": "activity",
+                "title": f"Cultural experience {i}",
+                "meta": {"category": "cultural"},
+            }
+            for i in range(3)
+        ]
+        general_day_cards = [
+            {"day_number": n, "blocks": [{"id": f"gen_{n}", "summary": f"Day {n}"}]}
+            for n in range(1, 8)
+        ]
+
+        state = _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-07",
+            },
+            tiles={"activities": list(general_tiles), "hotels": []},
+            day_cards=list(general_day_cards),
+            strategy_sections=[
+                {"specialist_type": "diving", "subtitle": "Bali", "content_blocks": []},
+                {"specialist_type": "local_expert", "subtitle": "Bali", "content_blocks": []},
+            ],
+            specialist_plans={"local_expert": {"topic": "x"}},
+            turn_meta={"removal_targets": ["diving"]},
+        )
+
+        _prune_stale_sections(state)
+
+        # Diving section dropped; local_expert retained.
+        section_types = {s["specialist_type"] for s in state["strategy_sections"]}
+        assert "diving" not in section_types
+        assert "local_expert" in section_types
+
+        # Cleanup fires off the section drop even though no diving tile/plan was found.
+        assert state["day_cards"] == []
+        assert state["turn_meta"]["tiles_replaced"] is True
+        assert state["turn_meta"]["removal_pruned"] is True
+
 
 # =============================================================================
 # Small helpers
@@ -858,6 +912,105 @@ class TestPostBuildPlacedActivityEnrichment:
                 "meta": {},
             }
         ]
+
+    @pytest.mark.asyncio
+    async def test_uses_clean_location_over_activity_phrased_summary_for_geocode(
+        self, monkeypatch: Any
+    ) -> None:
+        """Specialist block with a clean `location` -> geocode queries the place name.
+
+        Surf blocks have activity-phrased summaries ("Intro Surf Lesson at Kuta
+        Beach") that fail to geocode; the structured `location` ("Kuta Beach,
+        Bali") resolves cleanly and must be the first candidate (lookup title).
+        """
+        import app.tile_service.google_places_provider as gp_module
+        from app.config import settings as app_settings
+
+        state = _make_state(
+            trip_plan={"destination": "Bali", "adults": 2, "children": 0},
+            tiles={"activities": []},
+            session_id="session-123",
+        )
+        day_cards = [
+            {
+                "day_number": 2,
+                "blocks": [
+                    {
+                        "summary": "Introductory Surf Lesson at Kuta Beach",
+                        "location": "Kuta Beach, Bali",
+                        "specialist_type": "surfing",
+                    }
+                ],
+            }
+        ]
+        captured_proxies: list[dict[str, Any]] = []
+
+        async def _fake_enrich(
+            proxies: list[dict[str, Any]],
+            *_args: Any,
+            **_kwargs: Any,
+        ) -> list[dict[str, Any]]:
+            captured_proxies.extend(proxies)
+            return []
+
+        monkeypatch.setattr(app_settings, "use_google_places_provider", True)
+        monkeypatch.setattr(app_settings, "google_places_enrichment_enabled", True)
+        monkeypatch.setattr(gp_module, "enrich_activities_with_places", _fake_enrich)
+
+        await _post_build_enrich_placed_activities(state, day_cards)
+
+        assert len(captured_proxies) == 1
+        # The clean location must be the geocode lookup title, NOT the lesson phrasing.
+        assert captured_proxies[0]["title"] == "Kuta Beach, Bali"
+
+    @pytest.mark.asyncio
+    async def test_location_less_generic_tour_gets_no_centroid_stamp(
+        self, monkeypatch: Any
+    ) -> None:
+        """A genuinely location-less multi-stop tour stays coord-less (guardrail).
+
+        No `location`, activity-phrased summary, geocode miss -> the block must
+        NOT be stamped with the destination centroid (which would re-stack pins).
+        """
+        import app.tile_service.google_places_provider as gp_module
+        from app.config import settings as app_settings
+
+        state = _make_state(
+            trip_plan={"destination": "Bali", "adults": 2, "children": 0},
+            tiles={"activities": []},
+            session_id="session-123",
+        )
+        day_cards = [
+            {
+                "day_number": 2,
+                "blocks": [
+                    {
+                        "summary": "Private full-day driver — choose your route",
+                    }
+                ],
+            }
+        ]
+        captured_proxies: list[dict[str, Any]] = []
+
+        async def _fake_enrich(
+            proxies: list[dict[str, Any]],
+            *_args: Any,
+            **_kwargs: Any,
+        ) -> list[dict[str, Any]]:
+            captured_proxies.extend(proxies)
+            return []  # Geocode miss: no enriched result for the proxy.
+
+        monkeypatch.setattr(app_settings, "use_google_places_provider", True)
+        monkeypatch.setattr(app_settings, "google_places_enrichment_enabled", True)
+        monkeypatch.setattr(gp_module, "enrich_activities_with_places", _fake_enrich)
+
+        await _post_build_enrich_placed_activities(state, day_cards)
+
+        block = day_cards[0]["blocks"][0]
+        # Geocode used the summary (no clean location available)...
+        assert captured_proxies[0]["title"] == "Private full-day driver — choose your route"
+        # ...and on the miss, no centroid stamp — the block stays coord-less (no pin).
+        assert not block.get("coordinates")
 
 
 class TestBuildTripStateSummary:

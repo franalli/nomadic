@@ -1994,3 +1994,181 @@ class TestPhase56SpecialistExclusion:
         ]
         assert len(backfill_days) == 1
         assert not any(block.activity_type == "free_day" for block in backfill_days[0].blocks)
+
+
+class TestRemoveSoleSpecialistKeepsGeneralActivities:
+    """Removing the only specialist (e.g. "remove diving") must not wipe surviving
+    general activity tiles.
+
+    Reproduces the post-prune expand state: the removal turn prunes the diving
+    section/tiles and wholesale-clears day_cards, leaving only the local_expert
+    section (no activity content) plus the surviving general logistics activity
+    tiles. The frontend then re-expands. After the fix the expand sends
+    booking_types.activities='suggested' + categories=[], which streaming.py maps to
+    activity_categories=None (no filter) -- so Phase 5.6 backfills the surviving
+    general tours onto the otherwise-free days. With activity_categories=[] (the
+    explicit-disable signal) the builder skip-alls and leaves the days free.
+    """
+
+    GENERAL_TILES = {
+        "tour_1": {
+            "id": "tour_1",
+            "type": "activity",
+            "title": "Bali Best Sights Private Full-day Tour",
+            "source_agent": "logistics_node",
+            "meta": {"category": "tours", "duration_hours": 4.0},
+        },
+        "tour_2": {
+            "id": "tour_2",
+            "type": "activity",
+            "title": "Bali River Tubing Adventure",
+            "source_agent": "logistics_node",
+            "meta": {"category": "tours", "duration_hours": 2.0},
+        },
+        "tour_3": {
+            "id": "tour_3",
+            "type": "activity",
+            "title": "Bali ATV Ride Adventure",
+            "source_agent": "logistics_node",
+            "meta": {"category": "tours", "duration_hours": 3.0},
+        },
+    }
+
+    def _input(self, activity_categories) -> ItineraryBuilderInput:
+        return ItineraryBuilderInput(
+            start_date="2026-07-01",
+            end_date="2026-07-07",
+            activity_categories=activity_categories,
+            strategy_sections=[
+                # Only the local_expert section survives the removal prune; it carries
+                # no activity content (the diving section + its tiles were pruned).
+                {"specialist_type": "local_expert", "content_added": []},
+            ],
+            tiles=dict(self.GENERAL_TILES),
+            destination="Bali",
+        )
+
+    def _placed_tile_ids(self, result) -> set[str]:
+        ids = set(self.GENERAL_TILES.keys())
+        placed: set[str] = set()
+        for card in result.day_cards:
+            for block in card.blocks:
+                if getattr(block, "id", None) in ids:
+                    placed.add(block.id)
+        return placed
+
+    def test_none_categories_places_surviving_general_tours(
+        self, builder: ItineraryBuilder
+    ) -> None:
+        """activities='suggested' + categories=[] -> None -> surviving tours placed."""
+        result = builder.build(self._input(None))
+        assert result.success
+        placed = self._placed_tile_ids(result)
+        assert placed, (
+            "expected surviving general tours to be placed when activity_categories "
+            "is None (the post-'remove diving' expand path)"
+        )
+
+    def test_empty_categories_skips_all_activities(self, builder: ItineraryBuilder) -> None:
+        """Explicit disable (activities='off') -> categories=[] -> skip-all -> free days."""
+        result = builder.build(self._input([]))
+        assert result.success
+        placed = self._placed_tile_ids(result)
+        assert not placed, (
+            "expected NO general tours placed when activity_categories is empty "
+            "(explicit-disable skip-all)"
+        )
+
+
+# =============================================================================
+# Specialist coordinate / location propagation (surf-pin regression)
+# =============================================================================
+
+
+class TestSpecialistCoordinatePropagation:
+    """Surf 'add specialist' produced day cards with no map pins.
+
+    Regression coverage for the coordinate path: a specialist ``content_added``
+    item that carries LLM-generated ``coordinates`` (and/or a clean ``location``)
+    must reach the resulting day-card block so it can produce a map POI.
+    """
+
+    def test_specialist_coordinates_reach_day_card_block(self, builder: ItineraryBuilder) -> None:
+        """content_added with LLM lat/lng -> day-card block carries coordinates."""
+        input_data = ItineraryBuilderInput(
+            start_date="2024-03-15",
+            end_date="2024-03-20",
+            strategy_sections=[
+                {
+                    "specialist_type": "surfing",
+                    "content_added": [
+                        {
+                            "title": "Introductory Surf Lesson at Kuta Beach",
+                            "duration_hours": 3.0,
+                            # LLM-generated [lng, lat] (Mapbox convention)
+                            "coordinates": [115.1683, -8.7177],
+                            "location": "Kuta Beach, Bali",
+                        },
+                    ],
+                    "constraints_applied": [],
+                }
+            ],
+            tiles={},
+            destination="Bali",
+        )
+        result = builder.build(input_data)
+        assert result.success
+
+        surf_blocks = [
+            b
+            for day in result.day_cards
+            for b in day.blocks
+            if b.specialist_type == "surfing" and not b.is_buffer
+        ]
+        assert surf_blocks, "expected a surfing block to be placed"
+        block = surf_blocks[0]
+        assert block.coordinates is not None, (
+            "specialist LLM coordinates must reach the day-card block (no geocode needed)"
+        )
+        assert block.coordinates["lat"] == pytest.approx(-8.7177)
+        assert block.coordinates["lng"] == pytest.approx(115.1683)
+
+    def test_specialist_location_reaches_day_card_block(self, builder: ItineraryBuilder) -> None:
+        """content_added with a clean location but NO lat/lng -> block carries location.
+
+        This is what lets the POST_BUILD geocode use the clean place name
+        ("Kuta Beach") instead of the activity-phrased summary.
+        """
+        input_data = ItineraryBuilderInput(
+            start_date="2024-03-15",
+            end_date="2024-03-20",
+            strategy_sections=[
+                {
+                    "specialist_type": "surfing",
+                    "content_added": [
+                        {
+                            "title": "Longboard Session at Batu Bolong",
+                            "duration_hours": 3.0,
+                            # No coordinates — only a clean place name.
+                            "location": "Batu Bolong Beach, Canggu, Bali",
+                        },
+                    ],
+                    "constraints_applied": [],
+                }
+            ],
+            tiles={},
+            destination="Bali",
+        )
+        result = builder.build(input_data)
+        assert result.success
+
+        surf_blocks = [
+            b
+            for day in result.day_cards
+            for b in day.blocks
+            if b.specialist_type == "surfing" and not b.is_buffer
+        ]
+        assert surf_blocks, "expected a surfing block to be placed"
+        assert surf_blocks[0].location == "Batu Bolong Beach, Canggu, Bali", (
+            "specialist clean location must reach the day-card block for geocode use"
+        )

@@ -45,6 +45,7 @@ Use your world knowledge to identify real reserves, parks, and wildlife areas.
 Do NOT limit yourself to a predefined list.
 
 For each activity, include approximate `lat` (latitude) and `lng` (longitude) coordinates.
+For each activity, also set `location` to the REAL park or reserve name as a geocodable place (a named national park, reserve, or sanctuary a map can resolve), NOT the activity phrasing — the `title` may describe the outing, but `location` must be a named place a map can resolve. Always provide `location` even if you omit lat/lng.
 
 Include topic-specific fields:
 - duration_hours: Drive/activity duration

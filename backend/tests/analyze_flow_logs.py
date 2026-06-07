@@ -16,7 +16,8 @@ Checks:
   8. LLM call count (cost awareness)
   9. Activity distribution — detects clustering beyond APD cap
   10. APD consistency — activities_per_day not null in trip_settings
-  11. Activity type quality — activity_type is a category, not a title
+  11. Activity type quality — block category/title split (activity_type=title,
+      specialist_type=category) per data-contracts.md
   12. Tile schema consistency — tiles have geo field alongside coordinates
   13. Deeplink URL quality — catches "#", empty, non-HTTP deeplink_url in tiles
   14. Day card date continuity — no gaps or duplicates in day sequence
@@ -1261,16 +1262,63 @@ def check_apd_consistency(
             report.metrics["activities_per_day"] = apd
 
 
+_CONTROL_BLOCK_TYPES = {
+    "arrival",
+    "departure",
+    "check_in",
+    "check_out",
+    "check-in",
+    "check-out",
+    "free_day",
+    "buffer",
+    "rest",
+    "meal",
+    "flight",
+    "hotel_checkin",
+    "hotel_checkout",
+}
+
+# Bare category tokens that must NOT appear as a block's activity_type. Per
+# data-contracts.md, activity_type carries the DISPLAY TITLE; a bare category
+# token here is the pre-fix bug where the specialist bucket key was stamped
+# instead of the activity title.
+_CATEGORY_TOKENS = {
+    "diving",
+    "snorkeling",
+    "hiking",
+    "skiing",
+    "cycling",
+    "surfing",
+    "climbing",
+    "sailing",
+    "wildlife_safari",
+    "yoga",
+    "cooking",
+    "nightlife",
+    "cultural",
+    "temples",
+    "nature",
+    "food",
+    "spa",
+    "shopping",
+    "tours",
+    "experience",
+    "activity",
+}
+
+
 def check_activity_type_quality(
     sse_data: str,
     flow_num: int,
     report: FlowReport,
 ) -> None:
-    """Validate activity_type fields contain categories, not titles.
+    """Validate the block category/title split per data-contracts.md.
 
-    activity_type should be short category identifiers (e.g., 'diving', 'yoga',
-    'cultural'). If it contains long multi-word strings or matches the block's
-    title, it's likely a bug where title was used instead of category.
+    Per the data contract, ``activity_type`` carries the DISPLAY TITLE for the
+    card (e.g. "Potato Head Beach Club") while ``specialist_type`` carries the
+    short CATEGORY for filtering/coloring (e.g. "diving", "yoga"). This flags the
+    two inversions: a bare category token leaking into ``activity_type`` (the
+    pre-fix bucket-key bug), or a long title leaking into ``specialist_type``.
     """
     spec = FLOW_EXPECTED_TOOLS.get(flow_num, {})
     if spec.get("skip_sse"):
@@ -1283,34 +1331,35 @@ def check_activity_type_quality(
         day_cards = evt.get("day_cards") or []
         for day in day_cards:
             for block in day.get("blocks") or []:
-                activity_type = block.get("activity_type") or ""
+                activity_type = (block.get("activity_type") or "").strip()
+                specialist_type = (block.get("specialist_type") or "").strip()
                 title = block.get("summary") or block.get("title") or ""
 
-                # Skip non-activity blocks
-                if activity_type in (
-                    "arrival",
-                    "departure",
-                    "check_in",
-                    "check_out",
-                    "check-in",
-                    "check-out",
-                    "free_day",
-                    "buffer",
+                # Skip non-activity / control blocks
+                if activity_type.lower() in _CONTROL_BLOCK_TYPES:
+                    continue
+
+                # Flag: a bare category token in activity_type that is NOT the
+                # block's title -> the old bug (bucket key stamped as title).
+                if (
+                    activity_type
+                    and activity_type.lower() in _CATEGORY_TOKENS
+                    and activity_type != title
                 ):
-                    continue
+                    bad_types.append(
+                        f"activity_type='{activity_type}' is a category, not the title"
+                    )
 
-                # Flag: activity_type is suspiciously long (>40 chars = likely a title)
-                if len(activity_type) > 40:
-                    bad_types.append(f"'{activity_type[:50]}...' (too long)")
-                    continue
-
-                # Flag: activity_type exactly matches the title (copy-paste bug)
-                if activity_type and title and activity_type == title:
-                    bad_types.append(f"'{activity_type[:40]}' == title")
+                # Flag: a long title leaking into specialist_type (the category
+                # field must stay a short identifier).
+                if len(specialist_type) > 40:
+                    bad_types.append(
+                        f"specialist_type='{specialist_type[:40]}...' looks like a title"
+                    )
 
     if bad_types:
         report.error(
-            f"activity_type contains title values ({len(bad_types)}×): " + "; ".join(bad_types[:3])
+            f"block category/title split violated ({len(bad_types)}×): " + "; ".join(bad_types[:3])
         )
 
 

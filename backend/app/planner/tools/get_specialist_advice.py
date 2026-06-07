@@ -237,14 +237,23 @@ async def get_specialist_advice(
                     }
                 )
 
-            # Map constraints
+            # Map constraints. SpecialistConstraintOutput.constraint_type is
+            # misnamed -- it actually carries a SEVERITY value ("blocking"/
+            # "strong"/"soft"), per vertical_specialist's severity_map. Writing it
+            # into the `type` field produced type="blocking", which fails the
+            # SpecialistConstraint.type Literal and was silently dropped by
+            # validate_plan. Mirror the proven vertical_specialist path: hardcode
+            # type="safety" and normalize the severity (lowercase, STRONG default)
+            # so mixed-case LLM output ("Blocking") doesn't slip through either.
+            _severity_map = {"blocking": "blocking", "strong": "strong", "soft": "soft"}
             for c in llm_output.constraints:
+                _severity = _severity_map.get((c.constraint_type or "").lower(), "strong")
                 constraints.append(
                     {
                         "constraint_id": c.constraint_id,
-                        "type": c.constraint_type,
+                        "type": "safety",
                         "rule": c.constraint_id,
-                        "severity": c.constraint_type,
+                        "severity": _severity,
                         "applies_to_categories": c.applies_to_categories,
                         "buffer_hours": c.buffer_hours,
                         "reason": c.reason,

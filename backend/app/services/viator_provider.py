@@ -70,7 +70,13 @@ _browse_viator_cache = MemoryCache(maxsize=256, ttl=_viator_cache_ttl)  # browse
 
 _TITLE_CATEGORY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(?:hike|hiking|trek|trekking|trail\b)", re.I), "hiking"),
-    (re.compile(r"(?:dive|diving|snorkel)", re.I), "diving"),
+    # Diving is checked BEFORE snorkeling so a combined "scuba + snorkel" product
+    # is classified by its harder/primary activity (diving); only a PURE snorkel
+    # product (no dive/scuba token) falls through to "snorkeling". Splitting
+    # snorkel out of diving keeps the inferred-category taxonomy honest (snorkel
+    # is not scuba) so the cross-category mismatch gate can tell them apart.
+    (re.compile(r"(?:dive|diving|scuba)", re.I), "diving"),
+    (re.compile(r"(?:snorkel|snorkeling|snorkelling)", re.I), "snorkeling"),
     (re.compile(r"(?:surf|surfing)", re.I), "surfing"),
     (re.compile(r"(?:cycle|cycling|bike|biking)\b", re.I), "cycling"),
     (re.compile(r"(?:ski|skiing|snowboard)", re.I), "skiing"),
@@ -95,6 +101,22 @@ def _infer_category_from_title(title: str) -> str:
         if pattern.search(title):
             return category
     return "tours"
+
+
+# Canonical category labels the title-inference taxonomy can produce. Used to
+# decide whether the trusted caller-supplied ``category`` (the specialist topic)
+# is on-taxonomy so it can anchor the inferred-mismatch gate instead of the
+# noisier title inference (e.g. a "diving" activity titled "Coral Gardens" would
+# otherwise infer source_cat="nature" and discard a real scuba match).
+_KNOWN_CATEGORIES: frozenset[str] = frozenset(c for _, c in _TITLE_CATEGORY_PATTERNS)
+
+
+def _resolve_source_category(category: str | None, activity_title: str) -> str:
+    """Prefer the trusted caller category over title inference when on-taxonomy."""
+    normalized = (category or "").strip().lower().replace(" ", "_")
+    if normalized in _KNOWN_CATEGORIES:
+        return normalized
+    return _infer_category_from_title(activity_title)
 
 
 _GENERIC_ACTIVITY_TOKENS = frozenset(
@@ -763,7 +785,12 @@ async def match_activity_to_viator(
     # ── Inferred category mismatch gate ────────────────────────────────
     # Catch cross-domain false positives not covered by explicit CATEGORY_CONFLICTS
     # (e.g., culinary activity matched to cycling tour, yoga matched to bus tour).
-    source_cat = _infer_category_from_title(activity_title)
+    # Anchor on the trusted caller category (the specialist topic) when it is
+    # on-taxonomy; title inference alone mis-buckets e.g. a diving activity titled
+    # "Coral Gardens" as "nature", which both falsely fires this gate (discarding a
+    # real scuba match) AND lets it skip the generic-tours gate below (so an
+    # airport-transfer "tours" product gets stamped on a dive).
+    source_cat = _resolve_source_category(category, activity_title)
     product_cat = _infer_category_from_title(best_product.get("title", ""))
 
     if source_cat != product_cat and source_cat != "tours" and product_cat != "tours":

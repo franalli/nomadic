@@ -165,8 +165,14 @@ def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
 
         return chips[:4]
 
-    # Has tiles but no itinerary yet: suggest building
-    if tiles and (tiles.get("flights") or tiles.get("hotels") or tiles.get("activities")):
+    # Has tiles but no itinerary yet: suggest building.
+    # Dates gate the itinerary, so when they're still missing fall through to the
+    # date-prompt branch below (don't bury the date CTA under "Browse activities").
+    if (
+        start_date
+        and tiles
+        and (tiles.get("flights") or tiles.get("hotels") or tiles.get("activities"))
+    ):
         origin = trip_plan.get("origin", "")
         if dest and start_date and end_date and not categories:
             chips.append(

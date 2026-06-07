@@ -7,6 +7,7 @@ apply-arrangement to fix stale constraint tags and detect orphaned buffers.
 import time
 
 from app.services.itinerary_builder import (
+    _anchor_day_buffers,
     _detect_stale_buffers,
     _recompute_nofly_tags,
     recompute_constraints_after_arrangement,
@@ -535,3 +536,139 @@ class TestRecomputeConstraintsAfterArrangement:
         elapsed_ms = (time.monotonic() - start) * 1000
 
         assert elapsed_ms < 50, f"Took {elapsed_ms:.1f}ms, expected <50ms"
+
+
+# ── Buffer anchoring after a drag-and-drop arrangement ──────────────────────
+
+
+class TestAnchorDayBuffers:
+    """A dragged block must never sit above arrival/check-in or below
+    departure/check-out/no-fly. _anchor_day_buffers re-pins buffers while
+    keeping the user's relative ordering of activities (stable sort)."""
+
+    def test_arrival_pinned_first_when_activity_dragged_above(self):
+        """Day 1 = [activity(morning), arrival_buffer] -> arrival first."""
+        cards = [
+            _day(
+                1,
+                [
+                    _block("act1", "hiking", period="morning"),
+                    _block("arr", activity_type="arrival", is_buffer=True, buffer_type="arrival"),
+                ],
+            )
+        ]
+        anchored = _anchor_day_buffers(cards)
+        order = [b["id"] for b in anchored[0]["blocks"]]
+        assert order == ["arr", "act1"], f"arrival must be first, got {order}"
+
+    def test_departure_stays_last_when_activity_dragged_onto_final_day(self):
+        """Final day gains an activity dragged below departure -> departure last."""
+        cards = [
+            _day(
+                1,
+                [
+                    _block(
+                        "dep", activity_type="departure", is_buffer=True, buffer_type="departure"
+                    ),
+                    _block("act1", "hiking", period="afternoon"),
+                ],
+            )
+        ]
+        anchored = _anchor_day_buffers(cards)
+        order = [b["id"] for b in anchored[0]["blocks"]]
+        assert order[-1] == "dep", f"departure must be last, got {order}"
+        assert order == ["act1", "dep"]
+
+    def test_two_morning_activities_keep_relative_order_after_arrival(self):
+        """Stable sort: arrival first, then the two activities in original order."""
+        cards = [
+            _day(
+                1,
+                [
+                    _block("act_a", "hiking", period="morning"),
+                    _block("act_b", "diving", period="morning"),
+                    _block("arr", activity_type="arrival", is_buffer=True, buffer_type="arrival"),
+                ],
+            )
+        ]
+        anchored = _anchor_day_buffers(cards)
+        order = [b["id"] for b in anchored[0]["blocks"]]
+        assert order == ["arr", "act_a", "act_b"], f"expected stable order, got {order}"
+
+    def test_no_fly_buffer_stays_at_end_of_activities(self):
+        """no_fly pins to (1, 3) — end of the activities bracket, before departure."""
+        cards = [
+            _day(
+                1,
+                [
+                    _block("nofly", is_buffer=True, buffer_type="no_fly", period="evening"),
+                    _block("act_m", "hiking", period="morning"),
+                    _block(
+                        "dep", activity_type="departure", is_buffer=True, buffer_type="departure"
+                    ),
+                ],
+            )
+        ]
+        anchored = _anchor_day_buffers(cards)
+        order = [b["id"] for b in anchored[0]["blocks"]]
+        assert order == ["act_m", "nofly", "dep"], f"got {order}"
+
+    def test_empty_and_missing_blocks_are_noops(self):
+        """Days with no blocks (or missing key) must not raise."""
+        cards = [_day(1, []), {"day_number": 2, "label": "Day 2"}]
+        anchored = _anchor_day_buffers(cards)
+        assert anchored[0]["blocks"] == []
+        assert "blocks" not in anchored[1]
+
+    def test_recompute_returns_anchored_cards_and_tuple_shape(self):
+        """recompute_constraints_after_arrangement re-anchors buffers and still
+        returns a (cards, violations) tuple of the same shape."""
+        cards = [
+            _day(
+                1,
+                [
+                    _block("act1", "hiking", period="morning"),
+                    _block("arr", activity_type="arrival", is_buffer=True, buffer_type="arrival"),
+                ],
+            ),
+            _day(2, [_block("act2", "hiking", period="afternoon")]),
+        ]
+        result = recompute_constraints_after_arrangement(cards, None)
+        assert isinstance(result, tuple) and len(result) == 2
+        updated, violations = result
+        assert isinstance(updated, list)
+        assert isinstance(violations, list)
+        # Arrival re-pinned to first despite being dragged below the activity.
+        assert [b["id"] for b in updated[0]["blocks"]] == ["arr", "act1"]
+
+    def test_real_model_dump_round_trip_anchors_arrival(self):
+        """End-to-end shape guard: build real DayCard/DayBlock Pydantic objects,
+        model_dump() them (the exact arrangement-path shape), then recompute.
+        Catches any field-name drift between the schema and the dict helper."""
+        from app.schemas import DayBlock, DayCard
+
+        day = DayCard(
+            day_number=1,
+            label="Arrival",
+            blocks=[
+                DayBlock(
+                    id="act1",
+                    period="morning",
+                    activity_type="city stroll",
+                    summary="Explore old town",
+                    specialist_type="hiking",
+                ),
+                DayBlock(
+                    id="arr",
+                    period="morning",
+                    activity_type="arrival",
+                    summary="Land + settle in",
+                    is_buffer=True,
+                    buffer_type="arrival",
+                ),
+            ],
+        )
+        cards = [day.model_dump()]
+        updated, _ = recompute_constraints_after_arrangement(cards, None)
+        order = [b["id"] for b in updated[0]["blocks"]]
+        assert order == ["arr", "act1"], f"arrival must anchor first on real dump, got {order}"

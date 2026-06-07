@@ -188,6 +188,17 @@ class RouterOutput(BaseModel):
             "Empty list if no removal."
         ),
     )
+    remove_all_activities: bool = Field(
+        default=False,
+        description=(
+            "True ONLY when the user wants to clear EVERY activity from the plan at once "
+            "(global wipe), leaving just hotels/flights/free days. "
+            'E.g. "remove all activities", "clear all activities", "no activities", '
+            '"remove everything from the plan", "start over on activities". '
+            'FALSE for a specific-topic removal ("skip hiking" -> use removal_targets) '
+            "and FALSE for a swap. Be conservative: only the global-clear phrasings."
+        ),
+    )
     skill_level: Optional[str] = Field(
         None,
         description=(
@@ -495,6 +506,18 @@ extraction above -- put ONLY the dropped activity in removal_targets):
 - "swap yoga for pilates" -> removal_targets: ["yoga"]  (pilates is added separately)
 - "change from surfing to paragliding" -> removal_targets: ["surfing"]
 - "instead of rock climbing, let's do kayaking" -> removal_targets: ["rock climbing"]
+
+GLOBAL CLEAR (the user wants to wipe EVERY activity, not a specific one), set
+remove_all_activities: true AND leave removal_targets empty:
+- "remove all activities" -> remove_all_activities: true
+- "clear all activities" -> remove_all_activities: true
+- "no activities" -> remove_all_activities: true
+- "remove everything from the plan" -> remove_all_activities: true
+- "start over on activities" -> remove_all_activities: true
+- "get rid of all the activities" -> remove_all_activities: true
+Be conservative -- ONLY the global-clear phrasings above. A specific-topic removal
+("skip hiking", "drop the cooking class") stays in removal_targets with
+remove_all_activities: false.
 
 If the user specifies skill/experience level, populate skill_level:
 - "I'm a beginner" -> "beginner"

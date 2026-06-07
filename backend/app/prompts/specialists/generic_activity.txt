@@ -39,6 +39,9 @@ Use your world knowledge to identify real venues, studios, markets, or experienc
 Do NOT limit yourself to a predefined list — be specific to the destination.
 
 For each activity, include approximate `lat` (latitude) and `lng` (longitude) coordinates.
+For each activity, set `location` to the REAL venue / place name as a geocodable string
+(e.g. "Ubud Monkey Forest, Bali"), NOT the activity phrasing. The `title` may describe the
+experience, but `location` must be the named place a map can resolve. Always provide `location`.
 Include topic-specific fields where relevant (e.g., duration_hours, difficulty, style).
 
 For constraints, use these types:

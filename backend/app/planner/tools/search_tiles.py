@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
+from typing_extensions import Annotated
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +143,9 @@ async def search_tiles(
     activity_categories: str = "",
     destination_iata: str = "",
     origin_iata: str = "",
+    # InjectedState -- auto-populated in-loop, invisible to the LLM's tool schema.
+    # The authoritative trip_plan is the SSoT for destination/dates/origin.
+    state: Annotated[Optional[dict], InjectedState] = None,
 ) -> dict:
     """Search for flights, hotels, and activities. Requires destination and
     dates. Origin required for flights. Returns tile arrays with prices
@@ -148,6 +153,23 @@ async def search_tiles(
     from app.planner.nodes.logistics_node import logistics_node
 
     t0 = time.time()
+
+    # Prefer the authoritative trip_plan (InjectedState) for destination / dates /
+    # origin over the model-supplied args. The model re-states these as free-text
+    # tool args and can drift -- e.g. pass a stale YEAR (logistics then searches
+    # the wrong year / wastes flight-search spend) or omit start_date entirely
+    # (the fetch short-circuits below). The persisted plan already reflects router
+    # extraction + past-date auto-bump, so it is the correct source of truth. Falls
+    # back to the model arg when state lacks the field (offline / no-state tests).
+    if state is not None:
+        tp = state.get("trip_plan", {}) or {}
+        destination = tp.get("destination") or destination
+        start_date = tp.get("start_date") or start_date
+        end_date = tp.get("end_date") or end_date
+        origin = tp.get("origin") or origin
+        destination_iata = tp.get("destination_iata") or destination_iata
+        origin_iata = tp.get("origin_iata") or origin_iata
+
     categories = _parse_categories(activity_categories)
 
     # Validate required fields
