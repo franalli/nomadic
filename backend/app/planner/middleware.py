@@ -538,6 +538,10 @@ def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[st
         # right-wins, so this flag survives to final_state). Also read by
         # DynamicPromptMiddleware to shape the terminal reply.
         "remove_all_activities": bool(result.get("remove_all_activities")),
+        # Requested destination for a SWITCH that was rejected (destination is
+        # locked to the current itinerary). Read by build_turn_context to steer the
+        # terminal reply toward advising the traveler to Reset. None on normal turns.
+        "destination_switch_blocked": result.get("destination_switch_blocked"),
     }
 
     # When destination changed, clear stale data from the previous destination.
@@ -854,6 +858,22 @@ _TOOL_MERGERS: dict[str, Callable[[dict[str, Any], dict[str, Any]], dict[str, An
     "build_itinerary": _merge_itinerary,
 }
 
+# Tools whose model-supplied ``destination`` argument is the act of committing to
+# a place: fetching local intel/tiles/specialist advice or building an itinerary
+# for "Bali" means the system has committed to Bali as the trip destination. The
+# router (``extract_trip_fields``) only writes ``trip_plan.destination`` on
+# explicit planning intent, so a conversational turn ("is bali fun?") that still
+# triggers one of these fetches would leave the SSoT destination None even after a
+# full plan is built -- which strands the frontend on the bootstrap view (its
+# ``hasPlanPrerequisites`` gate requires destination). ``extract_trip_fields`` is
+# intentionally excluded: it owns destination CHANGES via its own merger and its
+# arg is the *current* destination, not a fresh commitment.
+# Members MUST name their destination argument ``destination`` (read by the
+# backfill in ``awrap_tool_call``); a tool that names it differently won't commit.
+_DESTINATION_SCOPED_TOOLS: frozenset[str] = frozenset(
+    {"search_tiles", "get_specialist_advice", "get_local_intel", "build_itinerary"}
+)
+
 
 class TurnLifecycleMiddleware(AgentMiddleware):
     """State synchronisation middleware for the planner agent.
@@ -1009,6 +1029,29 @@ class TurnLifecycleMiddleware(AgentMiddleware):
                     "[TurnLifecycleMiddleware] Merge failed for %s: %s",
                     tool_name,
                     exc,
+                )
+
+        # Backfill trip_plan.destination from a destination-scoped tool's args.
+        # The model supplies `destination` when it commits to planning for a place;
+        # without this, a conversational turn that never triggers extract_trip_fields
+        # (e.g. "is bali fun?" -> get_local_intel for Bali) builds a full itinerary
+        # while trip_plan.destination stays None, which keeps the frontend stuck on
+        # the bootstrap view. Only write when currently empty so we never override an
+        # explicit destination set/changed by the router. Minimal trip_plan delta,
+        # folded into any delta the merger already produced (shallow _merge_dicts
+        # reducer, right-wins) so we don't clobber sibling keys this round.
+        if not tool_errored and tool_name in _DESTINATION_SCOPED_TOOLS:
+            arg_dest = (request.tool_call.get("args") or {}).get("destination")
+            new_dest = arg_dest.strip() if isinstance(arg_dest, str) else ""
+            current_dest = (state_dict.get("trip_plan") or {}).get("destination") or ""
+            if new_dest and not current_dest.strip():
+                trip_plan_delta = dict(state_updates.get("trip_plan") or {})
+                trip_plan_delta["destination"] = new_dest
+                state_updates["trip_plan"] = trip_plan_delta
+                logger.info(
+                    "[TurnLifecycleMiddleware] Backfilled trip_plan.destination=%r from %s args",
+                    new_dest,
+                    tool_name,
                 )
 
         logger.debug(

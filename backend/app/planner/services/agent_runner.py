@@ -1044,6 +1044,36 @@ async def run_agent_turn_streaming(
         assistant_message = result["assistant"].strip()
         final_state = last_values if isinstance(last_values, dict) else state
 
+        # Prompt-cache visibility: sum input vs prefix-cached tokens across THIS
+        # turn's model calls. Rehydrated history carries no usage_metadata, so only
+        # live calls count. cache_read is langchain's normalized field (Gemini
+        # cached_content_token_count / OpenAI cached_tokens both land here), so this
+        # one line reports real system+tools+history prefix reuse per turn.
+        _in_tok = _cached_tok = _calls = 0
+        for _m in final_state.get("messages", []) or []:
+            _um = getattr(_m, "usage_metadata", None)
+            if not _um:
+                continue
+            _calls += 1
+            _in_tok += int(_um.get("input_tokens") or 0)
+            _det = _um.get("input_token_details") or {}
+            _cached_tok += int(
+                (
+                    _det.get("cache_read")
+                    if isinstance(_det, dict)
+                    else getattr(_det, "cache_read", 0)
+                )
+                or 0
+            )
+        if _in_tok:
+            logger.info(
+                "[cache] turn: %d model call(s), %d/%d input tokens cached (%.0f%%)",
+                _calls,
+                _cached_tok,
+                _in_tok,
+                100.0 * _cached_tok / _in_tok,
+            )
+
         # Whether the itinerary was (re)built THIS turn. Only then does it need
         # re-enrichment -- a pure-question turn on an existing trip reuses already-enriched
         # day_cards, so we must NOT re-run the (paid) enrichment pass on it. Seeded from a

@@ -39,7 +39,6 @@ for f in \
   rate_limit.py \
   sse_state.py \
   validation_cache.py \
-  planner/plan_graph.py \
   middleware/session.py \
   tile_service/service.py \
   tile_service/provider_base.py \
@@ -93,8 +92,7 @@ if [[ -d "$SRC/prompts" ]]; then
     | while read -r src; do
       cp "$src" "$DEST/$(basename "$src")"
     done
-  # Keep only synthesizer + local_expert from specialists
-  copy_if_exists "$SRC/prompts/specialists/synthesizer.txt" "synthesizer_specialist.txt"
+  # Keep only local_expert from specialists (synthesizer.txt lives at prompts/ root, already copied above)
   copy_if_exists "$SRC/prompts/specialists/local_expert.txt" "local_expert_specialist.txt"
 else
   printf 'Skipping missing directory: %s\n' "$SRC/prompts" >&2

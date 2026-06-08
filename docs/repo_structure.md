@@ -128,7 +128,8 @@ backend/
 │   │   │   ├── feasibility_service.py # LLM-backed geographic feasibility checks
 │   │   │   ├── iata_resolver.py     # IATA airport code resolver (LLM-backed)
 │   │   │   ├── itinerary_adapter.py # Thin bridge: GraphState → ItineraryBuilder
-│   │   │   ├── section_builder.py   # Strategy section builders/fallbacks
+│   │   │   ├── section_builder.py   # Strategy section builders/fallbacks (incl. sort_sections_anchor_first; off the agent path)
+│   │   │   ├── suggestion_generator.py # LLM conversation+state-aware suggestion chips (deterministic chip_generator is the fallback)
 │   │   │   └── state_serde.py       # State serialization/deserialization
 │   │   │
 │   │   └── state/
@@ -230,7 +231,6 @@ backend/
 │   ├── curl_flow_validators.py           # Curl flow response validators
 │   ├── test_curl_flow_validators.py      # Curl flow validator tests
 │   ├── analyze_flow_logs.py               # Flow log analysis and regression checks
-│   ├── spike_agent_parallel.py            # Dev probe (not a unit test): checks live Gemini parallel tool-calling / interleaving for the agent loop
 │   ├── test_activity_browser.py          # Browse activities backend contract tests
 │   ├── test_activity_category_conflicts.py  # Shared partner-category conflict rule tests
 │   ├── test_activity_image_placeholder_mapping.py  # Activity image placeholder mapping tests
@@ -312,7 +312,6 @@ backend/
 │   ├── test_constraint_guard_merge.py # Constraint guard merge/dedup regression tests
 │   ├── test_graph_plan_utils.py       # Graph plan helper contract tests
 │   ├── test_itinerary_builder_bugs.py # ItineraryBuilder edge case regression tests (D3 filter, D4 cap)
-│   ├── test_logistics_scaling.py      # Logistics provider scaling + cascade tests
 │   ├── test_router_extraction.py      # Router extraction schema/logic tests
 │   ├── test_sse_state.py              # SSE connection state accounting tests
 │   ├── test_task_tracker.py           # Background task tracker lifecycle tests
@@ -325,6 +324,8 @@ backend/
 │   ├── test_planner_turn_context.py   # build_turn_context grounding/generic_fallback filtering tests
 │   ├── test_remove_all_activities.py  # remove-all-activities post-loop guarantee tests
 │   ├── test_unbookable_specialist_filter.py  # Unbookable-specialist drop predicate/policy tests
+│   ├── test_post_build_geocode_placed_blocks.py  # Post-build geocode/enrichment of placed day-card blocks tests
+│   ├── test_suggestion_generator.py   # LLM suggestion-chip generation + fallback/coercion tests
 │   └── db/
 │       ├── test_expand_itinerary_api.py
 │       ├── test_plan_document_api.py
@@ -737,10 +738,8 @@ frontend/
 │   └── rome-golden-path.spec.ts  # Golden-path E2E test for Rome trip flow
 │
 ├── __tests__/                  # Frontend tests
-│   ├── anti-fragmentation.test.tsx
 │   ├── chat-panel-layout.test.ts          # Chat panel layout helper tests
 │   ├── chat-suggestion-actions.test.ts
-│   ├── constraint-states.test.tsx
 │   ├── browse-activities-cache.test.ts
 │   ├── chat-suggestion-chips.test.tsx
 │   ├── documentStore.test.ts
@@ -758,7 +757,6 @@ frontend/
 │   ├── booking-planning-view.test.tsx  # BookingPlanningView section-toggle rendering tests
 │   ├── booking-summary.test.tsx        # Stage-3 booking-links summary coverage
 │   ├── logistics-block-sizing.test.tsx # Timeline logistics block thumbnail/CTA layout tests
-│   ├── plan-copy.test.tsx
 │   ├── plan-timeline-section.test.tsx    # PlanTimelineSection rendering tests
 │   ├── placeholders.test.ts
 │   ├── rich-block-renderer.test.tsx

@@ -1,6 +1,9 @@
 # Nomadic Monorepo
 
-A travel planning application with an AI-powered itinerary generator.
+A travel planning application whose itinerary generator is an AI agent: a
+LangChain `create_agent` tool-calling loop that decides which planning tools to
+run each turn (field extraction, specialist advice, tile search, itinerary
+build, validation). See [Architecture](#architecture).
 
 ## Tech Stack
 
@@ -18,13 +21,37 @@ A travel planning application with an AI-powered itinerary generator.
 - FastAPI
 - SQLAlchemy + asyncpg (async PostgreSQL)
 - Alembic (migrations)
-- LangGraph + LangChain (AI orchestration)
-- SpaCy (NLP)
-- Pydantic (validation)
+- LangChain `create_agent` + LangGraph (agentic tool-calling loop)
+- LLMs: OpenAI + Google Gemini (provider-routed via `llm_factory`; each step's model set by `*_MODEL` env vars)
+- Pydantic v2 (validation)
 
 **Infrastructure:**
 - PostgreSQL 16
 - Docker Compose
+
+## Architecture
+
+The planner is a single `create_agent` tool-calling loop — there is no
+deterministic coordinator DAG. A turn flows:
+
+```
+POST /api/graph_plan/stream
+  → agent_runner.run_agent_turn_streaming   # drives the create_agent loop
+      → the model selects tools:
+        extract_trip_fields · get_specialist_advice · get_local_intel
+        · search_tiles · build_itinerary · validate_plan
+      → terminal model turn streams the assistant reply
+  → coordinator._build_envelope()           # final state → SSE complete envelope
+```
+
+`PlanDocumentData` is the single source of truth for all trip state (persisted
+as JSON in the `plan_documents` table). For depth, see:
+
+- `CLAUDE.md` — working rules, file map, governance
+- `docs/plan_graph_analysis.md` — backend planner spec
+- `docs/ux_unified_architecture.md` — view states & rendering
+- `docs/data-contracts.md` — API routes, schemas, state store
+- `docs/design-system.md` — UI tokens
 
 ## Project Structure
 
@@ -33,19 +60,30 @@ nomadic/
 ├── frontend/           # Next.js app
 │   ├── app/            # App Router pages
 │   ├── components/     # React components (by feature)
-│   ├── hooks/          # Custom React hooks
-│   ├── lib/            # Utilities
-│   ├── state/          # Zustand stores
-│   └── types/          # TypeScript types
-├── backend/            # Python API
-│   ├── app/            # Main application
-│   │   ├── planner/    # Planning logic
-│   │   ├── services/   # Business services
-│   │   ├── tools/      # External tool integrations
-│   │   └── prompts/    # AI prompt templates
+│   ├── hooks/          # Custom React hooks (incl. useChatSse — SSE driver)
+│   ├── lib/            # API clients, design system, parsers
+│   ├── state/          # Zustand stores (documentStore is primary)
+│   └── types/          # TypeScript types (document.ts, plan-envelope.ts)
+├── backend/            # Python API (FastAPI)
+│   ├── app/
+│   │   ├── main.py        # App + all route handlers
+│   │   ├── streaming.py   # SSE / NDJSON generators
+│   │   ├── planner/       # The agentic loop
+│   │   │   ├── agent.py       # create_planner_agent()
+│   │   │   ├── middleware.py  # dynamic prompt + turn lifecycle
+│   │   │   ├── tools/         # model-callable tools
+│   │   │   ├── nodes/         # node logic the tools wrap
+│   │   │   ├── services/      # agent_runner, itinerary_builder, coordinator helpers
+│   │   │   ├── prompts/       # planner prompt builders
+│   │   │   ├── state/         # GraphState / TripPlan
+│   │   │   └── schemas/       # planner schemas
+│   │   ├── services/      # caching, spend guard, partner enrichment, unsplash
+│   │   ├── tile_service/  # Google Places provider
+│   │   ├── middleware/    # session + CSRF
+│   │   └── prompts/       # specialist .txt prompts
 │   ├── migrations/     # Alembic DB migrations
-│   └── tests/          # Test files
-├── docs/               # Documentation
+│   └── tests/          # pytest
+├── docs/               # Single-source-of-truth specs
 └── scripts/            # Utility scripts
 ```
 
@@ -85,51 +123,82 @@ docker compose --profile backend up --build db backend
 
 ## API Reference
 
-### Core Endpoints
+All routes are defined in `backend/app/main.py` (analytics routes in
+`app/analytics_routes.py`). The live OpenAPI spec is at `http://localhost:8000/openapi.json`.
+
+### Planning (the agent turn)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/graph_plan/stream` | POST | Run an agent turn; streams SSE (`token` / `partial` / `complete` / `error`) |
+
+### Plan document & itinerary editing
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/document` | GET | Fetch the current `PlanDocumentData` |
+| `/api/document` | PATCH | Patch trip inputs / settings |
+| `/api/expand-itinerary` | POST | Expand strategy into a day-by-day itinerary (NDJSON) |
+| `/api/document/fill-day` | POST | Add an activity to one day (targeted, no full rebuild) |
+| `/api/document/insert-activity-block` | POST | Insert an activity block |
+| `/api/document/remove-block` | POST | Remove a block |
+| `/api/document/apply-arrangement` | POST | Apply a day re-arrangement (drag/drop) |
+| `/api/document/validate-arrangement` | POST | Validate a proposed arrangement |
+| `/api/document/restore-snapshot` | POST | Undo — restore a prior snapshot |
+| `/api/document/tiles/{branch_id}` | POST | Add tiles to a branch |
+
+### Tiles, activities & enrichment
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/tiles/refresh` | POST | Refresh tiles |
+| `/api/tiles/click` | POST | Record a tile click (analytics) |
+| `/api/activities/browse` | POST | Browse the activity pool |
+| `/api/specialist/{section_id}/enrichment` | GET | Poll async specialist/local-expert enrichment |
+
+### Chat & session
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/chat` | GET | Get chat history |
+| `/api/chat/last` | DELETE | Delete the last message |
+| `/api/session/new` | POST | Start a fresh session |
+| `/api/session` | DELETE | Archive / reset session data |
+
+### Auth (Google OAuth) · trips · sharing
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/auth/google/url` | GET | Get the Google OAuth URL |
+| `/api/auth/google/callback` | POST | Complete OAuth |
+| `/api/auth/me` | GET | Current user |
+| `/api/auth/logout` | POST | Log out |
+| `/api/trips` | GET | List the user's saved trips |
+| `/api/trips/{trip_id}/resume` | POST | Resume a saved trip |
+| `/api/share` | POST | Create a shareable link |
+| `/api/shared/{slug}` | GET | Fetch a shared trip |
+| `/api/share/fork/{slug}` | POST | Fork a shared trip |
+
+### Utilities, media & analytics
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Health check |
-| `/api/graph_plan` | POST | Generate travel plan |
-| `/api/graph_plan/stream` | POST | Stream travel plan |
-| `/api/document` | GET | Get plan document |
-| `/api/document` | PATCH | Update plan document |
-| `/api/chat` | GET | Get chat history |
-| `/api/chat/last` | DELETE | Delete last message |
-
-### Session Management
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/session` | DELETE | Archive session data |
-
-### Tiles & Suggestions
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/tiles/click` | POST | Record tile click |
-| `/api/tiles/refresh` | POST | Refresh tiles |
-| `/api/suggestions/click` | POST | Record suggestion click |
-| `/api/document/tiles/{branch_id}` | POST | Add tiles to document |
-
-### Validation & Utilities
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
 | `/api/validate-trip-input` | POST | Validate trip input |
-| `/api/destination-image` | POST | Get destination image |
-| `/api/expand-itinerary` | POST | Expand itinerary details |
+| `/api/destination-image` | POST | Get a destination hero image |
+| `/api/media/google-places-photo` | GET | Signed Google Places photo proxy |
+| `/api/media/google-places-photo-url` | GET | Resolve a Places photo URL |
+| `/api/analytics/event` | POST | Record a funnel event |
 
-### Admin Endpoints
+### Admin (require `ADMIN_API_KEY`)
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/admin/clear-validation-cache` | POST | Clear validation caches |
-| `/api/admin/fresh-start` | POST | Reset planner state |
-| `/api/admin/graph-stats` | GET | Get graph statistics |
-| `/api/admin/planner` | GET | Get planner state |
-| `/api/admin/clear-all-checkpoints` | POST | Clear all checkpoints |
-| `/api/admin/clear-all-caches` | POST | Clear all caches |
+- **Stats (GET):** `/api/admin/cache-stats`, `graph-stats`, `planner`,
+  `places-telemetry`, `router-cache-stats`, `specialist-cache-stats`,
+  `tile-cache-stats`, `spend-guard-stats`
+- **Resets (POST):** `/api/admin/clear-all-caches`, `clear-l1-l2-caches`,
+  `clear-router-cache`, `clear-specialist-cache`, `clear-tile-cache`,
+  `clear-validation-cache`, `clear-spend-guard`, `clear-all-checkpoints`,
+  `fresh-start`
 
 ## Environment Setup
 
@@ -138,7 +207,11 @@ docker compose --profile backend up --build db backend
 ```bash
 DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/nomadic
 OPENAI_API_KEY=sk-...
-# See backend/.env.example for full list
+GOOGLE_API_KEY=...            # Gemini — LLMs are split across OpenAI + Gemini
+# Per-step models are configurable: ROUTER_MODEL, SPECIALIST_MODEL,
+# LOCAL_EXPERT_MODEL, GUARD_MODEL, SYNTHESIZER_PLANNING_MODEL, etc.
+# Also: GOOGLE_PLACES / VIATOR / AVIASALES keys, OAuth creds, ADMIN_API_KEY, spend-guard caps.
+# All env vars are read in app/config.py — that file is the authoritative list.
 ```
 
 ### Frontend (`frontend/.env.local`)
@@ -223,7 +296,7 @@ npm run format      # Prettier
 cd backend
 ruff check .        # Lint
 ruff check . --fix  # Auto-fix
-ruff format .       # Format (or: black app)
+ruff format .       # Format
 ```
 
 ### Pre-commit Hooks
@@ -233,7 +306,7 @@ pre-commit install              # Install hooks
 pre-commit run --all-files      # Run manually
 ```
 
-Configured hooks: `black`, `ruff`, `detect-secrets`, `trailing-whitespace`, `end-of-file-fixer`
+Configured hooks: `ruff`, `ruff-format`, `detect-secrets`, `detect-private-key`, `check-yaml`, `check-merge-conflict`, `trailing-whitespace`, `end-of-file-fixer`, and `ssot-check` (validates the `docs/` single-source-of-truth files)
 
 ## Coding Standards
 
@@ -248,7 +321,7 @@ Configured hooks: `black`, `ruff`, `detect-secrets`, `trailing-whitespace`, `end
 - Line length: 100 chars
 - Use type hints
 - Async functions for I/O operations
-- Follow ruff/black formatting
+- Follow ruff formatting (`ruff format`)
 
 ## Claude Code Setup
 

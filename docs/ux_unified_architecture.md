@@ -1053,14 +1053,7 @@ The Local Expert "Trip Overview" card serves as the right-panel anchor:
 - `middleware._merge_local_intel()` emits that section as a single-element `strategy_sections` delta.
 - The `_merge_strategy_sections` reducer (`state/agent_state.py`) upserts by `specialist_type` (right wins) and preserves existing list order — so `local_expert` is not re-sorted to the front.
 
-<!-- REVIEW: The legacy "local_expert is inserted at index 0 / remains the first
-     strategy card" invariant is no longer enforced. The agent-loop reducer
-     (_merge_strategy_sections) dedups by specialist_type but preserves
-     insertion order; section order therefore depends on tool-call order, which
-     the model decides. No frontend reordering exists either
-     (useStrategyStageOrchestration / PlanFullDensityView do not unshift/sort
-     local_expert to first). Team confirm whether the first-card ordering is
-     still an intended guarantee — if so, enforcement needs to be re-added. -->
+> **Note (verified):** The legacy "local_expert is inserted at index 0 / first strategy card" invariant is **not enforced on the agent path**. The reducer `_merge_strategy_sections` (`state/agent_state.py`) dedups by `specialist_type` (right wins) preserving insertion order; section order therefore follows tool-call order, which the model decides. `section_builder.sort_sections_anchor_first()` (anchor-first sort) still exists but is reached **only** via `upsert_section()`, whose only callers are the legacy GraphState node helpers `_merge_specialist_into_state` (`vertical_specialist.py`) and `_run_local_expert` (`local_expert.py`) — both off the agent loop (the `get_specialist_advice`/`get_local_intel` tools call `generate_specialist_output_llm()`/`build_local_expert_section` and merge via the reducer; `build_itinerary` appends its placeholder `local_expert` section to a local list, not via `upsert_section`). No frontend reordering exists either (`useStrategyStageOrchestration` / `PlanFullDensityView` do not unshift/sort `local_expert` to first).
 
 ### Invariants
 
@@ -2594,33 +2587,9 @@ When niche specialists run alongside Local Expert (see Section III.A), the UI re
 
 **Problem:** If LocalExpert fails or returns empty, the UI loses its context anchor (Destination/Dates/Travelers).
 
-<!-- REVIEW: `_format_result()` was removed with the coordinator DAG, and the
-     `strategy_general_anchor` Trip-Overview safety-net synthesis below has no
-     equivalent in the current agent-path backend (coordinator.py / middleware /
-     build_itinerary tool). build_itinerary only adds a placeholder local_expert
-     section when no activity tiles exist — a different mechanism. Team confirm
-     whether an anchor-card safety net still exists and where, or delete this. -->
+**Solution (current agent path):** The old DAG `_format_result()` synthesis (`strategy_general_anchor` inserted at index 0) was **removed with the coordinator DAG**. The current equivalent is in the `build_itinerary` tool: when there are no activity tiles, it adds a placeholder `local_expert` "Trip Overview" section via `section_builder.build_local_expert_section()` (`{destination} Trip Overview`, build_itinerary.py:100 / section_builder.py:257). Note this is a build-time anchor, not a per-turn safety net — and section order is not pinned to index 0 on the agent path (see [III.A](#iiia-local-expert-trip-dna-anchor)).
 
-**Solution:** In `_format_result()`, guarantee a Trip Overview section exists:
-
-```python
-# Safety net: If no anchor card exists, synthesize one
-anchor_types = {"general", "local_expert"}
-has_anchor = bool(anchor_types & {s.get("specialist_type") for s in strategy_sections})
-
-if not has_anchor and plan.destination:
-    # Synthesize Trip Overview from TripPlan data
-    anchor_section = {
-        "id": "strategy_general_anchor",
-        "specialist_type": "local_expert",
-        "title": f"{plan.destination} Trip Overview",
-        "trip_summary": {...},
-        "destination_gallery": [unsplash_images],
-    }
-    strategy_sections.insert(0, anchor_section)  # INDEX 0 = Trip DNA anchor
-```
-
-**Invariant:** Strategy sections list must ALWAYS contain at least one `general` or `local_expert` card if destination exists.
+**Invariant (weaker than legacy):** The build guarantees a `local_expert` Trip Overview card when a destination exists and no activity tiles were produced; it is not forced to be the first card.
 
 ### 9. Complete Strategy Section Schema
 

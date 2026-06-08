@@ -9,7 +9,8 @@ description: >
   run_agent_turn_streaming, agent_runner, _build_envelope, auto-build,
   FastAPI endpoints, tile service, caching, llm_factory,
   experience_generator, regen_strategy, iata_resolver, validation, debug_utils,
-  activity_browser, partner_enrichment, circuit_breaker, spend_guard,
+  activity_browser, partner_enrichment, suggestion chips, suggestion_generator,
+  unbookable-specialist policy, remove-all-activities, circuit_breaker, spend_guard,
   auth, oauth, sharing, shared trip, user accounts, or any file under backend/app/.
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
@@ -49,7 +50,7 @@ backend/app/planner/
                        TurnLifecycle) + langchain limit middleware (ModelCallLimit /
                        ToolCallLimit / ModelRetry); _TOOL_MERGERS
   coordinator.py     → Envelope-builder helper library (_build_envelope + closure)
-  chip_generator.py  → Suggestion chips for complete envelope
+  chip_generator.py  → Deterministic suggestion-chip fallback (LLM-primary chips: services/suggestion_generator.py)
   tools/             → 6 @tool wrappers: extract_trip_fields, get_specialist_advice,
                        search_tiles, get_local_intel, validate_plan, build_itinerary;
                        _parsing.py
@@ -59,6 +60,7 @@ backend/app/planner/
                        input_gate_config.py,
                        expert_constraints.py
   services/          → agent_runner.py (run_agent_turn_streaming SSE driver),
+                       suggestion_generator.py (LLM suggestion chips),
                        section_builder.py, state_serde.py,
                        itinerary_adapter.py, iata_resolver.py, admin_utils.py,
                        feasibility_service.py

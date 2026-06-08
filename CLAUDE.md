@@ -80,11 +80,9 @@ If a task requires touching BOTH zones, stop and confirm scope before proceeding
 
 These four docs override your assumptions. Read before generating code.
 
-<!-- REVIEW: plan_graph_analysis.md "Governs" cell still says "coordinator + nodes/services"; the coordinator DAG was removed (planner is now a create_agent tool loop). Left as-is because that sibling doc still uses coordinator framing (see the note under Agent Tools); reconcile once plan_graph_analysis.md is updated. -->
-
 | SSoT Doc                           | Governs                                | Rule                                                                  |
 | ---------------------------------- | -------------------------------------- | --------------------------------------------------------------------- |
-| `@docs/plan_graph_analysis.md`     | Backend architecture, coordinator + nodes/services | MUST verify plan against spec before writing planner code             |
+| `@docs/plan_graph_analysis.md`     | Backend architecture: `create_agent` loop, tools, nodes/services | MUST verify plan against spec before writing planner code             |
 | `@docs/design-system.md`           | UI styling, tokens, component patterns | ALL React components use these tokens — no invented Tailwind values   |
 | `@docs/ux_unified_architecture.md` | View states, rendering logic, UX flow  | Never swap renderers — `StrategyStageRenderer` adapts by data density |
 | `@docs/data-contracts.md`          | API routes, schemas, state store       | Check before modifying API endpoints, schemas, or state shape         |
@@ -261,7 +259,7 @@ frontend/.env.local → NEXT_PUBLIC_API_URL, NEXT_PUBLIC_MAPBOX_TOKEN, NEXT_PUBL
 backend/.env → DATABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY, ROUTER_MODEL, SPECIALIST_MODEL,
                SPECIALIST_FALLBACK_MODEL, LOCAL_EXPERT_MODEL, GUARD_MODEL,
                SYNTHESIZER_PLANNING_MODEL, EXPERIENCE_MODEL, IATA_RESOLVER_MODEL,
-               IATA_CACHE_TTL_HOURS, UNSPLASH_ACCESS_KEY, GOOGLE_MAPS_API_KEY,
+               SUGGESTIONS_MODEL, IATA_CACHE_TTL_HOURS, UNSPLASH_ACCESS_KEY, GOOGLE_MAPS_API_KEY,
                GOOGLE_MAPS_API_SECRET, VIATOR_API_KEY, VIATOR_ENABLED,
                GET_YOUR_GUIDE_API_KEY, GET_YOUR_GUIDE_ENABLED, AVIASALES_API_TOKEN,
                AVIASALES_ENABLED, BOOKING_AFFILIATE_AID, GOOGLE_OAUTH_CLIENT_ID,

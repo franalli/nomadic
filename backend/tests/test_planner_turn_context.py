@@ -126,3 +126,39 @@ def test_local_intel_summary_preserves_real_constraints():
     }
     payload = _json.loads(_summarize_local_intel_for_model(parsed))
     assert payload["safety_constraints"] == ["Typhoon season advisory"]
+
+
+# ---------------------------------------------------------------------------
+# Destination-switch directive (locked destination -> advise Reset)
+# ---------------------------------------------------------------------------
+
+
+def test_turn_context_injects_destination_switch_directive():
+    """When a switch was blocked, the context must steer the model to decline the
+    switch and tell the traveler to Reset -- naming both destinations."""
+    state = {
+        "trip_plan": {"destination": "Bali"},
+        "turn_meta": {"destination_switch_blocked": "Tokyo"},
+    }
+    ctx = build_turn_context(state)
+    assert "Tokyo" in ctx
+    assert "Bali" in ctx
+    assert "Reset" in ctx
+    # Must tell the model NOT to pretend it re-planned.
+    assert "cannot be changed" in ctx.lower() or "can't switch" in ctx.lower()
+
+
+def test_turn_context_no_switch_directive_without_flag():
+    state = {"trip_plan": {"destination": "Bali"}, "turn_meta": {}}
+    ctx = build_turn_context(state)
+    assert "use Reset" not in ctx
+
+
+def test_turn_context_no_switch_directive_when_flag_none():
+    """A None flag (the normal case) must not emit the directive."""
+    state = {
+        "trip_plan": {"destination": "Bali"},
+        "turn_meta": {"destination_switch_blocked": None},
+    }
+    ctx = build_turn_context(state)
+    assert "switch the destination" not in ctx

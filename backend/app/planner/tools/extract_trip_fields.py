@@ -78,6 +78,11 @@ class TripFieldsResult(BaseModel):
     multi_destination_detected: bool = False
     planning_intent: Optional[str] = None
     question_type: Optional[str] = None
+    # When a genuine destination SWITCH is requested on an already-committed trip,
+    # the switch is rejected (destination is locked to the current itinerary) and
+    # this carries the requested destination so the terminal model can advise the
+    # traveler to Reset and start a new trip. None on every other turn.
+    destination_switch_blocked: Optional[str] = None
 
     # Metadata
     fields_changed: List[str] = Field(default_factory=list)
@@ -338,6 +343,70 @@ async def extract_trip_fields(
         date_auto_adjustments=router_output.date_auto_adjustments,
         token_usage=token_usage,
     )
+
+    # 3b. The trip destination is LOCKED once a trip has one: switching it
+    # invalidates the entire plan, so it is NEVER applied mid-itinerary (a new
+    # destination is started via Reset). When the router extracts a destination that
+    # differs from the current one, there are two cases:
+    #   (a) a QUESTION or sub-locality mention -- e.g. "how would I get from the
+    #       airport to Canggu?" (question_type set and/or planning_intent="exploring",
+    #       "asking without committing"). Drop ONLY the destination (and any
+    #       co-extracted dates/duration, which describe that other place, not a change
+    #       to the current timeline); genuine current-trip refinements bundled in the
+    #       same message (e.g. "...and add diving") still apply. Without this,
+    #       _merge_trip_fields would read a stray place name as a destination change,
+    #       wipe the WHOLE plan, and the cleared day_cards would re-arm the post-loop
+    #       auto-build -- regenerating the trip on a question.
+    #   (b) a genuine SWITCH request -- e.g. "change to Tokyo, July 10-15" (a COMMIT:
+    #       the router tags planning_intent="modifying"/"ready" and no question_type,
+    #       since the taxonomy has no "change destination" topic). The ENTIRE message
+    #       is about the rejected destination, so NOTHING from it applies to the locked
+    #       trip -- not the bundled dates/budget/activities/removals/settings. Reset the
+    #       extraction to carry only intent + the ``destination_switch_blocked`` advisory
+    #       so the terminal model tells the traveler to Reset to start a new trip there.
+    # No existing destination -> first-time set is untouched. Geographic-knowledge-
+    # free: it uses only the router's own intent signals, never a hard-coded place list.
+    if (
+        current_destination
+        and result.destination
+        and result.destination.strip().lower() != current_destination.strip().lower()
+    ):
+        _requested = result.destination
+        _is_question_turn = bool(result.question_type) or result.planning_intent == "exploring"
+        if _is_question_turn:
+            result.destination = None
+            result.destination_iata = None
+            # Dates/duration in a question about another place are not a timeline edit.
+            result.start_date = None
+            result.end_date = None
+            result.duration_days = None
+            logger.info(
+                "[extract_trip_fields] Locked destination (question): dropped "
+                "extracted=%r (question_type=%r); trip stays %r",
+                _requested,
+                result.question_type,
+                current_destination,
+            )
+        else:
+            # Reject the whole pivot: rebuild a clean result carrying only intent +
+            # the switch advisory. _detect_changed_fields then reports no changes, so
+            # _merge_trip_fields applies nothing to the locked trip.
+            result = TripFieldsResult(
+                intent=result.intent,
+                confidence=result.confidence,
+                reasoning=result.reasoning,
+                question_type=result.question_type,
+                planning_intent=result.planning_intent,
+                destination_switch_blocked=_requested,
+                # Preserve cost telemetry; everything else is intentionally dropped.
+                token_usage=result.token_usage,
+            )
+            logger.info(
+                "[extract_trip_fields] Locked destination (switch blocked): rejected "
+                "pivot to %r and all bundled fields; trip stays %r",
+                _requested,
+                current_destination,
+            )
 
     # 4. Track which fields changed vs current state
     result.fields_changed = _detect_changed_fields(

@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from app.planner.nodes.router_extraction import (
     IntentClassification,
     RouterOutput,
+    _build_current_trip_context,
     _build_specialist_keyword_prompt,
     _clamp_date_str,
     _validate_extraction,
@@ -329,3 +330,47 @@ class TestBuildSpecialistKeywordPrompt:
         """'diving' is a known Tier 1 specialist — catches registry import regressions."""
         result = _build_specialist_keyword_prompt()
         assert "diving" in result
+
+
+# =============================================================================
+# _build_current_trip_context
+# =============================================================================
+
+
+class TestBuildCurrentTripContext:
+    """Context must always surface the current destination when set, so the
+    SUB-LOCALITY-vs-NEW-DESTINATION extraction rule can anchor on it -- even when
+    dates are not yet known (the prior implementation hid it on dateless trips)."""
+
+    def _state(self, **trip_plan_kwargs):
+        from app.planner.state.graph_state import GraphState, TripPlan
+
+        return GraphState(trip_plan=TripPlan(**trip_plan_kwargs), metadata={})
+
+    def test_destination_only_no_dates_still_shows_destination(self) -> None:
+        """GAP CLOSURE: destination set, dates absent -> destination still shown."""
+        ctx = _build_current_trip_context(self._state(destination="Bali"))
+        assert ctx == "Current trip: Bali"
+
+    def test_destination_and_dates_unchanged_shape(self) -> None:
+        """Backward-compat: with dates, the full range line is identical to before."""
+        ctx = _build_current_trip_context(
+            self._state(destination="Bali", start_date="2026-06-08", end_date="2026-06-17")
+        )
+        assert ctx == "Current trip: Bali, 2026-06-08 to 2026-06-17 (10 days)"
+
+    def test_partial_dates_omits_range(self) -> None:
+        """Only one date present -> no range appended, destination still shown."""
+        ctx = _build_current_trip_context(self._state(destination="Bali", start_date="2026-06-08"))
+        assert ctx == "Current trip: Bali"
+
+    def test_unparseable_dates_omit_range_but_keep_destination(self) -> None:
+        """Bad date strings must not blank the destination context."""
+        ctx = _build_current_trip_context(
+            self._state(destination="Bali", start_date="not-a-date", end_date="also-bad")
+        )
+        assert ctx == "Current trip: Bali"
+
+    def test_no_destination_returns_empty(self) -> None:
+        """No destination -> empty context (first-time extraction is unanchored)."""
+        assert _build_current_trip_context(self._state()) == ""

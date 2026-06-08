@@ -218,6 +218,8 @@ Notable non-secret settings (beyond standard DB/API keys):
 | `synthesizer_planning_model`     | `gemini-2.5-flash`   | `SYNTHESIZER_PLANNING_MODEL`   | Upgraded planning model selected by `ModelSelectionMiddleware` for complex agent turns (bootstrap first response or high tool-call density) |
 | `experience_model`               | `gemini-2.5-flash`   | `EXPERIENCE_MODEL`             | LLM for Tier 2 activity tile generation (experience_generator)|
 | `iata_resolver_model`            | `gemini-2.5-flash`   | `IATA_RESOLVER_MODEL`          | LLM for airport IATA code resolution                        |
+| `suggestions_model`              | `""` → `router_model` | `SUGGESTIONS_MODEL`           | LLM for `suggestion_generator` conversation+state-aware chips; empty defaults to `router_model` via a validator |
+| `suggestions_timeout_s`          | `4.0`                | `SUGGESTIONS_TIMEOUT_S`        | Wait-for bound (seconds) on the concurrent suggestion-chip LLM call before `_build_envelope` falls back to deterministic chips |
 | `use_google_places_provider`     | false                | `USE_GOOGLE_PLACES_PROVIDER`   | Feature flag: enable Google Places for hotels and activities |
 | `google_places_photos_enabled`   | true                 | `GOOGLE_PLACES_PHOTOS_ENABLED` | Feature flag: enable Google Places photo signing/proxy endpoints |
 | `google_places_enrichment_enabled` | true               | `GOOGLE_PLACES_ENRICHMENT_ENABLED` | Kill switch: disable all Google Places enrichment calls |

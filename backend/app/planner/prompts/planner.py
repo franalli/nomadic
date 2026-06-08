@@ -270,6 +270,23 @@ def build_turn_context(state: dict[str, Any]) -> str:
             "activities were removed -- never claim to have added or kept any activity."
         )
 
+    # Destination-switch directive: the traveler asked to change the trip to a
+    # different destination, but the destination is LOCKED to the current itinerary
+    # (switching would invalidate the whole plan). The switch was NOT applied -- the
+    # trip stays put. Steer the model to decline the switch and point the traveler to
+    # Reset, instead of pretending it re-planned for the new place.
+    switch_to = turn_meta.get("destination_switch_blocked") if isinstance(turn_meta, dict) else None
+    if switch_to:
+        current_dest = (state.get("trip_plan", {}) or {}).get("destination") or "the current trip"
+        blocks.append(
+            f"TURN DIRECTIVE: The traveler asked to switch the destination to {switch_to}. The "
+            f"destination of an existing itinerary CANNOT be changed -- it is locked to "
+            f"{current_dest}. Do NOT call any tool to plan, search, or build for {switch_to}, and "
+            f"do NOT claim you changed the destination or re-planned. Your reply must briefly "
+            f"explain that you can't switch destinations on an existing trip and tell them to use "
+            f"Reset (start over) to plan a new trip to {switch_to}. Keep the {current_dest} plan intact."
+        )
+
     return "\n\n".join(blocks)
 
 

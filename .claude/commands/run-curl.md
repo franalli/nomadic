@@ -75,7 +75,7 @@ for every flagged N in 1..28.
 If the summary report is incomplete, review all backend traces for N=1..28.
 
 For each reviewed flow, analyze the FULL trace for issues the regex can't catch. You understand
-the coordinator architecture (classify → plan_turn → execute steps → build_envelope).
+the agent-loop architecture (create_agent tool loop → model-selected tools → post-loop reconcile → _build_envelope).
 Look for:
 
 - Tile coverage adequacy: Does `Tile scaling: trip=Nd, free=Nd, tiles/cat=N` make sense?

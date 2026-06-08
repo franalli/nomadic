@@ -7,13 +7,14 @@ Map each changed file to its affected SSoT doc(s):
 | Changed File Pattern                             | Update Target                                                                        |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------ |
 | `backend/app/planner/nodes/*`                    | `docs/plan_graph_analysis.md` (node details, routing logic)                          |
-| `backend/app/planner/{chip_generator.py,conversationalist.py,coordinator.py}` | `docs/plan_graph_analysis.md` (coordinator flow, response/chip pipeline)             |
+| `backend/app/planner/{chip_generator.py,coordinator.py,agent.py,middleware.py}` | `docs/plan_graph_analysis.md` (agent loop, envelope/chip pipeline, middleware)       |
+| `backend/app/planner/services/{agent_runner.py,suggestion_generator.py}` | `docs/plan_graph_analysis.md` (turn driver, post-loop sequence, suggestion chips)   |
 | `backend/app/planner/specialist_registry.py`     | `docs/plan_graph_analysis.md` (specialist domain knowledge, constraint validation)   |
 | `backend/app/planner/state/graph_state.py`       | `docs/data-contracts.md` (core schema reference, enums, graph state shape)           |
 | `backend/app/planner/state/typed_meta.py`        | `docs/data-contracts.md` (state shape)                                               |
 | `backend/app/planner/services/*`                 | `docs/plan_graph_analysis.md` (itinerary builder phases, response envelope, caching) |
 | `backend/app/planner/schemas/*`                  | `docs/plan_graph_analysis.md` (coordinator protocol schemas and execution contracts)  |
-| `backend/app/plan_graph.py`                      | `docs/plan_graph_analysis.md` (graph definition, edge routing, node registration)    |
+| `backend/app/planner/agent.py`                   | `docs/plan_graph_analysis.md` (create_agent factory, tool set, middleware stack)     |
 | `backend/app/planner/cache_access.py`            | `docs/plan_graph_analysis.md` (planner cache handles, cache access patterns)         |
 | `backend/app/planner/hashing.py`                 | `docs/plan_graph_analysis.md` (cache key construction, hashing strategy)             |
 | `backend/app/planner/llm_factory.py`             | `docs/plan_graph_analysis.md` (model routing, LLM config, provider detection)        |

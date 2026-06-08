@@ -412,6 +412,15 @@ Extract ANY trip-related fields mentioned:
   - MULTI-DESTINATION: If user mentions MULTIPLE separate destinations,
     extract ONLY the first as destination. Set multi_destination_detected: true.
     Do NOT flag compound sovereign state names (e.g. "Trinidad and Tobago").
+  - SUB-LOCALITY vs. NEW DESTINATION: When the current trip context already lists
+    a destination, do NOT set destination if the place named is a neighborhood,
+    town, district, beach, or area WITHIN that destination, or if the user is just
+    asking a question (how to get around, where to stay/go). The trip destination
+    is UNCHANGED in those cases — leave destination null and set question_type
+    instead. Example: trip is "Bali" and the user asks "how do I get from the
+    airport to Canggu?" → destination stays null (Canggu is in Bali). Only set
+    destination when the user clearly wants a DIFFERENT city/region than the
+    current trip.
 - **origin**: Same normalization rules as destination
 - **origin_iata**: Leave null — IATA resolution is handled downstream
 - **destination_iata**: Leave null — IATA resolution is handled downstream
@@ -849,19 +858,30 @@ def _validate_extraction(extracted: dict, today_date: str, user_message: str = "
 
 
 def _build_current_trip_context(state: "GraphState") -> str:
-    """Build prompt context used for relative-date extraction."""
+    """Build prompt context for extraction.
+
+    Always surfaces the current destination when one is set -- so the
+    SUB-LOCALITY-vs-NEW-DESTINATION rule can anchor on it (a question naming a
+    town/neighborhood inside the current trip must not be read as a destination
+    change). The date range (needed for relative-date math like "extend by 5
+    days") is appended only when both ends are present and parseable, and current
+    activities only when known. Previously this returned "" whenever dates were
+    missing, hiding the destination from the router on dateless trips.
+    """
     tp = state.trip_plan
-    if not tp or not tp.destination or not tp.start_date or not tp.end_date:
+    if not tp or not tp.destination:
         return ""
 
-    try:
-        start = datetime.strptime(tp.start_date, "%Y-%m-%d")
-        end = datetime.strptime(tp.end_date, "%Y-%m-%d")
-    except ValueError:
-        return ""
+    context = f"Current trip: {tp.destination}"
 
-    duration = (end - start).days + 1
-    context = f"Current trip: {tp.destination}, {tp.start_date} to {tp.end_date} ({duration} days)"
+    if tp.start_date and tp.end_date:
+        try:
+            start = datetime.strptime(tp.start_date, "%Y-%m-%d")
+            end = datetime.strptime(tp.end_date, "%Y-%m-%d")
+            duration = (end - start).days + 1
+            context += f", {tp.start_date} to {tp.end_date} ({duration} days)"
+        except ValueError:
+            pass
 
     # Include current activities so LLM can infer removal from implicit switch language
     categories = (

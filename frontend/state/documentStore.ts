@@ -1929,8 +1929,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const currentDestination = currentDoc?.trip_inputs?.destination;
     const incomingDestination = response.document.trip_inputs?.destination;
 
-    if (currentDestination && incomingDestination &&
-        currentDestination.toLowerCase().trim() !== incomingDestination.toLowerCase().trim()) {
+    // When the lock fires, the response's PLAN CONTENT was built for a REJECTED
+    // destination and must NOT overwrite the current plan (the label is already
+    // preserved below). This boolean drives content-preservation at the set() site.
+    const destinationLockBlocked = !!(
+      currentDestination &&
+      incomingDestination &&
+      currentDestination.toLowerCase().trim() !== incomingDestination.toLowerCase().trim()
+    );
+
+    if (destinationLockBlocked) {
       debugLog(
         `[documentStore.setFromPlanResponse] 🔒 BLOCKED destination change: "${currentDestination}" → "${incomingDestination}" (destination locked once set)`
       );
@@ -2080,13 +2088,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (currentDoc?.trip_inputs && _jsonStableEqual(currentDoc.trip_inputs, mergedTripInputs)) {
       mergedTripInputs = currentDoc.trip_inputs;
     }
+    // Destination lock: the foreign response's trip_inputs (dates/duration/settings)
+    // were computed for a REJECTED destination. Preserve the current trip_inputs
+    // wholesale so the dates stay consistent with the preserved plan content --
+    // otherwise the lock keeps current day_cards but adopts the foreign date range,
+    // a fresh dates/content mismatch. (destination itself was already forced above.)
+    if (destinationLockBlocked && currentDoc?.trip_inputs) {
+      mergedTripInputs = currentDoc.trip_inputs;
+    }
 
     // If update is from planner, detect which fields changed
     let newLLMUpdatedFields = llmUpdatedFields;
     if (response.updated_by === 'planner') {
+      // When the destination lock fired, the applied trip_inputs were preserved
+      // wholesale (mergedTripInputs === currentDoc.trip_inputs), so compare against
+      // that — not the foreign response — to avoid a spurious date-change echo for
+      // dates that were rejected and never applied.
       const changedFields = detectChangedFields(
         currentDoc?.trip_inputs,
-        response.document.trip_inputs
+        destinationLockBlocked ? mergedTripInputs : response.document.trip_inputs
       );
       if (changedFields.length > 0) {
         // Add newly changed fields to the existing set
@@ -2325,17 +2345,50 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       debugLog(`[documentStore.setFromPlanResponse] 📝 Strategy sections: PRESERVED content_added (${mergedSections.length} sections)`);
     }
 
+    if (destinationLockBlocked) {
+      debugLog(
+        `[documentStore.setFromPlanResponse] 🔒 Plan content PRESERVED (destination locked): tiles/day_cards/strategy_sections kept from current plan; foreign content discarded`
+      );
+    }
+
     set({
       version: response.version,
       updatedBy: response.updated_by,
       updatedAt: response.updated_at,
       document: sanitizeDocumentImages({
         ...response.document,
-        plan_view_state: finalViewState,
-        tiles: mergedTiles,
         trip_inputs: mergedTripInputs,
-        day_cards: finalDayCards,
-        strategy_sections: finalStrategySections,
+        // Destination lock decided ONCE: when it fires, the response's plan content
+        // belongs to a REJECTED destination, so preserve the current plan wholesale
+        // (the label is already preserved in mergedTripInputs). Otherwise take the
+        // computed/merged values. Conversational fields (suggestions, ack, chat)
+        // still flow via ...response.document either way. NOTE: this path spreads
+        // ...response.document as the base, so the locked branch must re-inject each
+        // destination-scoped field from currentDoc or it leaks the foreign data.
+        ...(destinationLockBlocked
+          ? {
+              itinerary_overview: currentDoc?.itinerary_overview,
+              itinerary_assumptions: currentDoc?.itinerary_assumptions,
+              open_decisions: currentDoc?.open_decisions,
+              destination_card: currentDoc?.destination_card,
+              executed_strategy_topics: currentDoc?.executed_strategy_topics,
+              pending_strategy_topics: currentDoc?.pending_strategy_topics,
+              constraints_validated: currentDoc?.constraints_validated,
+              constraint_violations: currentDoc?.constraint_violations,
+              // branches is required, so fall back to the response value only if we have none yet.
+              branches: currentDoc?.branches ?? response.document.branches,
+              user_pinned_tiles: currentDoc?.user_pinned_tiles,
+              plan_view_state: prevViewState ?? finalViewState,
+              tiles: currentDoc?.tiles ?? {},
+              day_cards: currentDayCards,
+              strategy_sections: currentSections,
+            }
+          : {
+              plan_view_state: finalViewState,
+              tiles: mergedTiles,
+              day_cards: finalDayCards,
+              strategy_sections: finalStrategySections,
+            }),
       }),
       selectedBranchId:
         get().selectedBranchId ||
@@ -2360,7 +2413,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ...(response.document.day_cards !== undefined && {
         _partialVersion: Date.now(),
       }),
-      ...(response.document.browseable_activities !== undefined && {
+      // Browseable activities are destination-scoped — discard foreign ones when locked.
+      ...(!destinationLockBlocked && response.document.browseable_activities !== undefined && {
         browseableActivities: response.document.browseable_activities,
       }),
     });
@@ -2454,8 +2508,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const currentDestination = currentDoc.trip_inputs?.destination;
     const incomingDestination = envelope.trip_inputs?.destination;
 
-    if (currentDestination && incomingDestination &&
-        currentDestination.toLowerCase().trim() !== incomingDestination.toLowerCase().trim()) {
+    // When the lock fires, the envelope's PLAN CONTENT was built for a REJECTED
+    // destination and must NOT overwrite the current plan. This boolean drives
+    // content-preservation just before updatedDoc is constructed.
+    const destinationLockBlocked = !!(
+      currentDestination &&
+      incomingDestination &&
+      currentDestination.toLowerCase().trim() !== incomingDestination.toLowerCase().trim()
+    );
+
+    if (destinationLockBlocked) {
       explicitDebugLog(
         `[documentStore.mergeEnvelope] 🔒 BLOCKED destination change: "${currentDestination}" → "${incomingDestination}" (destination locked once set)`
       );
@@ -2539,7 +2601,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       hasDestination
     );
 
-    const finalViewState = wouldDowngrade ? prevViewState : (newViewState ?? prevViewState);
+    const finalViewState = (wouldDowngrade || destinationLockBlocked)
+      ? prevViewState
+      : (newViewState ?? prevViewState);
 
     if (wouldDowngrade) {
       explicitDebugLog(`[documentStore.mergeEnvelope] 🛡️ Blocked view state downgrade: ${prevViewState} → ${newViewState} (day_cards exist: ${currentDayCards.length})`);
@@ -2672,15 +2736,45 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       explicitDebugLog('[documentStore.mergeEnvelope] 🚫 Activities suppressed in day_cards (activities off or no categories)');
     }
 
+    // ============================================================
+    // DESTINATION LOCK: PRESERVE current plan content
+    // ============================================================
+    // The envelope's plan content belongs to a REJECTED destination. Force the
+    // tile/section/day_card merge to PRESERVE current values. This MUST run after
+    // the activity-suppress block above, otherwise foreign categories/booking_types
+    // would strip activities out of the preserved (current-destination) day_cards.
+    // - undefined for tiles/sections => the conditional spread below is skipped,
+    //   so they fall through from ...currentDoc (preserved).
+    // - dayCardsToMerge = currentDayCards explicitly preserves the existing cards.
+    if (destinationLockBlocked) {
+      tilesToMerge = undefined;
+      sectionsToMerge = undefined;
+      dayCardsToMerge = currentDayCards;
+      // Reject the foreign trip_inputs too (it carries dates/duration/settings
+      // computed for the rejected destination). undefined => the trip_inputs spread
+      // below is skipped, so it falls through from ...currentDoc (preserved) and the
+      // dates stay consistent with the preserved content. (destination was already
+      // stripped from the incoming envelope above.)
+      mergedEnvelopeTripInputs = undefined;
+      // Content is fully preserved — don't flash a regen overlay even if the
+      // rejected envelope happened to carry different (foreign) dates.
+      nextIsRegenerating = get().isRegenerating;
+      explicitDebugLog(
+        '[documentStore.mergeEnvelope] 🔒 Plan content PRESERVED (destination locked): tiles/day_cards/strategy_sections/trip_inputs kept from current plan; foreign content discarded'
+      );
+    }
+
     const updatedDoc: PlanDocumentData = {
       ...currentDoc,
       // Plan view state fields (use guarded finalViewState)
       ...(finalViewState !== undefined && { plan_view_state: finalViewState }),
       ...(sectionsToMerge !== undefined && { strategy_sections: sectionsToMerge }),
-      ...(envelope.open_decisions !== undefined && { open_decisions: envelope.open_decisions }),
-      ...(envelope.itinerary_overview !== undefined && { itinerary_overview: envelope.itinerary_overview }),
+      // Foreign-destination plan overlays are discarded when the lock fires; they
+      // fall through from ...currentDoc (preserved) instead of being re-applied.
+      ...(!destinationLockBlocked && envelope.open_decisions !== undefined && { open_decisions: envelope.open_decisions }),
+      ...(!destinationLockBlocked && envelope.itinerary_overview !== undefined && { itinerary_overview: envelope.itinerary_overview }),
       ...(dayCardsToMerge !== undefined && { day_cards: dayCardsToMerge }),
-      ...(envelope.itinerary_assumptions !== undefined && { itinerary_assumptions: envelope.itinerary_assumptions }),
+      ...(!destinationLockBlocked && envelope.itinerary_assumptions !== undefined && { itinerary_assumptions: envelope.itinerary_assumptions }),
       ...(envelope.needs_refresh !== undefined && { needs_refresh: envelope.needs_refresh }),
       ...(envelope.can_expand_to_itinerary !== undefined && { can_expand_to_itinerary: envelope.can_expand_to_itinerary }),
       // Tiles: Apply computed merge strategy
@@ -2690,10 +2784,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         trip_inputs: mergedEnvelopeTripInputs,
       }),
       // Constraint validation receipts for Trip DNA bar badges
-      ...(envelope.constraints_validated !== undefined && {
+      ...(!destinationLockBlocked && envelope.constraints_validated !== undefined && {
         constraints_validated: envelope.constraints_validated,
       }),
-      ...(envelope.constraint_violations !== undefined && {
+      ...(!destinationLockBlocked && envelope.constraint_violations !== undefined && {
         constraint_violations: envelope.constraint_violations,
       }),
     };
@@ -2721,7 +2815,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         _specialistPreview: null,
         _partialVersion: Date.now(),
       }),
-      ...(envelope.browseable_activities !== undefined && {
+      // Browseable activities are destination-scoped — discard foreign ones when locked.
+      ...(!destinationLockBlocked && envelope.browseable_activities !== undefined && {
         browseableActivities: envelope.browseable_activities,
       }),
     });

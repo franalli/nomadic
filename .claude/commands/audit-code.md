@@ -26,7 +26,7 @@ Then manually scan for unused functions. For each Python file under `backend/app
 
 - Grep for each function name across the entire backend to find callers
 - If a function has ZERO callers and is NOT a LangGraph node function, NOT an endpoint handler, NOT an `__init__.py` export, and NOT a Pydantic validator — it's dead code. Report it.
-- Do NOT flag: node functions registered in `plan_graph.py`, FastAPI route handlers, Alembic migration functions, pytest fixtures, `__all__` exports.
+- Do NOT flag: the 6 `@tool` wrappers registered in `agent.py` (and node/library functions reached via tools), FastAPI route handlers, Alembic migration functions, pytest fixtures, `__all__` exports.
 
 ```bash
 # Find function definitions
