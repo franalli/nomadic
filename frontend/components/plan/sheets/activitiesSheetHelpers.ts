@@ -1,9 +1,11 @@
 import type { LucideIcon } from 'lucide-react';
 import { Leaf, Sun, Zap } from 'lucide-react';
 
+import {
+  isBadgedActivityBlock,
+  resolveActivityCategory,
+} from '@/components/plan/timeline/blocks/ActivityCardMeta.helpers';
 import type { DayCard } from '@/types/plan-envelope';
-
-import { inferConstraintCategories, resolveBlockCategory } from '../tripSummaryUtils';
 
 // Activity categories -- flat list, no visual distinction between tiers.
 // Tier 1 (specialist) vs Tier 2 (experience) is a backend implementation detail.
@@ -14,6 +16,8 @@ export const ALL_CATEGORIES = [
   { value: 'cycling', label: 'Cycling', icon: '\u{1F6B4}' },
   { value: 'sailing', label: 'Sailing', icon: '\u26F5' },
   { value: 'surfing', label: 'Surfing', icon: '\u{1F3C4}' },
+  { value: 'climbing', label: 'Climbing', icon: '\u{1F9D7}' },
+  { value: 'wildlife_safari', label: 'Wildlife Safari', icon: '\u{1F981}' },
   { value: 'cooking', label: 'Cooking', icon: '\u{1F373}' },
   { value: 'yoga', label: 'Yoga', icon: '\u{1F9D8}' },
   { value: 'cultural', label: 'Cultural', icon: '\u{1F3DB}\uFE0F' },
@@ -23,6 +27,10 @@ export const ALL_CATEGORIES = [
   { value: 'beach', label: 'Beach', icon: '\u{1F3D6}\uFE0F' },
   { value: 'shopping', label: 'Shopping', icon: '\u{1F6CD}\uFE0F' },
   { value: 'photography', label: 'Photography', icon: '\u{1F4F8}' },
+  { value: 'food', label: 'Food', icon: '\u{1F374}' },
+  { value: 'nature', label: 'Nature', icon: '\u{1F333}' },
+  { value: 'spa', label: 'Spa', icon: '\u{1F486}' },
+  { value: 'adventure', label: 'Adventure', icon: '\u{1F3A2}' },
 ];
 
 export const PACE_OPTIONS: readonly { value: number; label: string; icon: LucideIcon }[] = [
@@ -31,20 +39,43 @@ export const PACE_OPTIONS: readonly { value: number; label: string; icon: Lucide
   { value: 3, label: 'Packed', icon: Zap },
 ] as const;
 
+// Mirror the itinerary: use the SAME resolver the day-card category badges use
+// (resolveActivityCategory). The inferred set therefore equals exactly the set of
+// category badges visible on the day cards. Filtered against ALL_CATEGORIES so the
+// modal can only show categories it can represent as chips.
 export function inferCategoriesFromDayCards(dayCards: DayCard[] | undefined): string[] {
   if (!dayCards || dayCards.length === 0) return [];
   const allowed = new Set(ALL_CATEGORIES.map((c) => c.value));
   const inferred = new Set<string>();
   dayCards.forEach((card) => {
     card.blocks?.forEach((block) => {
-      const category = resolveBlockCategory(block);
-      if (category && allowed.has(category)) inferred.add(category);
-      inferConstraintCategories(block).forEach((c) => {
-        if (allowed.has(c)) inferred.add(c);
-      });
+      if (!isBadgedActivityBlock(block)) return;
+      const key = resolveActivityCategory(block)?.key;
+      if (key && allowed.has(key)) inferred.add(key);
     });
   });
   return Array.from(inferred);
+}
+
+// Categories present on the itinerary that the modal CANNOT represent as a chip
+// (not in ALL_CATEGORIES) -- e.g. open-ended Tier-2 experience keys the backend
+// emits like 'boating', 'kayaking', 'zipline', 'snorkeling'. These must be
+// preserved through a no-op Save: otherwise mirroring seeds a category filter
+// that omits them and the next rebuild drops them. Used by buildSavePayload.
+export function inferUnrepresentableCategoriesFromDayCards(
+  dayCards: DayCard[] | undefined
+): string[] {
+  if (!dayCards || dayCards.length === 0) return [];
+  const allowed = new Set(ALL_CATEGORIES.map((c) => c.value));
+  const unrepresentable = new Set<string>();
+  dayCards.forEach((card) => {
+    card.blocks?.forEach((block) => {
+      if (!isBadgedActivityBlock(block)) return;
+      const key = resolveActivityCategory(block)?.key;
+      if (key && !allowed.has(key)) unrepresentable.add(key);
+    });
+  });
+  return Array.from(unrepresentable);
 }
 
 export function inferDayPreferencesFromDayCards(dayCards: DayCard[] | undefined): Record<string, number> {
@@ -54,18 +85,12 @@ export function inferDayPreferencesFromDayCards(dayCards: DayCard[] | undefined)
 
   dayCards.forEach((card) => {
     card.blocks?.forEach((block) => {
-      const category = resolveBlockCategory(block);
-      if (category && allowed.has(category)) {
-        const days = categoryToDays.get(category) ?? new Set<number>();
-        days.add(card.day_number);
-        categoryToDays.set(category, days);
-      }
-      inferConstraintCategories(block).forEach((constraintCategory) => {
-        if (!allowed.has(constraintCategory)) return;
-        const days = categoryToDays.get(constraintCategory) ?? new Set<number>();
-        days.add(card.day_number);
-        categoryToDays.set(constraintCategory, days);
-      });
+      if (!isBadgedActivityBlock(block)) return;
+      const key = resolveActivityCategory(block)?.key;
+      if (!key || !allowed.has(key)) return;
+      const days = categoryToDays.get(key) ?? new Set<number>();
+      days.add(card.day_number);
+      categoryToDays.set(key, days);
     });
   });
 

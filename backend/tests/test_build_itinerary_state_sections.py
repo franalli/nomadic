@@ -360,6 +360,105 @@ async def test_merge_never_resurrects_removed_tile() -> None:
         assert block.get("summary") != REMOVED_TITLE
 
 
+async def test_one_day_trip_returns_human_readable_error() -> None:
+    """Bug 2 (graceful 1-day handling): a sub-2-day trip (start_date ==
+    end_date) makes ItineraryBuilder.build() return success=False with the terse
+    sentinel ``TRIP_TOO_SHORT``. The tool must surface success=False AND a
+    non-empty, human-readable ``error`` that mentions the 2-day minimum -- not
+    the raw sentinel -- so the agent loop can explain the problem and the
+    TurnLifecycle middleware preserves existing day_cards instead of wiping them.
+    """
+    state = _bonaire_state()
+    state["trip_plan"]["start_date"] = "2026-07-04"
+    state["trip_plan"]["end_date"] = "2026-07-04"  # 1-day trip
+
+    result = await build_itinerary.ainvoke(
+        {
+            "destination": "Bonaire",
+            "start_date": "2026-07-04",
+            "end_date": "2026-07-04",
+            "tiles_json": "{}",
+            "state": state,
+        }
+    )
+
+    assert isinstance(result, dict)
+    assert result["success"] is False
+
+    error_msg = result.get("error")
+    assert isinstance(error_msg, str) and error_msg.strip(), (
+        "1-day trip must surface a non-empty human-readable error"
+    )
+    # Human-readable, not the raw sentinel.
+    assert error_msg != "TRIP_TOO_SHORT"
+    assert "TRIP_TOO_SHORT" not in error_msg
+    # Mentions the 2-day minimum so the model can guide the user.
+    lowered = error_msg.lower()
+    assert "2 day" in lowered or "at least 2" in lowered
+    assert "extend" in lowered or "at least one day" in lowered
+
+    # Happy-path keys are still present (middleware reads builder metadata).
+    for key in ("day_cards", "conflicts", "activities_placed", "activities_dropped"):
+        assert key in result
+
+
+async def test_conflict_with_partial_schedule_is_not_flagged_as_error(monkeypatch) -> None:
+    """Bug 2 gate regression: the builder's CONSTRAINT_CONFLICT path returns
+    success=False but WITH a populated partial schedule (itinerary_builder ~801).
+
+    The tool must surface an ``error`` ONLY when there are no usable day_cards.
+    For a conflict (non-empty day_cards) it must NOT set ``error`` -- otherwise
+    TurnLifecycleMiddleware treats it as a tool error and skips _merge_itinerary,
+    dropping the partial schedule + conflicts and never computing the
+    S3_PARTIAL_CONFLICT view-state.
+    """
+    from types import SimpleNamespace
+
+    from app.services.itinerary_builder import ItineraryBuilder
+
+    class _FakeCard:
+        def __init__(self, day: int) -> None:
+            self._day = day
+
+        def model_dump(self) -> Dict[str, Any]:
+            return {"day_number": self._day, "blocks": [{"title": "Partial activity"}]}
+
+    class _FakeConflict:
+        def model_dump(self) -> Dict[str, Any]:
+            return {"code": "ALTITUDE_AFTER_DIVE", "severity": "blocking"}
+
+    fake_result = SimpleNamespace(
+        success=False,
+        error="CONSTRAINT_CONFLICT",
+        day_cards=[_FakeCard(1), _FakeCard(2)],
+        conflicts=[_FakeConflict()],
+        total_activities_input=2,
+        total_activities_placed=2,
+        warnings=[],
+        overview=None,
+        assumptions=None,
+    )
+
+    monkeypatch.setattr(ItineraryBuilder, "build", lambda self, input_data: fake_result)
+
+    result = await build_itinerary.ainvoke(
+        {
+            "destination": "Bonaire",
+            "start_date": "2026-07-04",
+            "end_date": "2026-07-11",
+            "tiles_json": "{}",
+            "state": _bonaire_state(),
+        }
+    )
+
+    assert result["success"] is False
+    # Partial schedule + conflicts preserved so the merger can surface them.
+    assert len(result["day_cards"]) == 2
+    assert len(result["conflicts"]) == 1
+    # CRITICAL: no 'error' key -> not treated as a tool error -> still merges.
+    assert "error" not in result
+
+
 async def test_state_only_injection_reaches_tool_body() -> None:
     """Guard test: with tiles_json='{}' and state-only, the injected specialist
     tiles + real sections must still place activities. If this fails, the

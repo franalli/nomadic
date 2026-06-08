@@ -41,14 +41,19 @@ export function normalizeSettingDayPreferences(
 
 /**
  * Derive the effective initial categories to show when the sheet opens.
- * If saved categories exist, use them. Otherwise, if the user never explicitly
- * saved, fall back to inferred categories from day cards.
+ *
+ * When an itinerary exists (inferredCategories non-empty), MIRROR it: open the
+ * modal showing exactly the category badges on the day cards. Only when there is
+ * no itinerary do we fall back to saved settings (and, if the user never
+ * explicitly saved, to the empty inferred set — preserving the no-itinerary
+ * behavior).
  */
 export function deriveEffectiveInitialCategories(
   normalizedSettingCategories: string[],
   hasExplicitSettings: boolean,
   inferredCategories: string[]
 ): string[] {
+  if (inferredCategories.length > 0) return inferredCategories;
   return normalizedSettingCategories.length > 0
     ? normalizedSettingCategories
     : (hasExplicitSettings ? normalizedSettingCategories : inferredCategories);
@@ -83,7 +88,8 @@ export function buildSavePayload(
   localCategories: string[],
   localDayPreferences: Record<string, number>,
   localPace: number | null,
-  userAdjustedCategories: Set<string>
+  userAdjustedCategories: Set<string>,
+  preservedCategories: string[] = []
 ): ActivitySettings {
   const activeCategorySet = new Set(localCategories);
   const cleanedDayPreferences = Object.fromEntries(
@@ -91,8 +97,16 @@ export function buildSavePayload(
       ([cat]) => activeCategorySet.has(cat) && userAdjustedCategories.has(cat)
     )
   );
+  // When the user IS filtering (non-empty selection), union in itinerary-present
+  // categories the modal can't show as chips so a no-op Save never silently drops
+  // them. An empty selection means "no filter / mixed" (backend maps [] -> None ->
+  // include all), so leave it empty and don't manufacture a filter.
+  const categories =
+    localCategories.length > 0
+      ? Array.from(new Set([...localCategories, ...preservedCategories]))
+      : localCategories;
   return {
-    categories: localCategories,
+    categories,
     skill_level: null,
     day_preferences: cleanedDayPreferences,
     activities_per_day: localPace,

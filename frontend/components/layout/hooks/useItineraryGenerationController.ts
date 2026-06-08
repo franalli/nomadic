@@ -331,6 +331,12 @@ export function useItineraryGenerationController({
                   '[expand-itinerary] Conflict payload missing plan_view_state; preserving current state'
                 );
               }
+            } else if (parsed && parsed.error === 'TRIP_TOO_SHORT') {
+              debugLog('[expand-itinerary] Trip too short:', parsed);
+              addToast(
+                'Trips need at least 2 days — extend your dates to generate an itinerary.',
+                'info'
+              );
             } else {
               console.error('[expand-itinerary] Error received:', event.message);
             }

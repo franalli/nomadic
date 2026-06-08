@@ -166,6 +166,30 @@ const CATEGORY_LABEL: Record<string, string> = {
   sailing: 'Sailing',
 };
 
+// Single source of truth for "does this block render an ActivityMiniCard badge?"
+// Buffer/safety/logistics blocks (arrival/departure/check-in/decompression/rest)
+// route to non-badge components in RichBlockRenderer, so they must never be
+// mirrored as a scheduled category. Consumed by the modal, the pill row, and the
+// chip row so all category inference stays aligned with the visible badges.
+const NON_ACTIVITY_TYPES = new Set([
+  'arrival',
+  'departure',
+  'check-in',
+  'check-out',
+  'check_in',
+  'check_out',
+  'free_day',
+  'rest_day',
+  'buffer',
+  'decompression_buffer',
+]);
+
+export function isBadgedActivityBlock(block: DayBlock): boolean {
+  if (block.is_buffer) return false;
+  const activityType = (block.activity_type ?? '').trim().toLowerCase();
+  return !NON_ACTIVITY_TYPES.has(activityType);
+}
+
 export function resolveActivityCategory(block: DayBlock): { key: string; label: string } | null {
   const bookedTile = block.booked_tile as Record<string, unknown> | undefined;
   const meta = bookedTile?.meta && typeof bookedTile.meta === 'object'

@@ -155,6 +155,33 @@ def _merge_tiles_by_category(
     return merged
 
 
+def _builder_failure_message(error: Optional[str]) -> str:
+    """Map an ItineraryResult.error sentinel to a human-readable message.
+
+    The builder returns terse sentinels (e.g. ``"TRIP_TOO_SHORT"``) that mean
+    nothing to the model. Translate the known ones into actionable guidance so
+    the terminal agent turn can tell the user what is wrong and how to fix it,
+    while still passing any other non-empty builder message through verbatim.
+    """
+    sentinel = (error or "").strip()
+    if sentinel == "TRIP_TOO_SHORT":
+        return (
+            "This trip is too short to build an itinerary -- itineraries need at "
+            "least 2 days. Ask the user to extend the travel dates by at least one day."
+        )
+    if sentinel in (
+        "Invalid dates - cannot generate itinerary",
+        "End date must be after start date",
+    ):
+        return f"{sentinel}. Ask the user to check the travel dates."
+    # Unknown / internal failures (e.g. a raw exception string from the builder).
+    # Do NOT leak internals into model-facing text -- keep it generic + actionable.
+    return (
+        "Could not build the itinerary due to an internal error. "
+        "Ask the user to try again or adjust the trip details."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tool
 # ---------------------------------------------------------------------------
@@ -321,7 +348,7 @@ async def build_itinerary(
     overview_out = result.overview.model_dump() if result.overview is not None else None
     assumptions_out = result.assumptions.model_dump() if result.assumptions is not None else None
 
-    return {
+    out: Dict[str, Any] = {
         "success": result.success,
         "day_cards": day_cards_out,
         "conflicts": conflicts_out,
@@ -332,3 +359,20 @@ async def build_itinerary(
         "overview": overview_out,
         "assumptions": assumptions_out,
     }
+
+    # When the builder fails WITH NO usable schedule (TRIP_TOO_SHORT for a
+    # sub-2-day trip, invalid dates, or an internal exception), surface a
+    # human-readable "error" so the agent loop can explain the problem instead of
+    # returning a silent, reason-less empty plan. The "error" key also signals
+    # TurnLifecycleMiddleware.awrap_tool_call to skip _merge_itinerary, leaving
+    # any existing day_cards untouched. We do NOT change the 2-day minimum.
+    #
+    # Gate on EMPTY day_cards: the builder's CONSTRAINT_CONFLICT path also reports
+    # success=False but returns a populated partial schedule (itinerary_builder
+    # ~801). That partial schedule + conflicts MUST still flow through
+    # _merge_itinerary (so builder_result is written and the S3_PARTIAL_CONFLICT
+    # view-state is computed), so we must NOT mark it as a tool error.
+    if not result.success and not day_cards_out:
+        out["error"] = _builder_failure_message(result.error)
+
+    return out

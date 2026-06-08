@@ -13,7 +13,11 @@ import { useDocumentStore } from '@/state/documentStore';
 import type { ActivitySettings } from '@/types/document';
 
 import { ActivitiesSheetContent } from './ActivitiesSheetContent';
-import { inferCategoriesFromDayCards, inferDayPreferencesFromDayCards } from './activitiesSheetHelpers';
+import {
+  inferCategoriesFromDayCards,
+  inferDayPreferencesFromDayCards,
+  inferUnrepresentableCategoriesFromDayCards,
+} from './activitiesSheetHelpers';
 import {
   ActivitiesSheetFooter,
   buildSavePayload,
@@ -57,6 +61,12 @@ function ActivitiesSheetInner({
   const dayCards = useDocumentStore(useShallow((s) => s.document?.day_cards));
   const inferredCategories = useMemo(() => inferCategoriesFromDayCards(dayCards), [dayCards]);
   const inferredDayPreferences = useMemo(() => inferDayPreferencesFromDayCards(dayCards), [dayCards]);
+  // Itinerary-present categories the modal can't render as chips -- preserved on
+  // Save so a no-op save never silently drops them (see buildSavePayload).
+  const preservedCategories = useMemo(
+    () => inferUnrepresentableCategoriesFromDayCards(dayCards),
+    [dayCards]
+  );
   const normalizedSettingCategories = useMemo(
     () => normalizeCategories(settings.categories),
     [settings.categories]
@@ -120,10 +130,18 @@ function ActivitiesSheetInner({
 
   // Handle save preferences
   const handleSave = useCallback(() => {
-    onSaveSettings(buildSavePayload(localCategories, localDayPreferences, localPace, userAdjustedCategories));
+    onSaveSettings(
+      buildSavePayload(
+        localCategories,
+        localDayPreferences,
+        localPace,
+        userAdjustedCategories,
+        preservedCategories
+      )
+    );
     toast('Activity preferences saved');
     onOpenChange(false);
-  }, [localCategories, localDayPreferences, localPace, userAdjustedCategories, onSaveSettings, toast, onOpenChange]);
+  }, [localCategories, localDayPreferences, localPace, userAdjustedCategories, preservedCategories, onSaveSettings, toast, onOpenChange]);
 
   // Toggle category — when adding, seed day_preferences with a default of 1
   const toggleCategory = useCallback((category: string) => {

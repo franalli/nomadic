@@ -7,7 +7,7 @@ import type {
 } from '@/types/document';
 import type { DayCard } from '@/types/plan-envelope';
 
-import { inferConstraintCategories, resolveBlockCategory } from './tripSummaryUtils';
+import { resolveBlockCategory } from './tripSummaryUtils';
 
 export type { ModuleState } from './ModuleChip';
 export { ModuleChip } from './ModuleChip';
@@ -99,6 +99,10 @@ export function getHotelChipSummary(settings?: HotelSettings): string | null {
   return `${tokens.slice(0, 2).join(' · ')} +${tokens.length - 2}`;
 }
 
+// Mirror the day-card badges: resolveBlockCategory is the single badge resolver
+// (delegates to resolveActivityCategory + buffer guard). No constraint-derived
+// categories -- those are not shown as badges and previously made the chip row
+// disagree with the Activities modal.
 export function inferCategoriesFromDayCards(dayCards: DayCard[] | undefined): string[] {
   if (!dayCards || dayCards.length === 0) return [];
   const inferred = new Set<string>();
@@ -106,7 +110,6 @@ export function inferCategoriesFromDayCards(dayCards: DayCard[] | undefined): st
     card.blocks?.forEach((block) => {
       const category = resolveBlockCategory(block);
       if (category) inferred.add(category);
-      inferConstraintCategories(block).forEach((candidate) => inferred.add(candidate));
     });
   });
   return Array.from(inferred);

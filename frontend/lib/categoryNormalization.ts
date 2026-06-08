@@ -85,7 +85,9 @@ export const CATEGORY_ALIAS: Record<string, string> = {
 
 /**
  * Tier-1 specialist constraint pattern hints.
- * Used to infer specialist categories from constraint text on blocks.
+ * Retained as the SSoT mirror of backend specialist constraint detection.
+ * Note: no current consumer — category inference now mirrors the day-card
+ * badges directly (resolveActivityCategory) rather than constraint text.
  */
 export const TIER1_CONSTRAINT_HINTS: Record<string, RegExp[]> = {
   diving: [/\bdiv(e|ing|er|es)\b/i, /\bscuba\b/i, /\bno[- ]fly\b/i, /\bdecompression\b/i],
