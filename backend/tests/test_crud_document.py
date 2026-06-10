@@ -53,6 +53,7 @@ from app.schemas import (  # noqa: E402
     PlanDocumentData,
     PlanDocumentPatch,
     StrategySection,
+    SuggestionChip,
 )
 from app.schemas import Tile as TileSchema  # noqa: E402
 
@@ -712,6 +713,131 @@ class TestApplyPlannerUpdateSync:
         assert data.trip_inputs.destination == "Rome"
         # Previous activity_settings should be gone (reset)
         assert data.trip_inputs.activity_settings.categories == []
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Tests: suggestion chip persistence (apply_planner_update / _sync)
+# ---------------------------------------------------------------------------
+
+
+class TestApplyPlannerUpdateSuggestionChips:
+    """Chips persistence contract: None = no-op, empty list = explicit clear,
+    invalid entries are skipped (never raise)."""
+
+    _CHIP = {
+        "message": "Browse activities",
+        "action_type": "open_pill",
+        "action_target": "activities",
+        "chip_type": "follow_up",
+        "category": "browse",
+        "icon": "search",
+    }
+    _META = {"chip_type": "follow_up", "category": "browse", "icon": "search"}
+
+    def _setup_doc_with_chips(self) -> tuple[SessionModel, int]:
+        sess_row = _make_session_row()
+
+        async def _create() -> int:
+            async with TestingAsyncSessionLocal() as db:
+                doc = await get_or_create_document(db, session=sess_row)
+                data = PlanDocumentData(
+                    trip_inputs=DocumentTripInputs(destination="Bali"),
+                    suggestion_chips=[SuggestionChip(message="Old chip")],
+                    suggested_responses=["Old chip"],
+                    suggested_response_meta=[{"chip_type": "cta", "category": "old"}],
+                )
+                await save_document_data(db, doc=doc, data=data, updated_by="planner")
+                await db.commit()
+                return doc.id
+
+        doc_id = asyncio.run(_create())
+        return sess_row, doc_id
+
+    def _apply_async(self, sess_row: SessionModel, **kwargs: Any) -> PlanDocumentData:
+        async def _run() -> PlanDocumentData:
+            async with TestingAsyncSessionLocal() as db:
+                doc = await get_or_create_document(db, session=sess_row)
+                await apply_planner_update(
+                    db, doc=doc, trip_context_id=1, trip_inputs=None, **kwargs
+                )
+                await db.commit()
+            async with TestingAsyncSessionLocal() as db:
+                doc = await get_or_create_document(db, session=sess_row)
+                return get_document_data(doc)
+
+        return asyncio.run(_run())
+
+    def test_chips_persisted_on_reload(self) -> None:
+        sess_row, _ = self._setup_doc_with_chips()
+        data = self._apply_async(
+            sess_row,
+            suggestion_chips=[self._CHIP],
+            suggested_responses=["Browse activities"],
+            suggested_response_meta=[self._META],
+        )
+        assert len(data.suggestion_chips) == 1
+        assert data.suggestion_chips[0].message == "Browse activities"
+        assert data.suggestion_chips[0].action_type == "open_pill"
+        assert data.suggested_responses == ["Browse activities"]
+        assert data.suggested_response_meta == [self._META]
+
+    def test_none_is_noop_preserves_existing_chips(self) -> None:
+        sess_row, _ = self._setup_doc_with_chips()
+        data = self._apply_async(sess_row)  # no chip kwargs at all
+        assert len(data.suggestion_chips) == 1
+        assert data.suggestion_chips[0].message == "Old chip"
+        assert data.suggested_responses == ["Old chip"]
+        assert data.suggested_response_meta == [{"chip_type": "cta", "category": "old"}]
+
+    def test_empty_list_explicitly_clears(self) -> None:
+        sess_row, _ = self._setup_doc_with_chips()
+        data = self._apply_async(
+            sess_row,
+            suggestion_chips=[],
+            suggested_responses=[],
+            suggested_response_meta=[],
+        )
+        assert data.suggestion_chips == []
+        assert data.suggested_responses == []
+        assert data.suggested_response_meta == []
+
+    def test_invalid_chip_entries_skipped_not_raised(self) -> None:
+        sess_row, _ = self._setup_doc_with_chips()
+        data = self._apply_async(
+            sess_row,
+            suggestion_chips=[
+                self._CHIP,
+                {"action_type": "bogus_action"},  # invalid: bad literal, no message
+                "not-a-dict",
+            ],
+            suggested_responses=["Browse activities", 42],  # non-str filtered
+            suggested_response_meta=[self._META, "not-a-dict"],
+        )
+        assert len(data.suggestion_chips) == 1
+        assert data.suggestion_chips[0].message == "Browse activities"
+        assert data.suggested_responses == ["Browse activities"]
+        assert data.suggested_response_meta == [self._META]
+
+    def test_sync_variant_parity(self) -> None:
+        sess_row, doc_id = self._setup_doc_with_chips()
+        db = TestingSyncSessionLocal()
+        doc = db.get(PlanDocument, doc_id)
+        doc = apply_planner_update_sync(
+            db,
+            doc=doc,
+            trip_context_id=1,
+            trip_inputs=None,
+            suggestion_chips=[self._CHIP],
+            suggested_responses=["Browse activities"],
+            suggested_response_meta=[self._META],
+        )
+        db.commit()
+        data = get_document_data(doc)
+        assert len(data.suggestion_chips) == 1
+        assert data.suggestion_chips[0].message == "Browse activities"
+        assert data.suggested_responses == ["Browse activities"]
+        assert data.suggested_response_meta == [self._META]
         db.close()
 
 

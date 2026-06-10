@@ -7,12 +7,87 @@ Public API
 ----------
 - _generate_chips_from_state(state)
 - _chip(message, chip_type, category, icon, ...)
+- build_expand_chip_payload(trip_inputs, tiles_by_id, day_cards, strategy_sections)
 """
 
 from __future__ import annotations
 
 from datetime import date, timedelta
 from typing import Any
+
+_TILE_TYPE_TO_BUCKET = {"flight": "flights", "hotel": "hotels", "activity": "activities"}
+
+
+def build_expand_chip_payload(
+    trip_inputs: dict[str, Any],
+    tiles_by_id: dict[str, Any],
+    day_cards: list[dict[str, Any]],
+    strategy_sections: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]]]:
+    """Regenerate deterministic chips from POST-BUILD expand-itinerary state.
+
+    The /api/expand-itinerary path rebuilds day_cards outside an agent turn, so
+    chips persisted by the last SSE turn go stale. This mirrors the
+    coordinator's chip derivation (_build_envelope) and returns
+    (suggestion_chips, suggested_responses, suggested_response_meta) -- the
+    latter two are the parallel arrays the document/envelope carry.
+
+    ``tiles_by_id`` is the document's flattened {tile_id: tile} dict; it is
+    re-bucketed into the category format _generate_chips_from_state expects.
+    No validation_result exists post-build, so violation chips never trigger
+    here. streaming.py calls this unconditionally after expand -- success or
+    failure -- which is fine: on a failed build day_cards stay empty/stale, so
+    the generator falls through to a sensible pre-itinerary branch and the
+    persisted chips remain actionable fallbacks.
+    """
+    raw_activity_settings = trip_inputs.get("activity_settings")
+    activity_settings: dict[str, Any] = (
+        dict(raw_activity_settings) if isinstance(raw_activity_settings, dict) else {}
+    )
+    categories = [c for c in (activity_settings.get("categories") or []) if isinstance(c, str)]
+
+    trip_plan: dict[str, Any] = {
+        "destination": trip_inputs.get("destination") or "",
+        "origin": trip_inputs.get("origin") or "",
+        "start_date": trip_inputs.get("start_date") or "",
+        "end_date": trip_inputs.get("end_date") or "",
+        "budget": trip_inputs.get("budget"),
+        "activity_categories": categories,
+        "activity_settings": activity_settings,
+    }
+
+    tiles_by_category: dict[str, list[dict[str, Any]]] = {}
+    for tile in (tiles_by_id or {}).values():
+        tile_dict = tile if isinstance(tile, dict) else None
+        if tile_dict is None and hasattr(tile, "model_dump"):
+            tile_dict = tile.model_dump()
+        if not isinstance(tile_dict, dict):
+            continue
+        bucket = _TILE_TYPE_TO_BUCKET.get(str(tile_dict.get("type") or "activity"))
+        if bucket:
+            tiles_by_category.setdefault(bucket, []).append(tile_dict)
+
+    state: dict[str, Any] = {
+        "trip_plan": trip_plan,
+        "trip_settings": {},
+        "tiles": tiles_by_category,
+        "day_cards": [dc for dc in (day_cards or []) if isinstance(dc, dict)],
+        "strategy_sections": [s for s in (strategy_sections or []) if isinstance(s, dict)],
+        "turn_meta": {},
+        "persistent_meta": {},
+    }
+
+    chips = [c for c in _generate_chips_from_state(state) if isinstance(c, dict)]
+    texts = [c.get("message", "") for c in chips]
+    meta = [
+        {
+            "chip_type": c.get("chip_type", "follow_up"),
+            "category": c.get("category", ""),
+            "icon": c.get("icon"),
+        }
+        for c in chips
+    ]
+    return chips, texts, meta
 
 
 def _generate_chips_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:

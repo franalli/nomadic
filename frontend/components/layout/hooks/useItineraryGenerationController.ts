@@ -274,6 +274,21 @@ export function useItineraryGenerationController({
             if (typeof event.version === 'number') {
               useDocumentStore.setState({ version: event.version });
             }
+            // Ingest post-build regenerated suggestion chips (persisted by the
+            // backend and shipped additively on the done event). Keeps the
+            // document — the chips SSoT — current so the chat panel sync effect
+            // refreshes the rendered chips after the build.
+            if (
+              event.suggestion_chips !== undefined ||
+              event.suggested_responses !== undefined ||
+              event.suggested_response_meta !== undefined
+            ) {
+              useDocumentStore.getState().setSuggestionChipFields({
+                suggestion_chips: event.suggestion_chips,
+                suggested_responses: event.suggested_responses,
+                suggested_response_meta: event.suggested_response_meta,
+              });
+            }
             if (!isDuplicateNoop) {
               storeMarkPreferencesAsApplied();
             }

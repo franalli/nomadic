@@ -1164,6 +1164,11 @@ async def generate_sse(
                             constraint_violations=graph_doc.get(
                                 "constraint_violations", [] if coordinator_reset else None
                             ),
+                            # Envelope always carries these (possibly empty lists --
+                            # an empty list is a deliberate clear; None = no-op).
+                            suggestion_chips=graph_doc.get("suggestion_chips"),
+                            suggested_responses=graph_doc.get("suggested_responses"),
+                            suggested_response_meta=graph_doc.get("suggested_response_meta"),
                             extracted_settings=nl_extracted,
                         )
                         if updated_doc:
@@ -2236,6 +2241,25 @@ async def generate_ndjson(
             }
             trip_inputs = trip_inputs_data
 
+            # Regenerate deterministic suggestion chips from the POST-BUILD state so
+            # persisted chips can't go stale after a sheet-applied rebuild (the agent
+            # path persists chips on every SSE turn; expand must do the same).
+            # None on failure (persist no-op); lists on success (write or clear).
+            expand_chips: list[dict[str, Any]] | None = None
+            expand_chip_texts: list[str] | None = None
+            expand_chip_meta: list[dict[str, Any]] | None = None
+            try:
+                from app.planner.chip_generator import build_expand_chip_payload
+
+                expand_chips, expand_chip_texts, expand_chip_meta = build_expand_chip_payload(
+                    trip_inputs=trip_inputs_data,
+                    tiles_by_id=tiles_data,
+                    day_cards=metadata["day_cards"],
+                    strategy_sections=strategy_sections_data,
+                )
+            except Exception as _chip_exc:  # pragma: no cover - defensive
+                logger.warning("[expand-itinerary] chip regeneration failed: %s", _chip_exc)
+
             # Build envelope update
             plan_envelope = {}
 
@@ -2352,6 +2376,10 @@ async def generate_ndjson(
                     strategy_sections=sections_for_db,
                     day_cards=day_card_objs,
                     can_expand_to_itinerary=day_card_objs is not None,
+                    # Post-build chip refresh (None = regeneration failed, no-op)
+                    suggestion_chips=expand_chips,
+                    suggested_responses=expand_chip_texts,
+                    suggested_response_meta=expand_chip_meta,
                 )
                 await db.commit()
             except (SQLAlchemyError, ValueError) as e:
@@ -2364,13 +2392,18 @@ async def generate_ndjson(
                 yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
                 return
 
-            # Emit done with version for frontend sync (prevents 409 on next PATCH)
+            # Emit done with version for frontend sync (prevents 409 on next PATCH).
+            # Chip fields are additive optional payload on the existing done event
+            # (omitted via exclude_none when regeneration failed).
             event = ExpandItineraryStreamEvent(
                 type="done",
                 plan_view_state=new_plan_view_state,
                 version=doc.version if doc else None,
                 dropped_preferred_count=itinerary_result.dropped_preferred_count or None,
                 warnings=itinerary_result.warnings if itinerary_result.warnings else None,
+                suggestion_chips=expand_chips,
+                suggested_responses=expand_chip_texts,
+                suggested_response_meta=expand_chip_meta,
             )
             yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
 

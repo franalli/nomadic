@@ -287,6 +287,26 @@ def build_turn_context(state: dict[str, Any]) -> str:
             f"Reset (start over) to plan a new trip to {switch_to}. Keep the {current_dest} plan intact."
         )
 
+    # Reset-confirmation directives. reset_pending: the traveler asked to reset
+    # but NOTHING has been cleared yet -- a confirmation is required first.
+    # coordinator_reset: the traveler confirmed; the document wipe is performed
+    # deterministically by the envelope/persist path after this turn's loop.
+    if isinstance(turn_meta, dict) and turn_meta.get("coordinator_reset"):
+        blocks.append(
+            "TURN DIRECTIVE: The traveler confirmed they want to reset the trip. The trip IS "
+            "being reset -- destination, dates, activities, and bookings are all cleared. Do "
+            "NOT call any tools. Briefly confirm the trip has been reset and ask where they'd "
+            "like to go next."
+        )
+    elif isinstance(turn_meta, dict) and turn_meta.get("reset_pending"):
+        blocks.append(
+            "TURN DIRECTIVE: The traveler asked to reset / start over, but the trip has NOT "
+            "been reset -- it requires confirmation first. Do NOT claim anything was reset, do "
+            "NOT clear or change any trip details, and do NOT call any more tools. Ask the "
+            "traveler to confirm using the confirmation options shown ('Yes, reset my trip' / "
+            "'No, keep planning'); the current plan stays intact until they confirm."
+        )
+
     return "\n\n".join(blocks)
 
 

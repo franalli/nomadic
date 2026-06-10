@@ -50,8 +50,8 @@ const FALLBACK_ACTION_BY_TEXT: Array<{ pattern: RegExp; action: ResolvedChipActi
   { pattern: /set my departure city|departure city/i, action: { actionType: 'open_pill', actionTarget: 'origin' } },
   { pattern: /change my dates|set dates|travel dates/i, action: { actionType: 'open_pill', actionTarget: 'dates' } },
   { pattern: /set my budget|budget/i, action: { actionType: 'open_pill', actionTarget: 'budget' } },
-  { pattern: /browse activities|must-do activities|activities in/i, action: { actionType: 'open_pill', actionTarget: 'activities' } },
-  { pattern: /compare hotel options|5-star hotels|hotel options/i, action: { actionType: 'open_pill', actionTarget: 'stays' } },
+  { pattern: /browse activities|must-do activities|activities in|add (specific |some )?activit|choose activit|find activit/i, action: { actionType: 'open_pill', actionTarget: 'activities' } },
+  { pattern: /compare hotel options|5-star hotels|hotel options|find (a )?(hotel|place to stay)|where to stay/i, action: { actionType: 'open_pill', actionTarget: 'stays' } },
   { pattern: /direct flights only/i, action: { actionType: 'trigger_action', actionTarget: 'set_direct_flights_only' } },
 ];
 
@@ -67,8 +67,21 @@ function normalizeActionTarget(
 }
 
 export function resolveChipAction(chip: SuggestionChip): ResolvedChipAction {
+  // date_prompt/date_contextual chips usually carry a date-range MESSAGE that must
+  // be SENT (so the agent extracts the dates) even when metadata says open_pill.
+  // The exception is a generic picker-opener like "Set dates" / "Choose dates
+  // first": its message contains no date and it explicitly targets the dates pill,
+  // so it should open the picker rather than send a dead "Set dates" message.
   if (chip.category === 'date_prompt' || chip.category === 'date_contextual') {
-    return { actionType: 'send_message', actionTarget: null };
+    const messageLooksLikeDate = /\d/.test(chip.message);
+    const opensDatesPicker =
+      !messageLooksLikeDate &&
+      chip.action_type === 'open_pill' &&
+      normalizeActionTarget(chip.action_type, chip.action_target) === 'dates';
+    if (!opensDatesPicker) {
+      return { actionType: 'send_message', actionTarget: null };
+    }
+    // else fall through to the explicit-target branch below (opens the dates sheet)
   }
   const explicitTarget = normalizeActionTarget(chip.action_type, chip.action_target);
   if (chip.action_type !== 'send_message' && explicitTarget) {
@@ -76,6 +89,19 @@ export function resolveChipAction(chip: SuggestionChip): ResolvedChipAction {
   }
   if (chip.category && FALLBACK_ACTION_BY_CATEGORY[chip.category]) {
     return FALLBACK_ACTION_BY_CATEGORY[chip.category];
+  }
+  // LLM CTAs frequently tag a bare pill-target category (e.g. 'activities',
+  // 'stays') while leaving action_type='send_message'. Treat a CTA whose category
+  // names a real pill target as intent to open that pill — otherwise "Add specific
+  // activities" degrades to a vague message. GATED on chip_type==='cta': the
+  // deterministic generator also uses pill-NAME categories as semantic source tags
+  // on follow_up chips (local-expert must-dos carry category='destination'), which
+  // must stay send_message rather than reopen the destination picker.
+  if (chip.chip_type === 'cta') {
+    const categoryTarget = normalizeActionTarget('open_pill', chip.category);
+    if (categoryTarget) {
+      return { actionType: 'open_pill', actionTarget: categoryTarget };
+    }
   }
   for (const rule of FALLBACK_ACTION_BY_TEXT) {
     if (rule.pattern.test(chip.message)) return rule.action;

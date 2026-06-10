@@ -336,6 +336,48 @@ class TestBuildEnvelopePrecedence:
         messages = [c["message"] for c in result["suggestion_chips"]]
         assert messages == ["Yes, reset my trip", "No, keep planning"]
 
+    @patch("app.planner.services.state_serde.serialize_agent_state", return_value="{}")
+    def test_coordinator_reset_yields_bootstrap_chips_not_trip_derived(
+        self, _mock_serialize: Any
+    ) -> None:
+        # On the CONFIRM turn the in-loop state still holds the old trip (the
+        # extract merger skips field merges), so both the LLM chips and
+        # state-derived chips would describe the wiped trip. The envelope must
+        # instead carry bootstrap chips from an empty state view.
+        from app.planner.coordinator import _build_envelope
+
+        llm_chips = [
+            {
+                "message": "Browse Bali activities",
+                "action_type": "open_pill",
+                "action_target": "activities",
+                "chip_type": "follow_up",
+                "category": "browse",
+                "icon": "search",
+            }
+        ]
+        state = _make_envelope_state(
+            trip_plan={
+                "destination": "Bali",
+                "country_code": "ID",
+                "start_date": "2026-07-01",
+                "end_date": "2026-07-07",
+            },
+            tiles={"activities": [{"id": "a1", "type": "activity"}]},
+            day_cards=[{"day_number": 1}],
+            turn_meta={"coordinator_reset": True},
+            _llm_suggestion_chips=llm_chips,
+        )
+        result = _build_envelope(state, "yes, reset it", "sess-1", "Your trip has been reset.")
+        messages = [c["message"] for c in result["suggestion_chips"]]
+        # Bootstrap (no-destination) branch wins; nothing trip-derived survives.
+        assert "Pick a destination" in messages
+        assert all("Bali" not in m for m in messages)
+        assert "Browse activities" not in messages
+        # The persisted mirrors carry the same bootstrap set.
+        assert result["suggested_responses"] == messages
+        assert result["document"]["suggestion_chips"] == result["suggestion_chips"]
+
 
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])

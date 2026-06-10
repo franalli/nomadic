@@ -1001,6 +1001,198 @@ describe('commitTripInputs', () => {
   });
 });
 
+describe('suggestion chip fields', () => {
+  const chips = [
+    {
+      message: 'Add diving',
+      action_type: 'send_message' as const,
+      chip_type: 'follow_up' as const,
+      category: 'activities',
+    },
+  ];
+  const responses = ['Add diving'];
+  const meta = [{ chip_type: 'follow_up' as const, category: 'activities' }];
+
+  it('commitTripInputs carries chip fields from the PATCH response', async () => {
+    useDocumentStore.setState({ document: makeDoc(), version: 1 });
+
+    mockApiFetch.mockResolvedValueOnce(
+      mockResponse(200, makePatchResponse(2, {
+        trip_inputs: { ...DEFAULT_TRIP_INPUTS, destination: 'Lisbon', budget: 3000 },
+        suggestion_chips: chips,
+        suggested_responses: responses,
+        suggested_response_meta: meta,
+      })),
+    );
+
+    const result = await useDocumentStore.getState().commitTripInputs({ budget: 3000 });
+
+    expect(result).toBe(true);
+    const doc = useDocumentStore.getState().document!;
+    expect(doc.suggestion_chips).toEqual(chips);
+    expect(doc.suggested_responses).toEqual(responses);
+    expect(doc.suggested_response_meta).toEqual(meta);
+  });
+
+  it('commitTripInputs preserves current chip fields when the PATCH response omits them', async () => {
+    useDocumentStore.setState({
+      document: makeDoc({
+        suggestion_chips: chips,
+        suggested_responses: responses,
+        suggested_response_meta: meta,
+      }),
+      version: 1,
+    });
+
+    mockApiFetch.mockResolvedValueOnce(
+      mockResponse(200, makePatchResponse(2, {
+        trip_inputs: { ...DEFAULT_TRIP_INPUTS, destination: 'Lisbon', budget: 3000 },
+      })),
+    );
+
+    const result = await useDocumentStore.getState().commitTripInputs({ budget: 3000 });
+
+    expect(result).toBe(true);
+    const doc = useDocumentStore.getState().document!;
+    expect(doc.suggestion_chips).toEqual(chips);
+    expect(doc.suggested_responses).toEqual(responses);
+    expect(doc.suggested_response_meta).toEqual(meta);
+  });
+
+  it('commitTripInputs keeps non-empty current chips over a stale PATCH echo', async () => {
+    const staleChips = [
+      {
+        message: 'Add travel dates',
+        action_type: 'open_pill' as const,
+        chip_type: 'cta' as const,
+        category: 'dates',
+      },
+    ];
+    useDocumentStore.setState({
+      document: makeDoc({
+        suggestion_chips: chips,
+        suggested_responses: responses,
+        suggested_response_meta: meta,
+      }),
+      version: 1,
+    });
+
+    mockApiFetch.mockResolvedValueOnce(
+      mockResponse(200, makePatchResponse(2, {
+        trip_inputs: { ...DEFAULT_TRIP_INPUTS, destination: 'Lisbon', budget: 3000 },
+        suggestion_chips: staleChips,
+        suggested_responses: ['Add travel dates'],
+        suggested_response_meta: [{ chip_type: 'cta' as const, category: 'dates' }],
+      })),
+    );
+
+    const result = await useDocumentStore.getState().commitTripInputs({ budget: 3000 });
+
+    expect(result).toBe(true);
+    const doc = useDocumentStore.getState().document!;
+    expect(doc.suggestion_chips).toEqual(chips);
+    expect(doc.suggested_responses).toEqual(responses);
+    expect(doc.suggested_response_meta).toEqual(meta);
+  });
+
+  it('patchDocument carries chip fields from the PATCH response', async () => {
+    useDocumentStore.setState({ document: makeDoc(), version: 1 });
+
+    mockApiFetch.mockResolvedValueOnce(
+      mockResponse(200, makePatchResponse(2, {
+        suggestion_chips: chips,
+        suggested_responses: responses,
+        suggested_response_meta: meta,
+      })),
+    );
+
+    await useDocumentStore.getState().patchDocument({ version: 1 });
+
+    const doc = useDocumentStore.getState().document!;
+    expect(doc.suggestion_chips).toEqual(chips);
+    expect(doc.suggested_responses).toEqual(responses);
+    expect(doc.suggested_response_meta).toEqual(meta);
+  });
+
+  it('patchDocument preserves current chip fields when the PATCH response omits them', async () => {
+    useDocumentStore.setState({
+      document: makeDoc({
+        suggestion_chips: chips,
+        suggested_responses: responses,
+        suggested_response_meta: meta,
+      }),
+      version: 1,
+    });
+
+    mockApiFetch.mockResolvedValueOnce(mockResponse(200, makePatchResponse(2)));
+
+    await useDocumentStore.getState().patchDocument({ version: 1 });
+
+    const doc = useDocumentStore.getState().document!;
+    expect(doc.suggestion_chips).toEqual(chips);
+    expect(doc.suggested_responses).toEqual(responses);
+    expect(doc.suggested_response_meta).toEqual(meta);
+  });
+
+  it('setSuggestionChipFields updates only the chip fields and bumps nothing else', () => {
+    const seedDoc = makeDoc({
+      day_cards: [makeDayCard(1)],
+      suggested_responses: ['Old suggestion'],
+    });
+    useDocumentStore.setState({ document: seedDoc, version: 7 });
+
+    useDocumentStore.getState().setSuggestionChipFields({
+      suggestion_chips: chips,
+      suggested_responses: responses,
+      suggested_response_meta: meta,
+    });
+
+    const state = useDocumentStore.getState();
+    expect(state.document!.suggestion_chips).toEqual(chips);
+    expect(state.document!.suggested_responses).toEqual(responses);
+    expect(state.document!.suggested_response_meta).toEqual(meta);
+    // Nothing else changes: version untouched, other doc fields keep identity.
+    expect(state.version).toBe(7);
+    expect(state.document!.trip_inputs).toBe(seedDoc.trip_inputs);
+    expect(state.document!.day_cards).toBe(seedDoc.day_cards);
+    expect(state.document!.tiles).toBe(seedDoc.tiles);
+  });
+
+  it('setSuggestionChipFields treats undefined fields as no-op and empty arrays as authoritative', () => {
+    useDocumentStore.setState({
+      document: makeDoc({
+        suggestion_chips: chips,
+        suggested_responses: responses,
+        suggested_response_meta: meta,
+      }),
+      version: 3,
+    });
+    const before = useDocumentStore.getState().document!;
+
+    // All-undefined input → document untouched (referential no-op).
+    useDocumentStore.getState().setSuggestionChipFields({});
+    expect(useDocumentStore.getState().document).toBe(before);
+
+    // Empty arrays are authoritative; undefined meta leaves it untouched.
+    useDocumentStore.getState().setSuggestionChipFields({
+      suggestion_chips: [],
+      suggested_responses: [],
+    });
+    const after = useDocumentStore.getState().document!;
+    expect(after.suggestion_chips).toEqual([]);
+    expect(after.suggested_responses).toEqual([]);
+    expect(after.suggested_response_meta).toEqual(meta);
+  });
+
+  it('setSuggestionChipFields is a no-op when document is null', () => {
+    useDocumentStore.setState({ document: null, version: 0 });
+
+    useDocumentStore.getState().setSuggestionChipFields({ suggestion_chips: chips });
+
+    expect(useDocumentStore.getState().document).toBeNull();
+  });
+});
+
 describe('ensureSettingsFlushed', () => {
   // Track unresolved mock promises so afterEach can force-release the commit lock
   let pendingResolvers: Array<(v: Response) => void> = [];

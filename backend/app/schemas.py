@@ -405,6 +405,13 @@ class ExpandItineraryStreamEvent(BaseModel):
     dropped_preferred_count: Optional[int] = None
     # User-facing warnings (e.g., "Adjusted to 1 dive to fit your 4-day trip")
     warnings: Optional[List[str]] = None
+    # Suggestion chips regenerated from the post-build state - included in the
+    # done event so persisted chips stay fresh after a sheet-applied rebuild.
+    # Plain dicts (SuggestionChip shape); SuggestionChip is defined later in
+    # this module so a typed reference here would be a forward ref.
+    suggestion_chips: Optional[List[Dict[str, Any]]] = None
+    suggested_responses: Optional[List[str]] = None
+    suggested_response_meta: Optional[List[Dict[str, Any]]] = None
 
 
 class TileClickEvent(BaseModel):

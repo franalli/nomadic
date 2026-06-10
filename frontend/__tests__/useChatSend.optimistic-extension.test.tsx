@@ -330,3 +330,52 @@ describe('useChatSend generation start signaling', () => {
     expect(onGeneratePlanStart).not.toHaveBeenCalled();
   });
 });
+
+describe('useChatSend stranded send-lock self-heal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    seedTripDocument();
+  });
+
+  it('recovers when isSendingRef was stranded true with no stream in flight', async () => {
+    // Regression: a stale/superseded stream can leave isSendingRef=true while
+    // the UI is idle (isLoading=false). Before the self-heal this silently
+    // dropped every subsequent send — typed message AND chip — making the whole
+    // app feel dead. The next send must clear the stale latch and go through.
+    mockState.executeStreamMock.mockResolvedValue('complete');
+    const { result } = renderUseChatSend();
+    const refs = mockState.capturedRefs.current as {
+      isSendingRef: { current: boolean };
+      abortStreamRef: { current: null | (() => void) };
+      activeStreamRequestIdRef: { current: string | null };
+    };
+    refs.isSendingRef.current = true; // stranded latch
+    refs.abortStreamRef.current = null; // no open stream connection
+    refs.activeStreamRequestIdRef.current = null;
+
+    await act(async () => {
+      await result.current.sendMessageCore('change hotel');
+    });
+
+    expect(mockState.executeStreamMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still blocks a concurrent send while a stream is genuinely in flight', async () => {
+    // The self-heal must NOT open a second stream when one is really running:
+    // an open abort handle means a live connection, so the latch is honored.
+    mockState.executeStreamMock.mockResolvedValue('complete');
+    const { result } = renderUseChatSend();
+    const refs = mockState.capturedRefs.current as {
+      isSendingRef: { current: boolean };
+      abortStreamRef: { current: null | (() => void) };
+    };
+    refs.isSendingRef.current = true;
+    refs.abortStreamRef.current = () => undefined; // live stream connection
+
+    await act(async () => {
+      await result.current.sendMessageCore('change hotel');
+    });
+
+    expect(mockState.executeStreamMock).not.toHaveBeenCalled();
+  });
+});

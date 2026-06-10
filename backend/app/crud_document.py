@@ -30,6 +30,7 @@ from app.schemas import (
     PlanDocumentPatch,
     PlanViewState,
     StrategySection,
+    SuggestionChip,
     TransportSettings,
     UpdatedBy,
 )
@@ -619,6 +620,45 @@ async def apply_user_patch(
     return await save_document_data(db, doc=doc, data=data, updated_by="user")
 
 
+def _validate_suggestion_chips(
+    chips: list[dict[str, Any] | SuggestionChip],
+) -> list[SuggestionChip]:
+    """Validate raw chip dicts into SuggestionChip models, skipping invalid entries.
+
+    Never raises: an unparseable chip is dropped (logged) so chip persistence can
+    never break a planner update.
+    """
+    validated: list[SuggestionChip] = []
+    for chip in chips:
+        if isinstance(chip, SuggestionChip):
+            validated.append(chip)
+            continue
+        try:
+            validated.append(SuggestionChip.model_validate(chip))
+        except Exception:
+            _debug(f"apply_planner_update: skipped invalid suggestion chip: {chip!r}")
+    return validated
+
+
+def _apply_suggestion_fields(
+    data: PlanDocumentData,
+    suggestion_chips: Optional[list[dict[str, Any] | SuggestionChip]],
+    suggested_responses: Optional[list[str]],
+    suggested_response_meta: Optional[list[dict[str, Any]]],
+) -> None:
+    """Assign chip fields onto document data. None = no-op; empty list clears.
+
+    Mirrors the day_cards convention used by the streaming persist path
+    (explicit empty list clears; None leaves the stored value untouched).
+    """
+    if suggestion_chips is not None:
+        data.suggestion_chips = _validate_suggestion_chips(suggestion_chips)
+    if suggested_responses is not None:
+        data.suggested_responses = [s for s in suggested_responses if isinstance(s, str)]
+    if suggested_response_meta is not None:
+        data.suggested_response_meta = [m for m in suggested_response_meta if isinstance(m, dict)]
+
+
 async def apply_planner_update(
     db: AsyncSession,
     *,
@@ -640,6 +680,10 @@ async def apply_planner_update(
     can_expand_to_itinerary: Optional[bool] = None,
     constraints_validated: Optional[list[dict[str, Any]]] = None,
     constraint_violations: Optional[list[dict[str, Any]]] = None,
+    # Suggestion chips - None = no-op, empty list = explicit clear
+    suggestion_chips: Optional[list[dict[str, Any] | SuggestionChip]] = None,
+    suggested_responses: Optional[list[str]] = None,
+    suggested_response_meta: Optional[list[dict[str, Any]]] = None,
     # NL-extracted settings that should bypass the user-owned field strip.
     # These are settings the user explicitly requested via chat (e.g. "5 star hotels").
     extracted_settings: Optional[dict[str, Any]] = None,
@@ -815,6 +859,7 @@ async def apply_planner_update(
         data.constraints_validated = constraints_validated
     if constraint_violations is not None:
         data.constraint_violations = constraint_violations
+    _apply_suggestion_fields(data, suggestion_chips, suggested_responses, suggested_response_meta)
 
     return await save_document_data(db, doc=doc, data=data, updated_by="planner")
 
@@ -840,6 +885,10 @@ def apply_planner_update_sync(
     can_expand_to_itinerary: Optional[bool] = None,
     constraints_validated: Optional[list[dict[str, Any]]] = None,
     constraint_violations: Optional[list[dict[str, Any]]] = None,
+    # Suggestion chips - None = no-op, empty list = explicit clear
+    suggestion_chips: Optional[list[dict[str, Any] | SuggestionChip]] = None,
+    suggested_responses: Optional[list[str]] = None,
+    suggested_response_meta: Optional[list[dict[str, Any]]] = None,
     extracted_settings: Optional[dict[str, Any]] = None,
 ) -> models.PlanDocument:
     """Apply planner-generated branches, tiles, and viewModel state to the document (sync).
@@ -995,6 +1044,7 @@ def apply_planner_update_sync(
         data.constraints_validated = constraints_validated
     if constraint_violations is not None:
         data.constraint_violations = constraint_violations
+    _apply_suggestion_fields(data, suggestion_chips, suggested_responses, suggested_response_meta)
 
     return save_document_data_sync(db, doc=doc, data=data, updated_by="planner")
 

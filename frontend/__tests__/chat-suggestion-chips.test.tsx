@@ -91,6 +91,150 @@ describe('ChatSuggestionChips fallback action routing', () => {
     expect(onSendMessage).not.toHaveBeenCalled();
   });
 
+  it('opens activities sheet for an LLM CTA tagged with a bare "activities" category', () => {
+    // Exact shape the suggestions LLM emits for "Add specific activities":
+    // send_message + bare category 'activities'. Must open the activities
+    // surface, not fire a vague text message (regression for dead green CTA).
+    const { onOpenActivities, onSendMessage } = renderChips({
+      suggestionChips: [
+        {
+          message: 'Add specific activities',
+          action_type: 'send_message',
+          action_target: null,
+          chip_type: 'cta',
+          category: 'activities',
+          icon: null,
+        },
+      ],
+      effectiveSuggestions: ['Add specific activities'],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /add specific activities/i }));
+
+    expect(onOpenActivities).toHaveBeenCalledTimes(1);
+    expect(onSendMessage).not.toHaveBeenCalled();
+  });
+
+  it('opens stays sheet for an LLM CTA tagged with a bare "stays" category', () => {
+    const { onOpenStays, onSendMessage } = renderChips({
+      suggestionChips: [
+        {
+          message: 'Find hotels in Bali',
+          action_type: 'send_message',
+          action_target: null,
+          chip_type: 'cta',
+          category: 'stays',
+          icon: null,
+        },
+      ],
+      effectiveSuggestions: ['Find hotels in Bali'],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /find hotels in bali/i }));
+
+    expect(onOpenStays).toHaveBeenCalledTimes(1);
+    expect(onSendMessage).not.toHaveBeenCalled();
+  });
+
+  it('still sends as a message when the category is not a pill target', () => {
+    // "Extend trip to 10 days" (category='') is a genuine instruction the agent
+    // acts on — it must keep firing as a message, not open a sheet.
+    const { onSendMessage, onOpenActivities, onOpenStays, onOpenSheet } = renderChips({
+      suggestionChips: [
+        {
+          message: 'Extend trip to 10 days',
+          action_type: 'send_message',
+          action_target: null,
+          chip_type: 'follow_up',
+          category: '',
+          icon: null,
+        },
+      ],
+      effectiveSuggestions: ['Extend trip to 10 days'],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /extend trip to 10 days/i }));
+
+    expect(onSendMessage).toHaveBeenCalledWith('Extend trip to 10 days', {
+      suggestionClicked: 'Extend trip to 10 days',
+    });
+    expect(onOpenActivities).not.toHaveBeenCalled();
+    expect(onOpenStays).not.toHaveBeenCalled();
+    expect(onOpenSheet).not.toHaveBeenCalled();
+  });
+
+  it('does NOT open the destination sheet for a must-do follow_up chip tagged category=destination', () => {
+    // Regression: local-expert must-do chips carry category='destination' as a
+    // semantic source tag on a follow_up chip. They must send_message, not reopen
+    // the destination picker. (Bare-category->pill rescue is CTA-only.)
+    const { onSendMessage, onOpenSheet } = renderChips({
+      suggestionChips: [
+        {
+          message: 'Visit Tanah Lot',
+          action_type: 'send_message',
+          action_target: null,
+          chip_type: 'follow_up',
+          category: 'destination',
+          icon: null,
+        },
+      ],
+      effectiveSuggestions: ['Visit Tanah Lot'],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /visit tanah lot/i }));
+
+    expect(onSendMessage).toHaveBeenCalledWith('Visit Tanah Lot', {
+      suggestionClicked: 'Visit Tanah Lot',
+    });
+    expect(onOpenSheet).not.toHaveBeenCalled();
+  });
+
+  it('opens the dates sheet for an explicit "Set dates" chip despite category=date_prompt', () => {
+    // "Set dates" emits open_pill/dates with category=date_prompt; the date_prompt
+    // override must NOT downgrade it to a dead send_message.
+    const { onOpenSheet, onSendMessage } = renderChips({
+      suggestionChips: [
+        {
+          message: 'Set dates',
+          action_type: 'open_pill',
+          action_target: 'dates',
+          chip_type: 'cta',
+          category: 'date_prompt',
+          icon: null,
+        },
+      ],
+      effectiveSuggestions: ['Set dates'],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /set dates/i }));
+
+    expect(onOpenSheet).toHaveBeenCalledWith('dates');
+    expect(onSendMessage).not.toHaveBeenCalled();
+  });
+
+  it('still sends a date-range chip (send_message + date_prompt) so the agent extracts dates', () => {
+    const { onSendMessage, onOpenSheet } = renderChips({
+      suggestionChips: [
+        {
+          message: 'Jul 12 - Jul 18',
+          action_type: 'send_message',
+          action_target: null,
+          chip_type: 'cta',
+          category: 'date_prompt',
+          icon: null,
+        },
+      ],
+      effectiveSuggestions: ['Jul 12 - Jul 18'],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /jul 12 - jul 18/i }));
+
+    expect(onSendMessage).toHaveBeenCalledWith('Jul 12 - Jul 18', {
+      suggestionClicked: 'Jul 12 - Jul 18',
+    });
+    expect(onOpenSheet).not.toHaveBeenCalled();
+  });
+
   it('normalizes non-canonical open_pill targets and opens the right sheet', () => {
     const { onOpenStays, onSendMessage } = renderChips({
       suggestionChips: [

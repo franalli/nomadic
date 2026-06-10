@@ -7,7 +7,7 @@
  */
 
 import { debugLog } from '@/lib/debug';
-import type { PlanDocumentData } from '@/types/document';
+import type { PlanDocumentData, SuggestionChip, SuggestionChipMeta } from '@/types/document';
 import type { GenerationState } from '@/types/plan-envelope';
 
 type StreamEnvelope = Partial<PlanDocumentData> & {
@@ -27,6 +27,11 @@ export type StreamEvent =
       dropped_preferred_count?: number;
       warnings?: string[];
       version?: number;
+      // Post-build regenerated suggestion chips (persisted by expand-itinerary).
+      // Additive fields — absent on older backends; arrays (incl. empty) are authoritative.
+      suggestion_chips?: SuggestionChip[];
+      suggested_responses?: string[];
+      suggested_response_meta?: SuggestionChipMeta[];
     }
   | { type: 'error'; message: string };
 

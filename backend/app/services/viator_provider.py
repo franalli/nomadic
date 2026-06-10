@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
+from app.planner.hashing import make_cache_key
 from app.services.activity_category_conflicts import (
     has_category_conflict as _has_category_conflict,
 )
@@ -537,6 +538,283 @@ async def search_products_by_destination(
         return []
 
 
+# -- Geo resolution (product-detail + locations/bulk) -------------------------
+# Product-detail responses expose itinerary stops as location *refs* (string
+# tokens), not inline lat/lng -- those refs resolve to centers via
+# POST /locations/bulk. We harvest the FIRST itinerary POI ref per product
+# (multi-stop tours pin to their first stop -- approximate but no longer
+# stacked), batch-resolve all refs in one bulk call, and cache the resulting
+# center per product code (L1 + L2) so repeat builds/browse don't re-pay.
+# Tighter than VIATOR_TIMEOUT (8s): the geo pass is detail-fetch THEN bulk (a
+# sequential dependency), and it runs inside the shared 6s ENRICHMENT_TIMEOUT_S
+# ceiling stacked AFTER partner enrichment. Capping each call at 3s bounds the
+# pass at ~6s worst case; on a cold-cache timeout the whole pass degrades safely
+# (no stamps -> prior centroid/GP fallback, no invented coords) and every result
+# is L1+L2 cached so warm builds resolve in milliseconds.
+_VIATOR_GEO_TIMEOUT = 3.0
+_VIATOR_GEO_L2_TTL_HOURS = max(1, settings.viator_cache_ttl_hours)
+_product_geo_cache = MemoryCache(
+    maxsize=512, ttl=_viator_cache_ttl
+)  # productCode -> {lat,lng}|None
+
+
+def _inline_geo_from_product(product: dict) -> dict[str, float] | None:
+    """Return inline {lat,lng} geo from a product if present (legacy/best-effort).
+
+    Search/freetext products almost never carry inline coordinates; product
+    detail responses expose itinerary stops as refs (see ``_first_poi_ref``).
+    Kept as the single inline-geo path so ``viator_product_to_tile`` has one
+    geo seam. Returns None when no inline lat/lng is found.
+    """
+    if not isinstance(product, dict):
+        return None
+    itinerary = product.get("itinerary", {})
+    if isinstance(itinerary, dict):
+        for item in itinerary.get("itineraryItems", []):
+            if not isinstance(item, dict):
+                continue
+            poi = item.get("pointOfInterestLocation", {})
+            loc = poi.get("location", {}) if isinstance(poi, dict) else {}
+            if isinstance(loc, dict) and loc.get("latitude") and loc.get("longitude"):
+                return {"lat": loc["latitude"], "lng": loc["longitude"]}
+    return None
+
+
+def _first_poi_ref(product: dict) -> str | None:
+    """Harvest the FIRST itinerary point-of-interest location ref from a product.
+
+    Decision (A): use ``itinerary.itineraryItems[].pointOfInterestLocation.location.ref``
+    -- the first one -- as the product's representative location. ``logistics`` /
+    ``meetingPoint`` refs are ignored (they resolve to empty centers). Returns the
+    ref string, or None when the product exposes no itinerary POI ref.
+    """
+    if not isinstance(product, dict):
+        return None
+    itinerary = product.get("itinerary", {})
+    if not isinstance(itinerary, dict):
+        return None
+    for item in itinerary.get("itineraryItems", []):
+        if not isinstance(item, dict):
+            continue
+        poi = item.get("pointOfInterestLocation", {})
+        if not isinstance(poi, dict):
+            continue
+        loc = poi.get("location", {})
+        ref = loc.get("ref") if isinstance(loc, dict) else None
+        if isinstance(ref, str) and ref.strip():
+            return ref.strip()
+    return None
+
+
+async def _fetch_product_detail(product_code: str) -> dict | None:
+    """Fetch a single Viator product detail (GET /products/{code}).
+
+    Returns the product dict, or None on circuit-open / error / timeout.
+    """
+    if _viator_cb.is_open():
+        return None
+    try:
+        record_viator_usage("request")
+        client = await _get_viator_client()
+        resp = await client.get(
+            f"{VIATOR_BASE}/products/{product_code}",
+            headers=_viator_headers(),
+            timeout=_VIATOR_GEO_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        _viator_cb.record_success()
+        record_viator_usage("success")
+        return data if isinstance(data, dict) else None
+    except Exception as e:
+        _viator_cb.record_failure()
+        record_viator_usage("error")
+        logger.debug("[VIATOR] Product detail fetch failed for %s: %s", product_code, e)
+        return None
+
+
+async def _resolve_location_refs_bulk(refs: list[str]) -> dict[str, dict[str, float]]:
+    """Resolve location refs to {lat,lng} centers via POST /locations/bulk.
+
+    Returns a ``ref -> {lat,lng}`` map. Refs that the API omits or returns
+    without a usable center are simply absent from the map (caller falls back).
+    Returns an empty map on circuit-open / error / timeout (NOT cached as a
+    definitive miss by callers -- transient failures must stay retryable).
+    """
+    refs = [r for r in dict.fromkeys(refs) if isinstance(r, str) and r.strip()]
+    if not refs:
+        return {}
+    if _viator_cb.is_open():
+        return {}
+    try:
+        record_viator_usage("request")
+        client = await _get_viator_client()
+        resp = await client.post(
+            f"{VIATOR_BASE}/locations/bulk",
+            headers=_viator_headers(),
+            json={"locations": refs},
+            timeout=_VIATOR_GEO_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        _viator_cb.record_success()
+        record_viator_usage("success")
+    except Exception as e:
+        _viator_cb.record_failure()
+        record_viator_usage("error")
+        logger.debug("[VIATOR] Bulk location resolve failed (%d refs): %s", len(refs), e)
+        return {}
+
+    centers: dict[str, dict[str, float]] = {}
+    locations = data.get("locations") if isinstance(data, dict) else None
+    if not isinstance(locations, list):
+        return centers
+    for loc in locations:
+        if not isinstance(loc, dict):
+            continue
+        ref = loc.get("reference") or loc.get("ref")
+        center = loc.get("center")
+        if not (isinstance(ref, str) and ref.strip() and isinstance(center, dict)):
+            continue
+        lat = center.get("latitude")
+        lng = center.get("longitude")
+        if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            centers[ref.strip()] = {"lat": float(lat), "lng": float(lng)}
+    return centers
+
+
+async def _product_geo_l2_get(product_code: str) -> dict[str, float] | None:
+    """Read a cached product geo from L2 (response_cache) and promote to L1."""
+    from app.db import _get_async_session_factory
+    from app.db_models import ResponseCache
+
+    cache_key = make_cache_key("viator_geo", "v1", product_code)
+    try:
+        async_session_factory = _get_async_session_factory()
+        async with async_session_factory() as db:
+            from datetime import UTC, datetime
+
+            from sqlalchemy import select
+
+            result = await db.execute(
+                select(ResponseCache)
+                .where(ResponseCache.cache_key == cache_key)
+                .where(ResponseCache.cache_type == "tiles")
+                .where(ResponseCache.expires_at > datetime.now(UTC))
+            )
+            row = result.scalar_one_or_none()
+            if not row:
+                return None
+            payload = row.response_json if isinstance(row.response_json, dict) else None
+            return payload
+    except Exception as e:
+        logger.debug("[VIATOR] geo L2 read failed for %s: %s", product_code, e)
+        return None
+
+
+async def _product_geo_l2_set(product_code: str, geo: dict[str, float]) -> None:
+    """Persist a resolved product geo to L2 (response_cache)."""
+    from datetime import timedelta
+
+    from app.db import _get_async_session_factory
+    from app.services.cache_core import l2_upsert
+
+    cache_key = make_cache_key("viator_geo", "v1", product_code)
+    try:
+        async_session_factory = _get_async_session_factory()
+        async with async_session_factory() as db:
+            try:
+                await l2_upsert(
+                    db,
+                    cache_key=cache_key,
+                    cache_type="tiles",
+                    response_json=geo,
+                    ttl=timedelta(hours=_VIATOR_GEO_L2_TTL_HOURS),
+                )
+            except Exception as e:
+                await db.rollback()
+                logger.debug("[VIATOR] geo L2 write failed for %s: %s", product_code, e)
+    except Exception as e:
+        logger.debug("[VIATOR] geo L2 session failed for %s: %s", product_code, e)
+
+
+async def resolve_product_geo_batch(
+    product_codes: list[str],
+) -> dict[str, dict[str, float]]:
+    """Resolve {lat,lng} centers for Viator product codes (batched, cached).
+
+    For each code: L1 -> L2 cache check; for cache misses, fetch all product
+    details concurrently, harvest each product's FIRST itinerary POI ref, then
+    issue ONE POST /locations/bulk for all refs. Each resolved center is cached
+    (L1 + L2) by product code. Codes with no POI ref or no resolved center are
+    NOT returned (and not negatively cached -- transient failures stay
+    retryable; only the definitive product-detail / bulk results populate cache).
+
+    Returns ``product_code -> {lat,lng}`` for every code that resolved.
+    """
+    resolved: dict[str, dict[str, float]] = {}
+    codes = [c for c in dict.fromkeys(product_codes) if isinstance(c, str) and c.strip()]
+    if not codes:
+        return resolved
+    if not (settings.viator_enabled and settings.viator_api_key):
+        return resolved
+
+    pending: list[str] = []
+    for code in codes:
+        cached = _product_geo_cache.get(code)
+        if cached is not None:
+            record_viator_usage("cache_hit")
+            if cached is not _NO_MATCH and isinstance(cached, dict):
+                resolved[code] = cached
+            continue
+        l2_hit = await _product_geo_l2_get(code)
+        if l2_hit is not None:
+            record_viator_usage("cache_hit")
+            _product_geo_cache.set(code, l2_hit)
+            resolved[code] = l2_hit
+            continue
+        pending.append(code)
+
+    if not pending or _viator_cb.is_open():
+        return resolved
+
+    # Fetch all product details concurrently (wall-time ~= slowest single call).
+    details = await asyncio.gather(
+        *[_fetch_product_detail(code) for code in pending],
+        return_exceptions=True,
+    )
+
+    # Harvest the first POI ref per product; track ref -> codes (refs may repeat).
+    code_ref: dict[str, str] = {}
+    ref_to_codes: dict[str, list[str]] = {}
+    for code, detail in zip(pending, details, strict=True):
+        if isinstance(detail, Exception) or not isinstance(detail, dict):
+            continue
+        # Some detail responses may still carry inline geo -- prefer it (one call saved).
+        inline = _inline_geo_from_product(detail)
+        if inline:
+            _product_geo_cache.set(code, inline)
+            await _product_geo_l2_set(code, inline)
+            resolved[code] = inline
+            continue
+        ref = _first_poi_ref(detail)
+        if ref:
+            code_ref[code] = ref
+            ref_to_codes.setdefault(ref, []).append(code)
+
+    if not ref_to_codes:
+        return resolved
+
+    centers = await _resolve_location_refs_bulk(list(ref_to_codes.keys()))
+    for ref, center in centers.items():
+        for code in ref_to_codes.get(ref, []):
+            _product_geo_cache.set(code, center)
+            await _product_geo_l2_set(code, center)
+            resolved[code] = center
+
+    return resolved
+
+
 def viator_product_to_tile(product: dict, destination: str) -> dict:
     """Convert a Viator product dict to a Nomadic tile dict."""
     product_code = product.get("productCode", "")
@@ -597,34 +875,12 @@ def viator_product_to_tile(product: dict, destination: str) -> dict:
         deeplink_url[:80] if deeplink_url else "",
     )
 
-    # Extract geo coordinates from Viator product data
-    geo: dict[str, float] | None = None
-    itinerary = product.get("itinerary", {})
-    if isinstance(itinerary, dict):
-        for item in itinerary.get("itineraryItems", []):
-            if not isinstance(item, dict):
-                continue
-            poi = item.get("pointOfInterestLocation", {})
-            loc = poi.get("location", {}) if isinstance(poi, dict) else {}
-            if isinstance(loc, dict) and loc.get("latitude") and loc.get("longitude"):
-                geo = {"lat": loc["latitude"], "lng": loc["longitude"]}
-                break
-    # Fallback: logistics.start or meetingPoint
-    if not geo:
-        for loc_key in ("logistics", "meetingPoint"):
-            loc_data = product.get(loc_key, {})
-            if not isinstance(loc_data, dict):
-                continue
-            start = loc_data.get("start", [loc_data]) if loc_key == "logistics" else [loc_data]
-            for s in start if isinstance(start, list) else [start]:
-                if not isinstance(s, dict):
-                    continue
-                loc = s.get("location", s)
-                if isinstance(loc, dict) and loc.get("latitude") and loc.get("longitude"):
-                    geo = {"lat": loc["latitude"], "lng": loc["longitude"]}
-                    break
-            if geo:
-                break
+    # Extract inline geo coordinates from Viator product data (search/freetext
+    # shape rarely carries these; the per-POI ref harvest below is the real
+    # source for product-detail responses). Single shared geo path via the
+    # harvest helper -- the old loc["latitude"] inline scan never matched the
+    # ref-only itinerary shape, so it lived as dead code.
+    geo: dict[str, float] | None = _inline_geo_from_product(product)
 
     tile: dict[str, Any] = {
         "id": f"viator_{product_code}",

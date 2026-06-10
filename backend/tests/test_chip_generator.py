@@ -14,7 +14,11 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from app.planner.chip_generator import _chip, _generate_chips_from_state
+from app.planner.chip_generator import (
+    _chip,
+    _generate_chips_from_state,
+    build_expand_chip_payload,
+)
 
 # =============================================================================
 # Helpers
@@ -520,3 +524,87 @@ class TestMustDosInjection:
         chips = _generate_chips_from_state(state)
         messages = [c["message"] for c in chips]
         assert "Should not appear" not in messages
+
+
+# =============================================================================
+# build_expand_chip_payload — expand-itinerary post-build chip regeneration
+# =============================================================================
+
+
+class TestBuildExpandChipPayload:
+    _TRIP_INPUTS: Dict[str, Any] = {
+        "destination": "Lisbon",
+        "start_date": "2026-07-01",
+        "end_date": "2026-07-07",
+        "activity_settings": {"categories": ["surfing"]},
+    }
+    _TILES_BY_ID: Dict[str, Any] = {
+        "h1": {"id": "h1", "type": "hotel", "title": "Hotel Lisboa"},
+        "a1": {"id": "a1", "type": "activity", "title": "Surf lesson"},
+        "f1": {"id": "f1", "type": "flight", "title": "SFO-LIS"},
+    }
+    _DAY_CARDS = [{"day_number": 1, "date": "2026-07-01", "blocks": []}]
+
+    def test_post_build_state_produces_parallel_arrays(self) -> None:
+        chips, texts, meta = build_expand_chip_payload(
+            trip_inputs=self._TRIP_INPUTS,
+            tiles_by_id=self._TILES_BY_ID,
+            day_cards=self._DAY_CARDS,
+            strategy_sections=[],
+        )
+        assert chips, "expected chips from post-build state"
+        assert texts == [c["message"] for c in chips]
+        assert len(meta) == len(chips)
+        for m in meta:
+            assert set(m.keys()) == {"chip_type", "category", "icon"}
+
+    def test_post_itinerary_branch_selected(self) -> None:
+        """day_cards + destination + start_date → refinement chips, not bootstrap."""
+        chips, _, _ = build_expand_chip_payload(
+            trip_inputs=self._TRIP_INPUTS,
+            tiles_by_id=self._TILES_BY_ID,
+            day_cards=self._DAY_CARDS,
+            strategy_sections=[],
+        )
+        messages = [c["message"] for c in chips]
+        assert "Browse activities" in messages
+        # No origin in trip_inputs → departure-city chip offered
+        assert any("departure city" in m.lower() for m in messages)
+
+    def test_tiles_rebucketed_from_flat_dict(self) -> None:
+        """Flattened {tile_id: tile} input must not break category-format reads."""
+        # No day_cards: generator falls through to the tiles-present branch,
+        # which only fires when the category buckets were built correctly.
+        chips, _, _ = build_expand_chip_payload(
+            trip_inputs=self._TRIP_INPUTS,
+            tiles_by_id=self._TILES_BY_ID,
+            day_cards=[],
+            strategy_sections=[],
+        )
+        messages = [c["message"] for c in chips]
+        assert "Build my itinerary" in messages
+
+    def test_tolerates_model_objects_and_garbage(self) -> None:
+        class _FakeTile:
+            def model_dump(self) -> Dict[str, Any]:
+                return {"id": "a2", "type": "activity", "title": "Tour"}
+
+        chips, texts, meta = build_expand_chip_payload(
+            trip_inputs={"destination": "Lisbon"},
+            tiles_by_id={"a2": _FakeTile(), "bad": 42},
+            day_cards=["not-a-dict"],
+            strategy_sections=["not-a-dict"],
+        )
+        assert isinstance(chips, list)
+        assert len(texts) == len(chips)
+        assert len(meta) == len(chips)
+
+    def test_empty_inputs_produce_bootstrap_chips(self) -> None:
+        chips, texts, _ = build_expand_chip_payload(
+            trip_inputs={},
+            tiles_by_id={},
+            day_cards=[],
+            strategy_sections=[],
+        )
+        assert chips
+        assert any("destination" in t.lower() for t in texts)

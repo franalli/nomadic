@@ -297,6 +297,34 @@ def _merge_trip_fields(state: dict[str, Any], result: dict[str, Any]) -> dict[st
     When the destination changes, clears stale strategy_sections, tiles,
     and day_cards that belonged to the previous destination.
     """
+    # ── RESET intent (two-step confirm flow) ─────────────────────────────
+    # A RESET request must never mutate the plan: co-extracted fields are noise.
+    # First RESET turn arms persistent_meta.reset_pending (survives the turn
+    # boundary via state_serde). TurnLifecycleMiddleware.abefore_agent carries
+    # that marker into the NEXT turn's fresh turn_meta as reset_pending_carryover
+    # and clears the persistent marker in the same update, so the marker lives
+    # EXACTLY one turn regardless of which tools run (an erroring or never-called
+    # extract_trip_fields can no longer strand it). A RESET turn WITH the
+    # carryover (the typed confirmation, e.g. "yes, reset it") flags the
+    # coordinator reset that _build_envelope + the SSE persist path consume to
+    # wipe the document. Any non-RESET turn abandons a pending confirmation
+    # automatically (abefore_agent already cleared the marker; nothing re-arms).
+    # The per-turn flags ride in turn_meta because top-level keys absent from
+    # NomadicAgentState are silently dropped by LangGraph channel writes
+    # (_build_envelope reads both turn_meta and the legacy top-level keys).
+    intent = str(result.get("intent") or "").strip().upper()
+    raw_tm = state.get("turn_meta")
+    reset_carryover = bool(isinstance(raw_tm, dict) and raw_tm.get("reset_pending_carryover"))
+    if intent == "RESET":
+        if not reset_carryover:
+            logger.info("[_merge_trip_fields] RESET intent -- awaiting traveler confirmation")
+            return {
+                "persistent_meta": {"reset_pending": True},
+                "turn_meta": {"reset_pending": True},
+            }
+        logger.info("[_merge_trip_fields] RESET confirmed -- flagging coordinator reset")
+        return {"turn_meta": {"coordinator_reset": True}}
+
     trip_plan = dict(state.get("trip_plan", {}))
 
     # Only apply fields that the extraction pipeline flagged as changed.
@@ -900,17 +928,41 @@ class TurnLifecycleMiddleware(AgentMiddleware):
         Safe to overwrite wholesale here: turn_meta is NOT persisted across
         turns (serialize_agent_state drops it), so each invocation starts from
         an empty/default turn_meta that this reset replaces.
+
+        Also owns the reset-confirmation marker lifecycle: when the previous
+        turn armed ``persistent_meta.reset_pending``, copy it into the fresh
+        turn_meta as ``reset_pending_carryover`` AND clear the persistent
+        marker in the same state update. This guarantees the marker lives
+        EXACTLY one turn -- it cannot strand when extract_trip_fields errors
+        or is never called on the confirm turn (which would otherwise let a
+        much later, unrelated "reset" wipe the trip without confirmation).
+        The clear uses ``{"reset_pending": False}`` because the persistent_meta
+        reducer (_merge_dicts) is a shallow right-wins merge: key removal would
+        be a no-op, while an explicit False overwrites and round-trips through
+        state_serde as a falsy value.
         """
-        return {
-            "turn_meta": {
-                "turn_started_at": time.time(),
-                "tool_call_count": 0,
-                "tools_called": [],
-                "turn_steps": [],
-                "partial_failures": [],
-                "model_turns": 0,
-            },
+        state_dict: dict[str, Any] = {}
+        if isinstance(state, dict):
+            state_dict = state
+        elif hasattr(state, "get"):
+            state_dict = dict(state)
+
+        turn_meta: dict[str, Any] = {
+            "turn_started_at": time.time(),
+            "tool_call_count": 0,
+            "tools_called": [],
+            "turn_steps": [],
+            "partial_failures": [],
+            "model_turns": 0,
         }
+        updates: dict[str, Any] = {"turn_meta": turn_meta}
+
+        raw_pm = state_dict.get("persistent_meta")
+        if isinstance(raw_pm, dict) and raw_pm.get("reset_pending"):
+            turn_meta["reset_pending_carryover"] = True
+            updates["persistent_meta"] = {"reset_pending": False}
+
+        return updates
 
     async def abefore_model(
         self,

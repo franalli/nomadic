@@ -28,6 +28,8 @@ import type {
   PlanDocumentData,
   PlanDocumentPatch,
   PlanDocumentResponse,
+  SuggestionChip,
+  SuggestionChipMeta,
   TransportSettings,
   UpdatedBy,
 } from '@/types/document';
@@ -35,6 +37,13 @@ import type { DayCard, GenerationState, StrategySection } from '@/types/plan-env
 import type { Tile } from '@/types/tile';
 
 type EnvelopeUpdate = Partial<PlanDocumentData> & { generation?: GenerationState };
+
+/** Suggestion chip fields persisted on the document (backend SSoT). */
+export interface SuggestionChipFields {
+  suggestion_chips?: SuggestionChip[];
+  suggested_responses?: string[];
+  suggested_response_meta?: SuggestionChipMeta[];
+}
 
 function diagnosticTileFingerprint(id: string, tile: Tile): string {
   const title = (tile.title ?? '').slice(0, 20);
@@ -840,6 +849,14 @@ type DocumentState = {
   dateFlexSuggestion: DateFlexSuggestion | null;
   setDateFlexSuggestion: (flex: DateFlexSuggestion | null) => void;
 
+  /**
+   * Update ONLY the suggestion chip fields on the current document (no-op when
+   * document is null). Undefined input fields are left untouched; arrays —
+   * including empty — are authoritative. Used to ingest regenerated chips from
+   * the expand-itinerary `done` event.
+   */
+  setSuggestionChipFields: (fields: SuggestionChipFields) => void;
+
   // Streaming robustness - runId + abort tracking
   currentRunId: string | null;
   abortController: AbortController | null;
@@ -1392,6 +1409,19 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           tiles: currentDoc?.tiles && Object.keys(currentDoc.tiles).length > 0
             ? currentDoc.tiles
             : response.document.tiles,
+          // Suggestion chips: PATCH never writes chips, so its response only echoes
+          // the doc as of PATCH load — never fresher than local state, which tracks
+          // every authoritative writer (SSE complete, expand done, hydration GET).
+          // Keep current when non-empty; the response only seeds a chip-less doc.
+          suggestion_chips: currentDoc?.suggestion_chips?.length
+            ? currentDoc.suggestion_chips
+            : response.document.suggestion_chips,
+          suggested_responses: currentDoc?.suggested_responses?.length
+            ? currentDoc.suggested_responses
+            : response.document.suggested_responses,
+          suggested_response_meta: currentDoc?.suggested_response_meta?.length
+            ? currentDoc.suggested_response_meta
+            : response.document.suggested_response_meta,
         };
         const normalizedPatchDocument: PlanDocumentData = {
           ...mergedPatchDocument,
@@ -1479,6 +1509,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
               tiles: currentDocRetry?.tiles && Object.keys(currentDocRetry.tiles).length > 0
                 ? currentDocRetry.tiles
                 : retryResponse.document.tiles,
+              // Suggestion chips: keep current when non-empty (PATCH responses only
+              // echo doc state at load — see precedence note in the PATCH path above).
+              suggestion_chips: currentDocRetry?.suggestion_chips?.length
+                ? currentDocRetry.suggestion_chips
+                : retryResponse.document.suggestion_chips,
+              suggested_responses: currentDocRetry?.suggested_responses?.length
+                ? currentDocRetry.suggested_responses
+                : retryResponse.document.suggested_responses,
+              suggested_response_meta: currentDocRetry?.suggested_response_meta?.length
+                ? currentDocRetry.suggested_response_meta
+                : retryResponse.document.suggested_response_meta,
             };
             const normalizedRetryDocument: PlanDocumentData = {
               ...mergedRetryDocument,
@@ -1805,6 +1846,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           ? currentDoc.tiles
           : response.document.tiles,
         open_decisions: currentDoc?.open_decisions ?? response.document.open_decisions,
+        // Suggestion chips: keep current when non-empty (PATCH responses only echo
+        // doc state at load — see precedence note in commitTripInputs).
+        suggestion_chips: currentDoc?.suggestion_chips?.length
+          ? currentDoc.suggestion_chips
+          : response.document.suggestion_chips,
+        suggested_responses: currentDoc?.suggested_responses?.length
+          ? currentDoc.suggested_responses
+          : response.document.suggested_responses,
+        suggested_response_meta: currentDoc?.suggested_response_meta?.length
+          ? currentDoc.suggested_response_meta
+          : response.document.suggested_response_meta,
       };
 
       const normalizedPatchedDocument = applyActivitySuppressionToDocument(
@@ -2882,6 +2934,30 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   setDateFlexSuggestion: (flex) => {
     set({ dateFlexSuggestion: flex });
+  },
+
+  setSuggestionChipFields: (fields) => {
+    const { document } = get();
+    if (!document) return;
+    const hasUpdate =
+      fields.suggestion_chips !== undefined ||
+      fields.suggested_responses !== undefined ||
+      fields.suggested_response_meta !== undefined;
+    if (!hasUpdate) return;
+    set({
+      document: {
+        ...document,
+        ...(fields.suggestion_chips !== undefined && {
+          suggestion_chips: fields.suggestion_chips,
+        }),
+        ...(fields.suggested_responses !== undefined && {
+          suggested_responses: fields.suggested_responses,
+        }),
+        ...(fields.suggested_response_meta !== undefined && {
+          suggested_response_meta: fields.suggested_response_meta,
+        }),
+      },
+    });
   },
 
   mergeTileEnrichment: (payload, generation, tilesReplaced) => {

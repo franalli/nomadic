@@ -7,7 +7,7 @@
  * refs, suggestion state, and streaming state (isLoading, streamingMessageId).
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { getSendBurstGuardReason } from '@/components/chat/ChatPanel';
@@ -163,6 +163,11 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
   // Keep ref in sync for use in callbacks without dep-array churn
   const streamingMessageIdRef = useRef(streamingMessageId);
   streamingMessageIdRef.current = streamingMessageId;
+  // Mirror isLoading into a ref so sendMessageCore (which deliberately omits
+  // isLoading from its deps) can read the *current* loading state to detect a
+  // stranded send lock without re-creating the callback on every render.
+  const isLoadingRef = useRef(isLoading);
+  isLoadingRef.current = isLoading;
   const [hasReceivedFirstToken, setHasReceivedFirstToken] = useState(false);
   const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
   const [suggestedResponseMeta, setSuggestedResponseMeta] = useState<SuggestionChipMeta[]>([]);
@@ -193,6 +198,77 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
   } | null>(null);
   const recentSendSignatureRef = useRef<{ signature: string; ts: number } | null>(null);
   const envelopeGenerationRef = useRef(0);
+
+  // Mirrors for the document→local suggestion sync effect below (read current
+  // local values without putting them in the effect's dep array).
+  const suggestionChipsRef = useRef(suggestionChips);
+  suggestionChipsRef.current = suggestionChips;
+  const suggestedResponsesRef = useRef(suggestedResponses);
+  suggestedResponsesRef.current = suggestedResponses;
+  const suggestedResponseMetaRef = useRef(suggestedResponseMeta);
+  suggestedResponseMetaRef.current = suggestedResponseMeta;
+
+  // Document chip fields (reactive). The backend persists these after every
+  // chat turn and expand-itinerary regenerates them post-build — the document
+  // is the SSoT for suggestion chips.
+  const docChipFields = useDocumentStore(
+    useShallow((s) => ({
+      hasDocument: s.document !== null,
+      chips: s.document?.suggestion_chips,
+      responses: s.document?.suggested_responses,
+      meta: s.document?.suggested_response_meta,
+    }))
+  );
+
+  // ── Document → local suggestion sync ───────────────────────────────────────
+  // One mechanism for BOTH reload hydration (fetchDocument) and post-mutation
+  // refresh (PATCH merges, expand-itinerary done). Coexists with the SSE
+  // complete path: setFromPlanResponse stores the same array references the
+  // SSE handler sets locally, so the reference guard skips that turn.
+  useEffect(() => {
+    // Never fight an in-flight send — chips are cleared at send start and the
+    // SSE complete handler repopulates them. A mid-send document update is
+    // picked up when isLoading flips back to false (it's in the dep array).
+    if (isSendingRef.current || isLoading) return;
+    const { hasDocument, chips, responses, meta } = docChipFields;
+    if (!hasDocument) {
+      // RESET: document cleared → clear local suggestion state too.
+      if (
+        suggestionChipsRef.current.length > 0 ||
+        suggestedResponsesRef.current.length > 0 ||
+        suggestedResponseMetaRef.current.length > 0
+      ) {
+        setSuggestionChips([]);
+        setSuggestedResponses([]);
+        setSuggestedResponseMeta([]);
+      }
+      return;
+    }
+    // Reference guard: the SSE path already set this exact array locally.
+    if (chips !== undefined && chips === suggestionChipsRef.current) return;
+
+    const nextChips = chips ?? [];
+    // The rendering gate keys off suggestedResponses — when the document
+    // carries chips without suggested_responses, derive them from chip messages.
+    const nextResponses =
+      responses && responses.length > 0
+        ? responses
+        : nextChips.map((chip) => chip.message);
+    const nextMeta = meta ?? [];
+    if (
+      nextChips.length === 0 &&
+      nextResponses.length === 0 &&
+      nextMeta.length === 0 &&
+      suggestionChipsRef.current.length === 0 &&
+      suggestedResponsesRef.current.length === 0 &&
+      suggestedResponseMetaRef.current.length === 0
+    ) {
+      return; // Both sides already empty — avoid redundant state churn.
+    }
+    setSuggestionChips(nextChips);
+    setSuggestedResponses(nextResponses);
+    setSuggestedResponseMeta(nextMeta);
+  }, [docChipFields, isLoading]);
 
   // Loader hooks
   const delayedLoader = useDelayedLoader({ showDelay: 400, etaThreshold: 600 });
@@ -296,11 +372,30 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
         return;
       }
 
-      // SYNC GUARD: Prevent duplicate sends (React StrictMode safe)
+      // SYNC GUARD: Prevent duplicate sends (React StrictMode safe).
+      //
+      // SELF-HEAL: isSendingRef is a synchronous dedup latch that a send's
+      // lifecycle (onComplete/onError/watchdog/finally) is responsible for
+      // clearing. Those resets early-return on stale/superseded streams, so a
+      // superseded turn can strand the latch `true` forever — after which this
+      // guard silently drops EVERY future send (typed message AND chip click),
+      // which presents as "the whole app is dead, nothing happens".
+      //
+      // A genuinely in-flight send keeps either an open stream connection
+      // (abortStreamRef set) or the loading UI (isLoading true). If neither is
+      // present while the latch is set, it is stranded — clear it and proceed
+      // instead of dropping the send. This cannot start a concurrent stream
+      // because a live stream always satisfies one of those two conditions.
       if (isSendingRef.current) {
-        debugLog('[ChatPanel] Skipping - already sending (ref guard)');
-        restoreDraftIfBlocked();
-        return;
+        const sendActuallyInFlight =
+          abortStreamRef.current !== null || isLoadingRef.current;
+        if (sendActuallyInFlight) {
+          debugLog('[ChatPanel] Skipping - already sending (ref guard)');
+          restoreDraftIfBlocked();
+          return;
+        }
+        debugLog('[ChatPanel] Clearing stranded send lock (no active stream)');
+        isSendingRef.current = false;
       }
 
       // Abort any previous in-flight stream before starting a new one.
@@ -625,7 +720,15 @@ export function useChatSend(params: UseChatSendParams): UseChatSendResult {
           toast('Could not start this request. Please try again.');
         }
       } finally {
-        if (!streamStarted || activeStreamRequestIdRef.current === requestId) {
+        // Release the send lock unless a *different* live request now owns the
+        // pipeline. When activeStreamRequestIdRef is null nobody owns it, so it
+        // is safe (and necessary) to clear the latch here — otherwise a stream
+        // that resolved 'stale' would leave isSendingRef stranded `true`.
+        if (
+          !streamStarted ||
+          activeStreamRequestIdRef.current === requestId ||
+          activeStreamRequestIdRef.current === null
+        ) {
           activeStreamRequestIdRef.current = null;
           setIsLoading(false);
           setTriggerContext(null);

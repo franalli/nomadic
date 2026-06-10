@@ -740,6 +740,108 @@ def _apply_activity_tile_enrichment_to_day_cards(
                 block["coordinates"] = {"lat": tile_geo["lat"], "lng": tile_geo["lng"]}
 
 
+def _viator_product_code_from_block(block: Dict[str, Any]) -> str | None:
+    """Extract a Viator product code from a placed day-card block, or None.
+
+    Only returns a code when the block's partner data is Viator (never GYG) so a
+    GYG product id is not sent to the Viator API. Checks, in order:
+    block-level ``partner_product_id``/id, then the merged ``booked_tile``
+    (``partner_product_id`` -> ``meta.viator_product_code`` -> ``viator_{code}`` id).
+    """
+
+    def _is_viator(obj: Dict[str, Any]) -> bool:
+        provider = str(obj.get("provider") or "").strip().lower()
+        partner = str(obj.get("partner") or "").strip().lower()
+        if provider == "viator" or partner == "viator":
+            return True
+        meta = obj.get("meta")
+        return isinstance(meta, dict) and bool(meta.get("viator_product_code"))
+
+    def _code(obj: Dict[str, Any]) -> str | None:
+        meta = obj.get("meta") if isinstance(obj.get("meta"), dict) else {}
+        candidate = (
+            str(meta.get("viator_product_code") or "").strip()
+            or str(obj.get("partner_product_id") or "").strip()
+        )
+        if not candidate:
+            obj_id = str(obj.get("id") or "").strip()
+            if obj_id.startswith("viator_"):
+                candidate = obj_id[len("viator_") :]
+        return candidate or None
+
+    if _is_viator(block):
+        code = _code(block)
+        if code:
+            return code
+    booked_tile = block.get("booked_tile")
+    if isinstance(booked_tile, dict) and _is_viator(booked_tile):
+        return _code(booked_tile)
+    return None
+
+
+async def _resolve_viator_block_geo(day_cards: list[Dict[str, Any]], destination: str = "") -> None:
+    """Set distinct per-product Viator centers on centroid/coord-less placed blocks.
+
+    Scans placed (non-buffer, non-arrival/departure) blocks for Viator product
+    codes, batch-resolves each code's first-itinerary-POI center via
+    ``resolve_product_geo_batch`` (one concurrent product-detail fetch per code +
+    ONE locations/bulk call, L1+L2 cached), then stamps ``block["coordinates"]``
+    ({lat,lng}) on every block whose code resolved. Mutates ``day_cards`` in place.
+    Blocks that already carry a REAL per-POI coord (not the destination centroid)
+    are skipped -- centroid-stamped blocks (the common stacked case) qualify, which
+    is why we resolve the centroid here (best-effort, cached) just like the GP gate.
+    """
+    from app.services.viator_provider import resolve_product_geo_batch
+
+    centroid: tuple[float, float] | None = None
+    if destination:
+        try:
+            from app.tile_service.google_places_provider import _geocode_destination_async
+
+            centroid = await _geocode_destination_async(destination)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("[coordinator] Viator geo pre-pass centroid geocode failed: %s", exc)
+
+    block_codes: list[tuple[Dict[str, Any], str]] = []
+    for card in day_cards:
+        if not isinstance(card, dict):
+            continue
+        for block in card.get("blocks", []):
+            if not isinstance(block, dict) or block.get("is_buffer"):
+                continue
+            at = (block.get("activity_type") or "").lower()
+            if at in ("arrival", "departure", "check_in", "check_out", "free_day"):
+                continue
+            # Skip blocks that already carry a real per-POI coordinate. Centroid-only
+            # geo (the stacked case) counts as not-yet-resolved so it qualifies.
+            if not _is_centroid_coords(block.get("coordinates"), centroid):
+                continue
+            code = _viator_product_code_from_block(block)
+            if code:
+                block_codes.append((block, code))
+
+    if not block_codes:
+        return
+
+    geo_by_code = await resolve_product_geo_batch([code for _, code in block_codes])
+    if not geo_by_code:
+        return
+
+    stamped = 0
+    for block, code in block_codes:
+        center = geo_by_code.get(code)
+        if center:
+            block["coordinates"] = {"lat": center["lat"], "lng": center["lng"]}
+            stamped += 1
+    if stamped:
+        logger.info(
+            "[coordinator] Viator geo pre-pass: stamped %d/%d placed blocks with "
+            "distinct product centers",
+            stamped,
+            len(block_codes),
+        )
+
+
 async def _run_itinerary_enrichment_pipeline(
     trip_plan: Dict[str, Any],
     activity_tiles: list[Dict[str, Any]],
@@ -777,6 +879,16 @@ async def _run_itinerary_enrichment_pipeline(
         )
         await enrich_tiles_with_partners(tiles_to_enrich, destination, currency)
         _apply_activity_tile_enrichment_to_day_cards(activity_tiles, day_cards)
+
+    # Viator geo pre-pass: resolve a distinct per-product center for PLACED blocks
+    # that carry a Viator product code but only centroid/coord-less geo, BEFORE the
+    # GP gate (so resolved blocks read as real per-POI coords and GP naturally skips
+    # them). Independent of the GP enable flags -- a Viator deployment with GP off
+    # still gets distinct pins. Runs even when the activity pool is thin because
+    # blocks can carry a booked_tile product code without a matching pool tile.
+    has_viator = settings.viator_enabled and settings.viator_api_key
+    if has_viator and destination and day_cards:
+        await _resolve_viator_block_geo(day_cards, destination)
 
     # Decide whether to run the post-build GP geocode pass. A block needs GP when it
     # lacks a REAL per-POI coordinate -- partner deeplink/image alone is NOT enough,
@@ -1731,14 +1843,39 @@ def _build_envelope(
     day_cards: list = state.get("day_cards", [])
     persistent_meta: Dict[str, Any] = state.get("persistent_meta", {})
     turn_meta: Dict[str, Any] = state.get("turn_meta", {})
-    coordinator_reset = bool(state.get("_coordinator_reset", False))
+    # The agent path carries the reset flags in turn_meta (top-level keys are not
+    # NomadicAgentState channels, so LangGraph drops them from tool updates); the
+    # legacy top-level keys are still honoured for direct callers.
+    coordinator_reset = bool(
+        state.get("_coordinator_reset", False) or turn_meta.get("coordinator_reset", False)
+    )
 
     # Generate suggestion chips. Prefer the LLM-generated, conversation+state-aware
     # chips produced concurrently in agent_runner (under _llm_suggestion_chips) when
     # they are a non-empty list of valid chip dicts; otherwise fall back to the
     # deterministic template generator. The _reset_pending override below still wins.
     llm_chips = state.get("_llm_suggestion_chips")
-    if (
+    if coordinator_reset:
+        # Confirmed reset: the in-loop state still holds the OLD trip (the
+        # extract merger skips all field merges on the confirm turn), so both
+        # the LLM chips and state-derived chips would describe the trip being
+        # wiped. Generate from an EMPTY state view instead so the envelope --
+        # and the SSE persist path that stores chips from it -- carries the
+        # post-reset bootstrap chips (the generator's no-destination branch
+        # produces the "Pick a destination" CTA).
+        suggestion_chips = _generate_chips_from_state(
+            _normalize_state_for_chips(
+                {
+                    "trip_plan": {},
+                    "trip_settings": {},
+                    "tiles": {},
+                    "day_cards": [],
+                    "strategy_sections": [],
+                    "turn_meta": {},
+                }
+            )
+        )
+    elif (
         isinstance(llm_chips, list)
         and llm_chips
         and all(isinstance(c, dict) and c.get("message") for c in llm_chips)
@@ -1764,7 +1901,7 @@ def _build_envelope(
         state["persistent_meta"] = persistent_meta
 
     # ── Reset confirmation override ──────────────────────────────────
-    if state.get("_reset_pending"):
+    if state.get("_reset_pending") or turn_meta.get("reset_pending"):
         suggestion_chips = [
             {
                 "message": "Yes, reset my trip",
