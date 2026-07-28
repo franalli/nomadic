@@ -1293,3 +1293,104 @@ describe('ensureSettingsFlushed', () => {
     expect(mockApiFetch).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// mergeLocalExpertEnrichment — polled enrichment → document strategy section
+// ---------------------------------------------------------------------------
+
+describe('mergeLocalExpertEnrichment', () => {
+  const transferTips = [
+    { method: 'Grab/Gojek', price: '$8-12', time: '~30 min' },
+    { method: 'Private Transfer', price: '$25', time: '~45 min' },
+  ];
+
+  function makeLocalExpertSection(
+    overrides: Partial<StrategySection> = {},
+  ): StrategySection {
+    return makeSection('sec_le', {
+      specialist_type: 'local_expert',
+      local_expert_enrichment: { state: 'pending' },
+      ...overrides,
+    });
+  }
+
+  function makeEnrichedSection(): StrategySection {
+    return makeSection('sec_le', {
+      specialist_type: 'local_expert',
+      local_expert_enrichment: { state: 'ready', updated_at: '2026-06-09T10:00:00Z' },
+      travel_intelligence: {
+        transportation: { airport_to_city: transferTips },
+      },
+    });
+  }
+
+  it('merges travel_intelligence into the matching strategy section', () => {
+    useDocumentStore.setState({
+      document: makeDoc({ strategy_sections: [makeLocalExpertSection()] }),
+    });
+
+    useDocumentStore.getState().mergeLocalExpertEnrichment('sec_le', makeEnrichedSection());
+
+    const section = useDocumentStore.getState().document?.strategy_sections?.[0];
+    expect(section?.travel_intelligence?.transportation?.airport_to_city).toEqual(transferTips);
+    expect(section?.local_expert_enrichment?.state).toBe('ready');
+  });
+
+  it('no-ops when the document has no matching section', () => {
+    const doc = makeDoc({ strategy_sections: [makeSection('sec_other')] });
+    useDocumentStore.setState({ document: doc });
+
+    useDocumentStore.getState().mergeLocalExpertEnrichment('sec_le', makeEnrichedSection());
+
+    expect(useDocumentStore.getState().document).toBe(doc);
+  });
+
+  it('no-ops when the document is null', () => {
+    useDocumentStore.setState({ document: null });
+
+    expect(() =>
+      useDocumentStore.getState().mergeLocalExpertEnrichment('sec_le', makeEnrichedSection()),
+    ).not.toThrow();
+    expect(useDocumentStore.getState().document).toBeNull();
+  });
+
+  it('never regresses a ready enrichment back to pending', () => {
+    const readySection = makeEnrichedSection();
+    const doc = makeDoc({ strategy_sections: [readySection] });
+    useDocumentStore.setState({ document: doc });
+
+    useDocumentStore
+      .getState()
+      .mergeLocalExpertEnrichment('sec_le', makeLocalExpertSection());
+
+    const section = useDocumentStore.getState().document?.strategy_sections?.[0];
+    expect(section?.local_expert_enrichment?.state).toBe('ready');
+    expect(section?.travel_intelligence?.transportation?.airport_to_city).toEqual(transferTips);
+  });
+
+  it('skips no-op re-applies without churning document identity', () => {
+    useDocumentStore.setState({
+      document: makeDoc({ strategy_sections: [makeLocalExpertSection()] }),
+    });
+
+    useDocumentStore.getState().mergeLocalExpertEnrichment('sec_le', makeEnrichedSection());
+    const docAfterFirstMerge = useDocumentStore.getState().document;
+
+    useDocumentStore.getState().mergeLocalExpertEnrichment('sec_le', makeEnrichedSection());
+
+    expect(useDocumentStore.getState().document).toBe(docAfterFirstMerge);
+  });
+
+  it('preserves existing fields absent from the enrichment payload', () => {
+    useDocumentStore.setState({
+      document: makeDoc({
+        strategy_sections: [makeLocalExpertSection({ one_liner: 'Bali essentials' })],
+      }),
+    });
+
+    useDocumentStore.getState().mergeLocalExpertEnrichment('sec_le', makeEnrichedSection());
+
+    const section = useDocumentStore.getState().document?.strategy_sections?.[0];
+    expect(section?.one_liner).toBe('Bali essentials');
+  });
+});

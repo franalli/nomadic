@@ -1,5 +1,7 @@
 # Nomadic Monorepo
 
+![Nomadic planning a 10-day Bali trip from a single prompt](docs/nomadic-demo.gif)
+
 A travel planning application whose itinerary generator is an AI agent: a
 LangChain `create_agent` tool-calling loop that decides which planning tools to
 run each turn (field extraction, specialist advice, tile search, itinerary
@@ -36,12 +38,50 @@ deterministic coordinator DAG. A turn flows:
 
 ```
 POST /api/graph_plan/stream
-  → agent_runner.run_agent_turn_streaming   # drives the create_agent loop
-      → the model selects tools:
-        extract_trip_fields · get_specialist_advice · get_local_intel
-        · search_tiles · build_itinerary · validate_plan
-      → terminal model turn streams the assistant reply
-  → coordinator._build_envelope()           # final state → SSE complete envelope
+  → streaming.generate_sse()                # SSE generator + connection slot
+      → agent_runner.run_agent_turn_streaming   # drives the create_agent loop
+          → agent.create_planner_agent()        # tool-calling graph + middleware
+              ↳ the model selects tools:
+                extract_trip_fields · get_specialist_advice · get_local_intel
+                · search_tiles · build_itinerary · validate_plan
+              ↳ terminal model turn streams the assistant reply
+      → coordinator._build_envelope()       # final state → SSE complete envelope
+```
+
+Events on the wire: `node_status` · `partial` · `token` · `feasibility_warning`
+· `complete` · `error`.
+
+### Agent tools
+
+Each tool wraps the node/service logic behind one planning capability; the model
+decides which to call, and in what order, per turn.
+
+| Tool | Wraps | Purpose |
+|------|-------|---------|
+| `extract_trip_fields` | `nodes/router_extraction` | Intent + field extraction + change typing |
+| `get_specialist_advice` | `nodes/vertical_specialist` | Tier 1 specialist planning / replanning |
+| `get_local_intel` | `nodes/local_expert` | Destination local-intelligence section |
+| `search_tiles` | `nodes/logistics_node` | Flights / hotels / activities refresh |
+| `build_itinerary` | `app/services/itinerary_builder` | Day-by-day schedule from sections + tiles |
+| `validate_plan` | `nodes/constraint_guard` | Constraint + feasibility validation |
+
+### Middleware
+
+`agent.py` composes the loop from (outermost first) `ModelCallLimitMiddleware`
+(8 model calls) and `ToolCallLimitMiddleware` (16 tool calls) as the runaway
+bound, `ModelSelectionMiddleware` (upgrades the loop model on complex turns),
+`ModelRetryMiddleware` (backoff on transient provider errors),
+`DynamicPromptMiddleware` (per-turn system prompt from live plan state), and
+`TurnLifecycleMiddleware` (resets `turn_meta` each turn, then merges every tool
+result into agent state via a per-tool dispatch table).
+
+### Itinerary expansion
+
+```
+POST /api/expand-itinerary
+  → request_dedup                           # idempotency key + per-session mutex
+  → streaming.generate_ndjson()
+      → app/services/itinerary_builder      # day-by-day schedule, streamed as NDJSON
 ```
 
 `PlanDocumentData` is the single source of truth for all trip state (persisted
@@ -73,11 +113,12 @@ nomadic/
 │   │   │   ├── middleware.py  # dynamic prompt + turn lifecycle
 │   │   │   ├── tools/         # model-callable tools
 │   │   │   ├── nodes/         # node logic the tools wrap
-│   │   │   ├── services/      # agent_runner, itinerary_builder, coordinator helpers
+│   │   │   ├── services/      # agent_runner, feasibility, iata_resolver, suggestions
+│   │   │   ├── coordinator.py # _build_envelope() + enrichment/tile helpers
 │   │   │   ├── prompts/       # planner prompt builders
 │   │   │   ├── state/         # GraphState / TripPlan
 │   │   │   └── schemas/       # planner schemas
-│   │   ├── services/      # caching, spend guard, partner enrichment, unsplash
+│   │   ├── services/      # itinerary_builder, caching, spend guard, enrichment
 │   │   ├── tile_service/  # Google Places provider
 │   │   ├── middleware/    # session + CSRF
 │   │   └── prompts/       # specialist .txt prompts

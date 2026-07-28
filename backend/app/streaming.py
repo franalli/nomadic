@@ -336,6 +336,68 @@ def _seed_trip_plan_from_inputs(session_state: Dict[str, Any]) -> None:
         session_state["_patch_changed_fields"] = _patch_changed
 
 
+# Document tiles are a flat id→Tile dict keyed by TileSchema.type; agent state
+# tiles are category-keyed lists (see search_tiles._merge_tiles and the
+# coordinator envelope flatten).
+_DOC_TILE_TYPE_TO_STATE_CATEGORY = {
+    "flight": "flights",
+    "hotel": "hotels",
+    "activity": "activities",
+}
+
+
+def _backfill_state_tiles_from_document(
+    session_state: Dict[str, Any],
+    document_data: PlanDocumentData,
+    request_id: str,
+) -> None:
+    """Rebuild agent-state category tiles from the persisted document catalog.
+
+    After a page reload the frontend has no session_state, so the restored
+    agent state starts with ``tiles={}``; ``_build_envelope`` then emits an
+    empty catalog and the SSE persist path treats it as authoritative
+    (``replace_tiles=True``), wiping the document's tiles. Backfilling from
+    the document preserves tile continuity on session_state-less turns.
+
+    Session tiles always win when present (non-empty dict, or a compressed
+    payload that ``restore_agent_state`` rehydrates) — the session is
+    same-or-fresher than the document. Never raises; logs at debug.
+    """
+    try:
+        existing = session_state.get("tiles")
+        if isinstance(existing, dict) and existing:
+            return  # Session carries its own tiles — same-or-fresher than doc.
+        from app.planner.services.state_serde import _SESSION_COMPRESSED_TILES_KEY
+
+        if isinstance(session_state.get(_SESSION_COMPRESSED_TILES_KEY), str):
+            return  # Compressed tiles present; restore_agent_state rehydrates.
+
+        doc_tiles = document_data.tiles or {}
+        if not doc_tiles:
+            return
+
+        category_tiles: Dict[str, List[Dict[str, Any]]] = {}
+        for tile_id, tile in doc_tiles.items():
+            tile_dict = tile.model_dump() if hasattr(tile, "model_dump") else dict(tile)
+            category = _DOC_TILE_TYPE_TO_STATE_CATEGORY.get(tile_dict.get("type"))
+            if category is None:
+                logger.debug(
+                    f"[{request_id}] Tile backfill: skipping tile {tile_id} "
+                    f"with unmapped type {tile_dict.get('type')!r}"
+                )
+                continue
+            category_tiles.setdefault(category, []).append(tile_dict)
+
+        if category_tiles:
+            session_state["tiles"] = category_tiles
+            logger.debug(
+                f"[{request_id}] Backfilled session tiles from document: "
+                + ", ".join(f"{cat}={len(ts)}" for cat, ts in sorted(category_tiles.items()))
+            )
+    except Exception as exc:
+        logger.debug(f"[{request_id}] Tile backfill from document failed: {exc}")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared enrichment cleanup
 # ─────────────────────────────────────────────────────────────────────────────
@@ -485,6 +547,14 @@ async def generate_sse(
                             session_state["day_cards"] = [
                                 dc.model_dump() for dc in document_data.day_cards
                             ]
+                        # Backfill the tile catalog when the request carries no
+                        # usable session tiles (e.g. after a page reload the
+                        # frontend sends session_state=undefined). Without this
+                        # the agent state starts with tiles={} and the persist
+                        # path wipes the document's tiles (replace_tiles=True).
+                        _backfill_state_tiles_from_document(
+                            session_state, document_data, request_id
+                        )
                         # CRITICAL FIX: Always use document trip_inputs as BASELINE,
                         # then merge request on top. This ensures fields set via settings
                         # panel (origin, flight_settings, etc.) are preserved when the

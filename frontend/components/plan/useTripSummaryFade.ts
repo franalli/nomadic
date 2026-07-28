@@ -3,14 +3,13 @@
 import { type RefObject,useCallback, useEffect, useState } from 'react';
 
 export function useTripSummaryFade(
-  scrollRef: RefObject<HTMLDivElement | null>,
-  compact: boolean
+  scrollRef: RefObject<HTMLDivElement | null>
 ): boolean {
   const [showRightFade, setShowRightFade] = useState(false);
 
   const updateFadeState = useCallback(() => {
     const element = scrollRef.current;
-    if (!element || compact) {
+    if (!element) {
       setShowRightFade(false);
       return;
     }
@@ -18,12 +17,12 @@ export function useTripSummaryFade(
     const hasOverflow = element.scrollWidth - element.clientWidth > 4;
     const atEnd = element.scrollLeft + element.clientWidth >= element.scrollWidth - 4;
     setShowRightFade(hasOverflow && !atEnd);
-  }, [compact, scrollRef]);
+  }, [scrollRef]);
 
   useEffect(() => {
     updateFadeState();
     const element = scrollRef.current;
-    if (!element || compact) return;
+    if (!element) return;
 
     const handleScroll = () => updateFadeState();
     element.addEventListener('scroll', handleScroll, { passive: true });
@@ -43,7 +42,7 @@ export function useTripSummaryFade(
       resizeObserver?.disconnect();
       window.removeEventListener('resize', updateFadeState);
     };
-  }, [compact, scrollRef, updateFadeState]);
+  }, [scrollRef, updateFadeState]);
 
   return showRightFade;
 }

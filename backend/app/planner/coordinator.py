@@ -1984,8 +1984,36 @@ def _build_envelope(
     # Reconcile booking_types with actual tile presence — scoped search
     # overrides (flights="off" when not in this refresh) must not leak
     # into the envelope when tiles actually exist.
+    #
+    # flights == "off" is ambiguous: it is BOTH the schema default before an
+    # origin exists (BookingTypes.flights defaults to "off") AND the value a
+    # user toggle sets. The middleware origin→"suggested" upgrade only fires
+    # when extract_trip_fields ran AND flagged origin as changed, so a turn
+    # that searched flights (e.g. search_tiles called with the origin as a
+    # tool arg) can reach the envelope with fresh flight tiles while flights
+    # is still at the default "off" — silently dropping them from the
+    # flattened document.
+    #
+    # The upgrade is gated on turn_meta["flights_searched"] (set by the
+    # search_tiles merger ONLY when this turn's search returned flight tiles):
+    # the same-turn ordering hole only exists on the turn that searched, and
+    # the upgrade persists to trip_settings below, so on any later turn a
+    # previously-searched catalog arrives with flights already "suggested"/
+    # "on". Tiles merely PRESENT in state (e.g. doc-backfilled after a session
+    # reload) alongside "off" can then only mean an explicit user disable —
+    # including the Flights-sheet PATCH path, which never runs a graph turn
+    # and is therefore invisible to persistent_meta["user_disabled_booking_
+    # types"] tracking. That meta record stays as a second defense for
+    # same-turn disables.
     bt = dict(trip_inputs.get("booking_types", {}))
-    if tiles.get("flights") and bt.get("flights") in (None, ""):
+    flights_user_disabled = "flights" in _get_user_disabled_booking_types(state)
+    flights_searched_this_turn = bool(turn_meta.get("flights_searched"))
+    if (
+        flights_searched_this_turn
+        and tiles.get("flights")
+        and not flights_user_disabled
+        and bt.get("flights") in (None, "", "off")
+    ):
         bt["flights"] = "suggested"
     if tiles.get("hotels") and bt.get("hotels") in ("off", None, ""):
         bt["hotels"] = "suggested"

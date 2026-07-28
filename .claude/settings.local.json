@@ -123,7 +123,9 @@
       "Bash(/Users/franalli/Code/nomadic/backend/.venv/bin/python:*)",
       "Bash(rm -f /Users/franalli/Code/nomadic/backend/test_plan_document_pytest.db* && cd /Users/franalli/Code/nomadic/backend && .venv/bin/ruff check . 2>&1)",
       "Bash(cd /Users/franalli/Code/nomadic/backend && alembic heads 2>&1)",
-      "Bash(.venv/bin/pip show:*)"
+      "Bash(.venv/bin/pip show:*)",
+      "Bash(ffmpeg -v error -ss 45.9 -i video/*.webm -frames:v 1 -vf \"crop=760:230:880:640\" -y frames/cmp-master.png)",
+      "Bash(ffmpeg -v error -ss 27.5 -i demo.gif -frames:v 1 -vf \"crop=570:173:660:480,scale=760:230:flags=lanczos\" -y frames/cmp-gif.png)"
     ],
     "deny": [],
     "ask": []

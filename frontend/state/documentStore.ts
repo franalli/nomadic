@@ -857,6 +857,15 @@ type DocumentState = {
    */
   setSuggestionChipFields: (fields: SuggestionChipFields) => void;
 
+  /**
+   * Merge polled local-expert enrichment (travel_intelligence etc.) into the
+   * matching strategy section on the document, so document readers (e.g. the
+   * arrival LogisticsBlock transfer tips) update live without a reload.
+   * No-op when the document/section is missing, when the payload would
+   * regress a ready enrichment, or when it is already applied.
+   */
+  mergeLocalExpertEnrichment: (sectionId: string, enriched: StrategySection) => void;
+
   // Streaming robustness - runId + abort tracking
   currentRunId: string | null;
   abortController: AbortController | null;
@@ -2956,6 +2965,40 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         ...(fields.suggested_response_meta !== undefined && {
           suggested_response_meta: fields.suggested_response_meta,
         }),
+      },
+    });
+  },
+
+  mergeLocalExpertEnrichment: (sectionId, enriched) => {
+    const { document } = get();
+    if (!document) return;
+    const sections = document.strategy_sections ?? [];
+    const index = sections.findIndex((section) => section.id === sectionId);
+    if (index === -1) return;
+    const existing = sections[index];
+
+    // Never regress a ready enrichment back to pending/failed.
+    const incomingState = enriched.local_expert_enrichment?.state;
+    if (existing.local_expert_enrichment?.state === 'ready' && incomingState !== 'ready') {
+      return;
+    }
+
+    // Skip no-op merges (same enrichment payload already on the document) so
+    // re-applies from the polling hook don't churn document identity.
+    const fingerprint = (section: StrategySection) =>
+      [
+        section.local_expert_enrichment?.state ?? '',
+        section.local_expert_enrichment?.updated_at ?? '',
+        section.travel_intelligence ? Object.keys(section.travel_intelligence).length : 0,
+      ].join('|');
+    if (fingerprint(existing) === fingerprint(enriched)) return;
+
+    const merged = [...sections];
+    merged[index] = { ...existing, ...enriched };
+    set({
+      document: {
+        ...document,
+        strategy_sections: merged,
       },
     });
   },

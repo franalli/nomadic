@@ -13,6 +13,7 @@ import {
 } from '@/lib/destination-intel-cache';
 import type { IntelCategory } from '@/lib/travelIntel';
 import { buildDestinationIntel } from '@/lib/travelIntel';
+import { useDocumentStore } from '@/state/documentStore';
 import { usePanelToggleStore } from '@/state/panelToggleStore';
 import type { StrategySection } from '@/types/plan-envelope';
 
@@ -135,6 +136,10 @@ export function useLocalExpertPolling({
 
     const applySectionUpdate = (enriched: StrategySection) => {
       if (cancelled) return;
+      // Land the enrichment on the document too — components reading
+      // document.strategy_sections directly (e.g. LogisticsBlock transfer
+      // tips) must see travel_intelligence without waiting for a reload.
+      useDocumentStore.getState().mergeLocalExpertEnrichment(localExpertSectionId, enriched);
       setEnrichedLocalExpertSection((current) => (
         sectionFingerprint(current) === sectionFingerprint(enriched) ? current : enriched
       ));

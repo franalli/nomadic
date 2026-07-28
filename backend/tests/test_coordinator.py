@@ -516,6 +516,158 @@ class TestBuildEnvelopeViewState:
 
 
 # =============================================================================
+# Flight tile visibility in the flattened envelope document
+# =============================================================================
+
+
+class TestBuildEnvelopeFlightTileVisibility:
+    """Flight tiles searched THIS turn (turn_meta["flights_searched"], set by
+    the search_tiles merger) must reach document.tiles (and thus persistence)
+    unless the user EXPLICITLY disabled flights — tracked in
+    persistent_meta["user_disabled_booking_types"]. booking_types.flights ==
+    "off" alone is ambiguous (it is also the schema default before origin
+    detection), so it must not drop same-turn search results by itself.
+    Conversely, tiles merely PRESENT in state (doc-backfill after reload)
+    without the this-turn signal must NOT upgrade "off" — that combination can
+    only mean an explicit disable (e.g. the Flights-sheet PATCH, which never
+    runs a graph turn and is invisible to user_disabled_booking_types)."""
+
+    def _flight_state(
+        self,
+        trip_settings: Dict[str, Any] | None = None,
+        persistent_meta: Dict[str, Any] | None = None,
+        turn_meta: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        return _make_state(
+            trip_plan={
+                "destination": "Bali",
+                "origin": "London",
+                "start_date": "2026-06-15",
+                "end_date": "2026-06-22",
+            },
+            trip_settings=trip_settings or {},
+            tiles={
+                "flights": [{"id": "flight_1", "type": "flight"}],
+                "hotels": [{"id": "hotel_1", "type": "hotel"}],
+            },
+            persistent_meta=persistent_meta or {},
+            turn_meta=turn_meta or {},
+        )
+
+    @patch("app.planner.services.state_serde.serialize_agent_state", return_value="{}")
+    def test_includes_flight_tiles_when_booking_types_unset(
+        self,
+        _mock_serialize: Any,
+    ) -> None:
+        from app.planner.coordinator import _build_envelope
+
+        state = self._flight_state(turn_meta={"flights_searched": True})
+        result = _build_envelope(state, "flights from London", "sess-1", "Found flights")
+
+        assert "flight_1" in result["document"]["tiles"]
+        assert "hotel_1" in result["document"]["tiles"]
+        assert result["document"]["trip_inputs"]["booking_types"]["flights"] == "suggested"
+
+    @patch("app.planner.services.state_serde.serialize_agent_state", return_value="{}")
+    def test_includes_flight_tiles_when_default_off_without_user_disable(
+        self,
+        _mock_serialize: Any,
+    ) -> None:
+        """Regression: origin+dates turn searches flights while booking_types
+        still carries the pre-origin default "off" (the middleware upgrade did
+        not land this turn). The envelope must still surface + persist them."""
+        from app.planner.coordinator import _build_envelope
+
+        state = self._flight_state(
+            trip_settings={
+                "booking_types": {
+                    "flights": "off",
+                    "hotels": "suggested",
+                    "activities": "suggested",
+                }
+            },
+            turn_meta={"flights_searched": True},
+        )
+        result = _build_envelope(state, "I am flying from London", "sess-1", "Updated trip")
+
+        assert "flight_1" in result["document"]["tiles"]
+        assert result["document"]["trip_inputs"]["booking_types"]["flights"] == "suggested"
+        # Reconciled value persists to state so next-turn restores stay visible.
+        assert state["trip_settings"]["booking_types"]["flights"] == "suggested"
+
+    @pytest.mark.parametrize("flights_setting", ["suggested", "on"])
+    @patch("app.planner.services.state_serde.serialize_agent_state", return_value="{}")
+    def test_includes_flight_tiles_when_suggested_or_on(
+        self,
+        _mock_serialize: Any,
+        flights_setting: str,
+    ) -> None:
+        from app.planner.coordinator import _build_envelope
+
+        state = self._flight_state(
+            trip_settings={"booking_types": {"flights": flights_setting}},
+        )
+        result = _build_envelope(state, "update my trip", "sess-1", "Updated trip")
+
+        assert "flight_1" in result["document"]["tiles"]
+        assert result["document"]["trip_inputs"]["booking_types"]["flights"] == flights_setting
+
+    @patch("app.planner.services.state_serde.serialize_agent_state", return_value="{}")
+    def test_excludes_flight_tiles_when_user_explicitly_disabled(
+        self,
+        _mock_serialize: Any,
+    ) -> None:
+        """The user_disabled_booking_types record is the second defense: even
+        on a turn that DID search flights (signal set), a tracked explicit
+        disable keeps flights off and hidden."""
+        from app.planner.coordinator import _build_envelope
+
+        state = self._flight_state(
+            trip_settings={"booking_types": {"flights": "off"}},
+            persistent_meta={"user_disabled_booking_types": ["flights"]},
+            turn_meta={"flights_searched": True},
+        )
+        result = _build_envelope(state, "extend trip", "sess-1", "Updated trip")
+
+        assert "flight_1" not in result["document"]["tiles"]
+        assert "hotel_1" in result["document"]["tiles"]
+        assert result["document"]["trip_inputs"]["booking_types"]["flights"] == "off"
+        assert state["trip_settings"]["booking_types"]["flights"] == "off"
+
+    @patch("app.planner.services.state_serde.serialize_agent_state", return_value="{}")
+    def test_doc_backfilled_flight_tiles_without_search_signal_stay_off(
+        self,
+        _mock_serialize: Any,
+    ) -> None:
+        """Regression (sheet-disable + reload repro): user disables flights via
+        the Flights-sheet PATCH (no graph turn → user_disabled_booking_types
+        never records it), reloads (session_state lost), then sends any chat
+        turn. The doc backfill restores the old flight tiles into state with
+        booking_types.flights == "off". With NO flights_searched signal this
+        turn, the reconciliation must NOT resurrect flights to "suggested" —
+        the tiles stay hidden from the flattened document and "off" persists."""
+        from app.planner.coordinator import _build_envelope
+
+        state = self._flight_state(
+            trip_settings={
+                "booking_types": {
+                    "flights": "off",
+                    "hotels": "suggested",
+                    "activities": "suggested",
+                }
+            },
+            # No user_disabled_booking_types record (PATCH path is untracked)
+            # and no flights_searched signal (no search this turn).
+        )
+        result = _build_envelope(state, "add a museum day", "sess-1", "Updated trip")
+
+        assert "flight_1" not in result["document"]["tiles"]
+        assert "hotel_1" in result["document"]["tiles"]
+        assert result["document"]["trip_inputs"]["booking_types"]["flights"] == "off"
+        assert state["trip_settings"]["booking_types"]["flights"] == "off"
+
+
+# =============================================================================
 # Small helpers
 # =============================================================================
 

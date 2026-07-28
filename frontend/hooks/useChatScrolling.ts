@@ -169,6 +169,22 @@ export function useChatScrolling({
           scrollAnimationFrameRef.current = requestAnimationFrame(animateScroll);
         } else {
           scrollAnimationFrameRef.current = null;
+          // Flush-landing correction: the target was captured when the
+          // animation started, but the geometry can shift mid-flight (tokens
+          // growing the streaming message, or the SmartLoader row appearing
+          // below the list and shrinking clientHeight by ~40px). Re-measure
+          // and snap to the true bottom — unless the user scrolled up.
+          if (!isUserScrolledUpRef.current) {
+            const finalTarget = Math.max(
+              element.scrollHeight - element.clientHeight,
+              0
+            );
+            if (Math.abs(element.scrollTop - finalTarget) > 1) {
+              markProgrammaticScroll();
+              element.scrollTop = finalTarget;
+              lastKnownScrollTopRef.current = element.scrollTop;
+            }
+          }
         }
       };
 

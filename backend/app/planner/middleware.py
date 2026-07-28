@@ -733,6 +733,18 @@ def _merge_tiles(state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any
     # turn_meta delta consumed by the envelope builder (tiles_replaced drives
     # scoped-replace UX; browseable_activities feeds the browse pool).
     turn_meta: dict[str, Any] = {"tiles_replaced": replaced}
+    # Deterministic "flights were searched THIS turn" signal. search_tiles
+    # always returns a `flights` key (possibly []), and tiles_replaced therefore
+    # always lists "flights" -- so neither distinguishes a real flight search
+    # from an activity-only refresh. Only a NON-EMPTY flights result means this
+    # turn's search produced flight tiles; _build_envelope uses this flag to
+    # gate the booking_types.flights off->"suggested" upgrade so doc-backfilled
+    # / carried-over flight tiles never resurrect an explicit user disable.
+    # Set only when True: the turn_meta reducer is right-wins per key, so an
+    # absent key from a later activity-only search delta cannot clobber it.
+    flights_result = result.get("flights")
+    if isinstance(flights_result, list) and flights_result:
+        turn_meta["flights_searched"] = True
     if "browseable_activities" in result:
         turn_meta["browseable_activities"] = result.get("browseable_activities") or []
     if "hotel_filter_cascaded" in result:

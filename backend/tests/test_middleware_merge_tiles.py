@@ -163,3 +163,47 @@ def test_fresh_result_wins_on_id_collision() -> None:
     # The fresh copy won (right-wins by id).
     assert matching[0]["title"] == "Menjangan Island (fresh)"
     assert matching[0].get("source") == "google_places"
+
+
+def test_flights_searched_flag_set_when_result_has_flight_tiles() -> None:
+    """turn_meta["flights_searched"] is the this-turn signal _build_envelope
+    uses to gate the booking_types.flights off->"suggested" upgrade. It must be
+    set when (and only when) the search_tiles result contains flight tiles."""
+    state: dict[str, Any] = {"tiles": {}}
+    result = {
+        "flights": [{"id": "flight_1", "type": "flight"}],
+        "hotels": [],
+        "activities": [],
+    }
+
+    updates = _merge_tiles(state, result)
+
+    assert updates["turn_meta"]["flights_searched"] is True
+
+
+def test_flights_searched_flag_absent_for_activity_only_search() -> None:
+    """search_tiles ALWAYS returns a `flights` key (possibly []), so an
+    activity-only refresh still wholesale-replaces flights with []. The flag
+    must be ABSENT (not False) so the right-wins turn_meta reducer cannot
+    clobber a sibling search round that DID find flights."""
+    state: dict[str, Any] = {"tiles": {"flights": [{"id": "stale_flight"}]}}
+    result = {
+        "flights": [],
+        "hotels": [],
+        "activities": [_general_tile("gp_beach", "Beach Walk")],
+    }
+
+    updates = _merge_tiles(state, result)
+
+    assert "flights_searched" not in updates["turn_meta"]
+
+
+def test_flights_searched_flag_absent_when_flights_key_missing() -> None:
+    """A result without a `flights` key (non-search merge shapes) never sets
+    the signal."""
+    state: dict[str, Any] = {"tiles": {}}
+    result = {"activities": [_general_tile("gp_market", "Night Market")]}
+
+    updates = _merge_tiles(state, result)
+
+    assert "flights_searched" not in updates["turn_meta"]

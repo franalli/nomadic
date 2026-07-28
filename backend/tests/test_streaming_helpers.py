@@ -6,8 +6,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.schemas import DocumentTripInputs, PlanDocumentData, Tile
 from app.streaming import (
     TripReadiness,
+    _backfill_state_tiles_from_document,
     _conflicts_to_constraint_violations,
     _flatten_request_preferences,
     _get_trip_input_display_value,
@@ -672,3 +674,202 @@ def test_seed_trip_plan_empty_inputs() -> None:
     }
     _seed_trip_plan_from_inputs(state)
     assert state["trip_plan"]["destination"] == "Bali"
+
+
+# ---------------------------------------------------------------------------
+# _backfill_state_tiles_from_document
+# ---------------------------------------------------------------------------
+
+
+def _make_tile(tile_id: str, tile_type: str) -> Tile:
+    return Tile(
+        id=tile_id,
+        type=tile_type,
+        title=f"{tile_type} {tile_id}",
+        deeplink=f"https://example.com/{tile_id}",
+    )
+
+
+def _make_doc_data_with_tiles() -> PlanDocumentData:
+    return PlanDocumentData(
+        tiles={
+            "f1": _make_tile("f1", "flight"),
+            "h1": _make_tile("h1", "hotel"),
+            "a1": _make_tile("a1", "activity"),
+        },
+        trip_inputs=DocumentTripInputs(destination="Bali"),
+    )
+
+
+def test_backfill_tiles_from_document_mixed_types() -> None:
+    """Doc tiles map to the agent state's category-keyed format by tile type."""
+    doc = _make_doc_data_with_tiles()
+    state: dict = {"trip_inputs": {}}
+    _backfill_state_tiles_from_document(state, doc, "req-t1")
+    tiles = state["tiles"]
+    assert {t["id"] for t in tiles["flights"]} == {"f1"}
+    assert {t["id"] for t in tiles["hotels"]} == {"h1"}
+    assert {t["id"] for t in tiles["activities"]} == {"a1"}
+    # Tiles are plain dicts (model_dump), not pydantic models.
+    assert all(isinstance(t, dict) for tile_list in tiles.values() for t in tile_list)
+
+
+def test_backfill_tiles_skips_when_session_tiles_present() -> None:
+    """Non-empty session tiles are same-or-fresher and must be left untouched."""
+    doc = _make_doc_data_with_tiles()
+    session_tiles = {"activities": [{"id": "x9"}]}
+    state: dict = {"tiles": session_tiles}
+    _backfill_state_tiles_from_document(state, doc, "req-t2")
+    assert state["tiles"] is session_tiles
+
+
+def test_backfill_tiles_skips_when_compressed_tiles_present() -> None:
+    """Compressed session tiles count as present (restore_agent_state rehydrates)."""
+    doc = _make_doc_data_with_tiles()
+    state: dict = {"tiles": {}, "_compressed_tiles": "eJxLTC0quXg9"}
+    _backfill_state_tiles_from_document(state, doc, "req-t3")
+    assert state["tiles"] == {}
+
+
+def test_backfill_tiles_noop_when_document_has_no_tiles() -> None:
+    doc = PlanDocumentData()
+    state: dict = {}
+    _backfill_state_tiles_from_document(state, doc, "req-t4")
+    assert "tiles" not in state
+
+
+def test_backfill_tiles_never_raises_on_malformed_document() -> None:
+    """The backfill is best-effort and must never raise into the SSE path."""
+    state: dict = {}
+    doc = SimpleNamespace(tiles={"bad": 42})
+    _backfill_state_tiles_from_document(state, doc, "req-t5")
+    assert "tiles" not in state
+
+
+@pytest.mark.asyncio
+async def test_generate_sse_empty_session_state_does_not_wipe_document_tiles(
+    monkeypatch,
+) -> None:
+    """A session_state-less turn against a doc with tiles must re-emit the
+    catalog instead of persisting a tile wipe (replace_tiles + empty tiles)."""
+
+    doc_data = _make_doc_data_with_tiles()
+    document = SimpleNamespace(version=3)
+
+    class _SessionContext:
+        async def __aenter__(self):
+            return SimpleNamespace(
+                commit=AsyncMock(),
+                rollback=AsyncMock(),
+                refresh=AsyncMock(),
+            )
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    captured_agent_tiles: dict = {}
+
+    class _FakeEventSource:
+        def __init__(self, final_result) -> None:
+            self._final_result = final_result
+            self._yielded = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._yielded:
+                raise StopAsyncIteration
+            self._yielded = True
+            return {"type": "complete", "data": self._final_result}
+
+        async def aclose(self) -> None:
+            pass
+
+    def _fake_run_agent(*, user_message, state, session_id, doc_settings, cancel_event):
+        captured_agent_tiles.update(state.get("tiles") or {})
+        # Mimic _build_envelope: flatten category tiles into a flat id->tile dict.
+        flattened: dict = {}
+        for tile_list in (state.get("tiles") or {}).values():
+            if not isinstance(tile_list, list):
+                continue
+            for tile in tile_list:
+                if isinstance(tile, dict) and tile.get("id"):
+                    flattened[tile["id"]] = tile
+        final_result = {
+            "assistant_message": "Quick answer.",
+            "session_state": {},
+            "document": {
+                "plan_view_state": "S2_STRATEGY_READY",
+                "strategy_sections": [],
+                "tiles": flattened,
+            },
+            "trip_inputs": {"destination": "Bali"},
+        }
+        return _FakeEventSource(final_result)
+
+    apply_update = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(
+        "app.streaming._get_async_session_factory",
+        lambda: (lambda: _SessionContext()),
+    )
+    monkeypatch.setattr(
+        "app.streaming.get_or_create_session",
+        AsyncMock(return_value=SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        "app.streaming.get_or_create_document",
+        AsyncMock(return_value=document),
+    )
+    monkeypatch.setattr("app.streaming.get_document_data", lambda _doc: doc_data)
+    monkeypatch.setattr("app.streaming.record_chat_message", AsyncMock())
+    monkeypatch.setattr(
+        "app.streaming.get_latest_trip_context_for_session",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr("app.streaming.apply_planner_update", apply_update)
+    monkeypatch.setattr(
+        "app.streaming.get_image_url_sync",
+        lambda *args, **kwargs: "https://img.example/x.jpg",
+    )
+    monkeypatch.setattr(
+        "app.streaming._cleanup_pending_enrichment",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "app.planner.services.agent_runner.run_agent_turn_streaming",
+        _fake_run_agent,
+    )
+
+    stream = generate_sse(
+        session_id="session-tiles",
+        req=SimpleNamespace(message="what's the weather?", trip_inputs=None, ui_phase=None),
+        # Reload case: minimal prepared session_state with no tiles key.
+        session_state={"thread_id": "t-1", "today_iso": "2026-06-10", "trip_inputs": {}},
+        request_id="req-tiles",
+        today_iso="2026-06-10",
+        session_key="session:session-tiles",
+        ip_key="ip:127.0.0.1",
+        request=SimpleNamespace(is_disconnected=AsyncMock(return_value=False)),
+        try_acquire_sse_slot=AsyncMock(return_value=None),
+        release_sse_slot=AsyncMock(),
+        sanitize_trip_inputs_for_category_merge=lambda inputs, _message: inputs,
+        merge_user_owned_trip_settings=lambda *args, **kwargs: None,
+        resolve_itinerary_document_view_state=lambda *args, **kwargs: "S2_STRATEGY_READY",
+    )
+
+    chunks = [chunk async for chunk in stream]
+
+    # The hydrated agent state must carry the document's tile catalog.
+    assert {t["id"] for t in captured_agent_tiles.get("flights", [])} == {"f1"}
+    assert {t["id"] for t in captured_agent_tiles.get("hotels", [])} == {"h1"}
+    assert {t["id"] for t in captured_agent_tiles.get("activities", [])} == {"a1"}
+
+    # The persist call must NOT wipe tiles: replace_tiles=True with the full catalog.
+    apply_update.assert_awaited_once()
+    persist_kwargs = apply_update.await_args.kwargs
+    assert persist_kwargs["replace_tiles"] is True
+    assert set(persist_kwargs["tiles"].keys()) == {"f1", "h1", "a1"}
+
+    assert chunks[-1].startswith("event: complete\ndata: ")

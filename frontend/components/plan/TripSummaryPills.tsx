@@ -53,7 +53,7 @@ export function TripSummaryPills({
   const showAdvice =
     (showTravelAdvice || travelAdviceCount > 0 || isTravelAdvicePending) && !!onToggleTravelAdvice;
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const showRightFade = useTripSummaryFade(scrollRef, compact);
+  const showRightFade = useTripSummaryFade(scrollRef);
   const coreSegments = buildCoreSegments({
     destination,
     origin,
@@ -68,11 +68,15 @@ export function TripSummaryPills({
   });
 
   return (
-    <div className="relative">
+    <div className={cn('relative', compact && 'min-w-0 max-w-full')}>
       <div
         ref={scrollRef}
         className={cn(
-          compact ? '' : 'no-scrollbar -mx-4 flex-nowrap overflow-x-auto px-4 py-2 lg:flex-wrap lg:overflow-x-visible'
+          compact
+            ? // Header mode: contain + scroll within the center flex area (no
+              // negative-margin bleed — the bar must never overlap neighbors).
+              'no-scrollbar max-w-full flex-nowrap overflow-x-auto'
+            : 'no-scrollbar -mx-4 flex-nowrap overflow-x-auto px-4 py-2 lg:flex-wrap lg:overflow-x-visible'
         )}
       >
         <div
@@ -160,8 +164,16 @@ export function TripSummaryPills({
           )}
         </div>
       </div>
-      {!compact && showRightFade && (
-        <div className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-white to-transparent dark:from-zinc-950 lg:hidden" />
+      {showRightFade && (
+        <div
+          className={cn(
+            'pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l to-transparent',
+            compact
+              ? // Header sits on the theme panel surface — fade must match it.
+                'from-[var(--theme-panel)]'
+              : 'from-white dark:from-zinc-950 lg:hidden'
+          )}
+        />
       )}
     </div>
   );

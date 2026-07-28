@@ -68,9 +68,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     visibleMessages.length === 1 &&
     visibleMessages[0]?.role === 'user' &&
     panelHeightClass === 'min-h-[300px]';
-  const effectivePanelHeightClass = shouldTightenInitialLoadingGap
-    ? 'min-h-[220px]'
-    : panelHeightClass;
+  // Split view: the panel must fill its height-constrained wrapper
+  // (SplitLayoutSections non-landing branch) so ChatMessageList's
+  // `min-h-0 flex-1 overflow-y-auto` becomes the only scroller and the
+  // chips/input stay pinned at the panel bottom. Landing keeps the
+  // content-sized min-h classes — the whole centered column scrolls by design.
+  const isSplitChatLayout = isDesktop && !useLandingChatLayout;
+  const effectivePanelHeightClass = isSplitChatLayout
+    ? 'flex-1'
+    : shouldTightenInitialLoadingGap
+      ? 'min-h-[220px]'
+      : panelHeightClass;
 
   return (
     <ErrorBoundary label="chat">

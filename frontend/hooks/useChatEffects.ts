@@ -103,6 +103,29 @@ export function useChatEffects(params: UseChatEffectsParams): void {
 
   const prevIsLoadingRef = useRef(false);
   const readyMessageShownRef = useRef(false);
+  const hydrationScrollDoneRef = useRef(false);
+
+  // One-shot history-hydration scroll: when history finishes loading with
+  // messages, force-snap to the latest message. Without this the log can sit
+  // at scrollTop=0 after a reload (the messages.length effect below races the
+  // paint and its smooth scroll can be cancelled by the user-scroll guard).
+  // Double-rAF lets the message list paint before measuring scrollHeight;
+  // scrollToBottom(true) takes the instant snap path (no 2s animation).
+  useEffect(() => {
+    if (hydrationScrollDoneRef.current) return;
+    if (isLoadingHistory || messages.length === 0) return;
+    let innerRafId: number | undefined;
+    const outerRafId = requestAnimationFrame(() => {
+      innerRafId = requestAnimationFrame(() => {
+        hydrationScrollDoneRef.current = true;
+        scrollToBottom(true);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(outerRafId);
+      if (innerRafId !== undefined) cancelAnimationFrame(innerRafId);
+    };
+  }, [isLoadingHistory, messages.length, scrollToBottom]);
 
   // Scroll panel into view and focus input when response finishes (isLoading: true -> false)
   useEffect(() => {

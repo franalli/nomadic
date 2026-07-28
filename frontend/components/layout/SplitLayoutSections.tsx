@@ -99,7 +99,13 @@ export function DesktopSplitLayout({
           </>
         ) : (
           <>
-            <div className="flex-1 overflow-y-auto p-4 no-scrollbar">{plannerContent}</div>
+            {/*
+             * Split view: this wrapper must NOT scroll. It constrains height so
+             * the pressure reaches ChatMessageList's own `min-h-0 flex-1
+             * overflow-y-auto` scroller — keeping the status header, suggestion
+             * chips and input pinned while only the message log scrolls.
+             */}
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-4">{plannerContent}</div>
             <LayoutFooterLinks bordered />
           </>
         )}

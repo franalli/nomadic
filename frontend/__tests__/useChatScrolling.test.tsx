@@ -1,7 +1,9 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useChatEffects } from '@/hooks/useChatEffects';
 import { useChatScrolling } from '@/hooks/useChatScrolling';
+import type { ChatMessage } from '@/types/chat';
 
 function buildScrollContainer(initialScrollHeight = 400, initialClientHeight = 100) {
   const container = document.createElement('div');
@@ -312,6 +314,63 @@ describe('useChatScrolling', () => {
     });
   });
 
+  it('lands the smooth follow flush at the true bottom when content grows mid-animation', () => {
+    const panel = document.createElement('div');
+    const scrollState = buildScrollContainer();
+
+    const { result } = renderHook(() =>
+      useChatScrolling({
+        panelRef: { current: panel },
+        isDesktop: true,
+        onSetupHeaderCollapse: vi.fn(),
+      })
+    );
+
+    act(() => {
+      result.current.scrollContainerRef.current = scrollState.container;
+      result.current.scrollToBottom(); // non-forced smooth follow
+      vi.advanceTimersByTime(16); // batching timeout → animation starts toward 300
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(1000); // mid-animation
+      scrollState.setScrollHeight(640); // content grew → true bottom is now 540
+      vi.advanceTimersByTime(1200); // animation completes (2000ms duration)
+    });
+
+    expect(scrollState.getScrollTop()).toBe(540);
+  });
+
+  it('skips the flush-landing correction when the user scrolls up mid-animation', () => {
+    const panel = document.createElement('div');
+    const scrollState = buildScrollContainer();
+
+    const { result } = renderHook(() =>
+      useChatScrolling({
+        panelRef: { current: panel },
+        isDesktop: true,
+        onSetupHeaderCollapse: vi.fn(),
+      })
+    );
+
+    act(() => {
+      result.current.scrollContainerRef.current = scrollState.container;
+      result.current.scrollToBottom();
+      vi.advanceTimersByTime(16);
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+      scrollState.setScrollTop(100); // user yanks upward mid-flight
+      result.current.handleScroll();
+      scrollState.setScrollHeight(640);
+      vi.advanceTimersByTime(2000);
+    });
+
+    expect(scrollState.getScrollTop()).toBe(100);
+    expect(result.current.isUserScrolledUp()).toBe(true);
+  });
+
   it('cancels planner-rail settling when the user scrolls that rail upward', () => {
     const panel = document.createElement('div');
     const rail = buildScrollableAncestor();
@@ -340,5 +399,128 @@ describe('useChatScrolling', () => {
     });
 
     expect(rail.getScrollTop()).toBe(540);
+  });
+});
+
+describe('useChatEffects history hydration scroll', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', ((callback: FrameRequestCallback) =>
+      window.setTimeout(
+        () => callback(performance.now()),
+        16
+      )) as typeof requestAnimationFrame);
+    vi.stubGlobal('cancelAnimationFrame', ((handle: number) =>
+      window.clearTimeout(handle)) as typeof cancelAnimationFrame);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function makeMessages(count: number): ChatMessage[] {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `m${i}`,
+      role: i % 2 === 0 ? ('user' as const) : ('assistant' as const),
+      content: `message ${i}`,
+    }));
+  }
+
+  function buildEffectsParams(
+    overrides: Partial<Parameters<typeof useChatEffects>[0]> = {}
+  ): Parameters<typeof useChatEffects>[0] {
+    return {
+      isLoading: false,
+      isLoadingHistory: false,
+      messages: [],
+      scrollToBottom: vi.fn(),
+      scrollPanelIntoView: vi.fn(),
+      inputRef: { current: null },
+      readyToGenerate: false,
+      hasBranches: false,
+      generateTriggered: false,
+      setGenerateTriggered: vi.fn(),
+      loadHistory: vi.fn(),
+      filterMessages: vi.fn(),
+      nodeStatus: null,
+      setActiveStatus: vi.fn(),
+      autoExpandTimeoutRef: { current: null },
+      focusTimeoutRef: { current: null },
+      ...overrides,
+    };
+  }
+
+  it('force-snaps to the bottom once after history loads with messages', () => {
+    const scrollToBottom = vi.fn();
+    const { rerender } = renderHook((props) => useChatEffects(props), {
+      initialProps: buildEffectsParams({ isLoadingHistory: true, scrollToBottom }),
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(48);
+    });
+    expect(scrollToBottom).not.toHaveBeenCalledWith(true);
+
+    rerender(
+      buildEffectsParams({
+        isLoadingHistory: false,
+        messages: makeMessages(4),
+        scrollToBottom,
+      })
+    );
+
+    // No snap before the double-rAF paint window elapses
+    expect(scrollToBottom).not.toHaveBeenCalledWith(true);
+
+    act(() => {
+      vi.advanceTimersByTime(48); // double-rAF (16ms + 16ms stub)
+    });
+    const forcedCalls = scrollToBottom.mock.calls.filter((call) => call[0] === true);
+    expect(forcedCalls).toHaveLength(1);
+  });
+
+  it('does not re-fire the hydration snap on later message growth', () => {
+    const scrollToBottom = vi.fn();
+    const { rerender } = renderHook((props) => useChatEffects(props), {
+      initialProps: buildEffectsParams({
+        isLoadingHistory: false,
+        messages: makeMessages(4),
+        scrollToBottom,
+      }),
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(48);
+    });
+    expect(scrollToBottom.mock.calls.filter((call) => call[0] === true)).toHaveLength(1);
+
+    rerender(
+      buildEffectsParams({
+        isLoadingHistory: false,
+        messages: makeMessages(5),
+        scrollToBottom,
+      })
+    );
+    act(() => {
+      vi.advanceTimersByTime(48);
+    });
+    expect(scrollToBottom.mock.calls.filter((call) => call[0] === true)).toHaveLength(1);
+  });
+
+  it('never fires when history loads empty', () => {
+    const scrollToBottom = vi.fn();
+    renderHook((props) => useChatEffects(props), {
+      initialProps: buildEffectsParams({
+        isLoadingHistory: false,
+        messages: [],
+        scrollToBottom,
+      }),
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    expect(scrollToBottom).not.toHaveBeenCalledWith(true);
   });
 });
